@@ -125,6 +125,15 @@ Deno.serve(async (req: Request) => {
     const { data: signed, error: signError } = await db.storage.from("observation-assets").createSignedUrl(asset.object_path, 600);
     if (signError || !signed?.signedUrl) { failures.push({ page, error: "image_sign_failed" }); continue; }
 
+    // Bound actual model calls as well as HTTP requests: one request may contain up to 12 pages.
+    const { data: pageAllowed, error: pageRateError } = await db.rpc("discover_rate_limit", {
+      p_subject: subject, p_bucket: "menu_read_page", p_max: 20, p_window_seconds: 60,
+    });
+    if (pageRateError || pageAllowed !== true) {
+      failures.push({ page, error: pageRateError ? "page_rate_limit_unavailable" : "page_rate_limited" });
+      break;
+    }
+
     let response: Response, rawProvider: Record<string, unknown>;
     try {
       response = await fetch("https://api.anthropic.com/v1/messages", {
