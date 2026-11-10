@@ -19,6 +19,12 @@
 6. Do not treat an AI extraction as verified fact. Human review or a separately defined trusted source is required for canonical promotion.
 7. Do not overwrite a canonical Harmony entity on a key collision. Create a conflict for reconciliation.
 
+## Current Discover consent boundary
+
+The current menu-scan UI asks the user to agree that menu photos will be uploaded to Discover and processed to transcribe the printed menu. The UI explicitly says this is separate from optional research or personalization consent. That processing notice is **not** permission to publish, syndicate, or promote the menu into Harmony's canonical database.
+
+The older `consent_to_contribute` field is marked deprecated in the live Discover schema. Do not reuse it as a substitute for a new, purpose-specific permission basis. A candidate can be staged only when there is a separate documented basis for that use (for example, a verified public source whose reuse terms allow it, or a distinct explicit contribution grant with a versioned notice). If no such basis exists, keep the observation in Discover and do not stage it.
+
 ## Initial eligibility matrix
 
 | Discover record | Staging eligibility | Promotion gate |
