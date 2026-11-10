@@ -256,3 +256,8 @@ The first staging routine incorrectly depended on the legacy `consent_to_contrib
 Live ACL check: RLS enabled; anon/authenticated have no table privileges; service_role has SELECT/INSERT/UPDATE. Staging function is SECURITY INVOKER, service_role execute only. Counts at verification: zero observations, zero contribution grants, zero staged candidates.
 
 This table is only a backend gate. No consumer-facing consent wording, affirmative capture UI, or grant/revocation endpoint exists yet. Do not create real grants manually; implement and review the actual user-facing permission flow before staging can be used.
+
+
+### Legacy API consent-field cleanup
+
+The older Fastify observation route also accepted `consentToContribute` and persisted it to the deprecated `menu_observations.consent_to_contribute` field. Removed that input and write in the Discover source branch. The current mobile client already sends only the versioned menu-processing notice and does not request contribution permission. The new contribution-grant table remains unwired until a distinct, optional, unchecked-by-default consent UI and authenticated grant/revocation API are implemented with reviewed wording.
