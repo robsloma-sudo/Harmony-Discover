@@ -129,3 +129,8 @@ The prior "not deployed" statements above are historical and superseded by this 
 4. Verify the Realtime client-secret response and expiry without logging its token.
 5. Run an actual web push-to-talk audition, then test stop, interrupt, memory withdrawal, and rate limiting.
 6. Test native iOS separately; do not label it supported until device validation passes.
+
+
+### Realtime credential replay-window hardening
+
+The OpenAI Realtime client-secret documentation states that a client secret can be used to create multiple sessions until it expires; the established session can continue after that client-secret expiry. To reduce the replay window, the current DEV endpoint requests a 60-second client-secret lifetime and allows four mint requests per user per minute. The client validator rejects grants longer than two minutes to allow limited clock/network tolerance. This reduces exposure but does not make a bearer client secret single-use. The endpoint is ACTIVE as version 3 in Discover DEV; the deployed source was fetched and verified after deployment. No provider credential was minted and no audio session was opened during this verification.
