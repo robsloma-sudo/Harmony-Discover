@@ -97,3 +97,18 @@ export async function processMenuPhotos(uris: string[], source: 'camera' | 'gall
 
 export type MenuItemCorrection = { name?:string; section?:string|null; description?:string|null; price?:string|null; category?:'cocktail'|'wine'|'beer'|'spirits'|'non_alcoholic'|'food'|'other' };
 export async function saveMenuItemCorrection(observationId:string,itemId:string,changes:MenuItemCorrection):Promise<DiscoveredMenuItem>{const result=await request(`/v1/observations/${observationId}/items/${itemId}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({changes})});if(!result.saved||!result.item)throw new Error('Correction was not saved.');return result.item as DiscoveredMenuItem}
+
+
+export type ObservationContributionPermission = { granted: boolean; policyVersion: string | null; grantedAt: string | null };
+export async function getObservationContribution(observationId: string): Promise<ObservationContributionPermission> {
+  return request(`/v1/observations/${observationId}/contribution`) as Promise<ObservationContributionPermission>;
+}
+export async function grantObservationContribution(observationId: string): Promise<void> {
+  await request(`/v1/observations/${observationId}/contribution`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ policyVersion: 'discover-harmony-contribution-v1' }),
+  });
+}
+export async function withdrawObservationContribution(observationId: string): Promise<void> {
+  await request(`/v1/observations/${observationId}/contribution`, { method: 'DELETE' });
+}
