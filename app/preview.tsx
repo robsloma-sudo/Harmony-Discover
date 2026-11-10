@@ -69,7 +69,7 @@ export default function Preview() {
     <ScrollView horizontal style={{ maxHeight: 142 }} contentContainerStyle={{ gap: 10, paddingVertical: 10 }}>
       {pages.map((uri, i) => <View key={`${uri}-${i}`} style={{ width: 104, gap: 5 }}>
         <View style={{ width: 104, height: 104 }}>
-          <Image source={{ uri }} resizeMode="cover" style={{ width: 104, height: 104, borderRadius: 12, borderWidth: 1, borderColor: '#39414A' }} />
+          <Image source={{ uri }} resizeMode="contain" style={{ width: 104, height: 104, borderRadius: 12, borderWidth: 1, borderColor: '#39414A', backgroundColor: '#101419' }} />
           {!items && <Pressable accessibilityRole="button" accessibilityLabel={`Remove page ${i + 1}`} onPress={() => removePage(i)} style={{ position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(8,10,13,0.9)', borderWidth: 1, borderColor: '#D7B77A', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#F2F0EA', fontSize: 16, lineHeight: 19 }}>×</Text></Pressable>}
         </View>
         <Text style={{ color: '#D7B77A', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' }}>
