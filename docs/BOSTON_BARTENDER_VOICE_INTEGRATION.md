@@ -87,7 +87,7 @@ The current source-hardening branch adds:
 
 For browser use, set `DISCOVER_ALLOWED_ORIGINS` in the Discover DEV Edge Function secrets/config to the exact HTTPS origin(s), without trailing slash (for example, the actual approved Netlify preview origin). Do not put this setting in an `EXPO_PUBLIC_*` variable. Requests without an Origin header are allowed for native clients; browser origins not on the allow-list are rejected.
 
-The Boston migration remains unapplied. Do not deploy the function until the migration ledger and source migration history have been reconciled. The current DEV ledger contains timestamped migrations through `20261110071228`, including `0011_pg_net_out_of_public` and `0012_menu_reading`; the branch's numbered `0011_marty_bartender.sql` is not a safe direct match for that ledger. Recover the complete applied migration source history before creating a correctly versioned follow-on migration.
+The Boston migration remains unapplied. Do not deploy the function until the migration ledger and source migration history have been reconciled. The current DEV ledger contains timestamped migrations through `20261110071228`, including `0011_pg_net_out_of_public` and `0012_menu_reading`; the branch's numbered `20261110210500_marty_bartender.sql` is not a safe direct match for that ledger. Recover the complete applied migration source history before creating a correctly versioned follow-on migration.
 
 ## Lead-agent follow-up code review — 10 November 2026
 
