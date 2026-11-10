@@ -3,7 +3,7 @@ import {
   getObservationContribution,
   grantObservationContribution,
   withdrawObservationContribution,
-} from "../apps/api/src/core/observations.ts";
+} from "../src/core/observations.ts";
 
 const OBSERVATION_ID = "11111111-1111-4111-8111-111111111111";
 const SUBJECT_ID = "22222222-2222-4222-8222-222222222222";
