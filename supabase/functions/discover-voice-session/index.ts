@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { martyBostonInstructions, martyBostonComedyCraft, MARTY_BOSTON_CONSENT_VERSION } from "../_shared/martySullivanBoston.ts";
+import { martyBostonInstructions, martyBostonComedyCraft, MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
 
 const DEV_REF = "lqqmwqrffelgnbngrkep";
 const MODEL = "gpt-realtime-2.1";
