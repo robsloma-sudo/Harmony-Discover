@@ -95,6 +95,7 @@ export function mapReviewedMenuToHarmonySubmitPayload(
 
   let itemCount = 0;
   const sections = (Array.isArray(input.sections) ? input.sections : []).map((section, sectionIndex) => {
+    if (!section.section_name.trim()) errors.push(`sections[${sectionIndex}].section_name is required`);
     if (!HARMONY_SECTION_TYPES.includes(section.section_type)) {
       errors.push(`sections[${sectionIndex}].section_type is invalid`);
     }
