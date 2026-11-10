@@ -210,3 +210,14 @@ The inspected canonical tables expose SELECT policies to authenticated/Harmony r
 ### CI status
 
 CI passed on commit `bfd8baca95a833613e02cdf0b1c0e3ab306f30ed`, including TypeScript, both Deno checks, all unit tests, and Expo web export. A fresh validation run is pending for the subsequent docs and migration filename-alignment commits. Do not infer latest-head success from the earlier green run.
+
+
+### Consent-gated Discover → Harmony staging routine — 10 November 2026
+
+- Applied migration `20261110221751_discover_consent_gated_menu_staging` to `harmony-discover-dev` only.
+- Added `harmony_sync.stage_eligible_menu_observations(integer)`, a SECURITY INVOKER routine. Execute is revoked from PUBLIC, anon, and authenticated; service_role only is granted execute. Schema USAGE is service_role only.
+- Eligibility requires completed status, processing consent, explicit per-observation contribution consent, current non-withdrawn `aggregate_research` consent, confirmed venue, complete pages, no dispute, zero unresolved flags, and saved structured menu.
+- Staged payload omits consumer IDs, auth IDs, storage paths, signed URLs, private taste profiles, and conversations. Permission reference retains consent record ID and policy version only.
+- New candidates start pending; sync ledger starts blocked. This is intentional: there is no automatic promotion or production sync worker.
+- Runtime no-op test returned 0. Live DEV contains zero menu observations and zero staged candidates, so no personal data was staged. A consented fixture test remains to be run after the first authorized test record is created.
+- Security advisor still reports 18 RLS-enabled/no-policy informational findings, including the service-only integration schema tables. The schema is inaccessible to anon/authenticated and service_role-only; no broad policies were added.
