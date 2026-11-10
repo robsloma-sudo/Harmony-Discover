@@ -112,3 +112,8 @@ The security advisor reports 18 RLS-enabled/no-policy informational findings, in
 - `discover-voice-session` is deployed in Discover DEV as ACTIVE version 2. Deployed bundle files were fetched and verified: `index.ts` and `_shared/martySullivanBoston.ts`.
 - The latest CI run for commit `b113f2987b48086102c5ae12a6dada207c96c6b2` completed successfully: TypeScript, Deno checks, all unit tests, and Expo web export.
 - The historical migration source gaps remain unresolved. A fresh project bootstrap cannot yet be reproduced from this repository alone. No fabricated historical migrations have been added.
+
+
+## Consent-gated staging migration — 10 November 2026
+
+Applied `20261110221751_discover_consent_gated_menu_staging` to Discover DEV and committed its exact SQL source. It adds a service-role-only SECURITY INVOKER routine that stages only complete, venue-confirmed, non-disputed observations with explicit per-observation contribution consent and a current non-withdrawn aggregate-research consent record. Payloads exclude consumer identifiers, private data, storage paths and signed URLs. Candidates remain pending and the ledger blocked until human review. Runtime execution returned zero; the live Discover DEV project has no menu observations and no staged candidates, so no user data was transferred.
