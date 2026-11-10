@@ -42,3 +42,45 @@ export async function correctObservationItem(db:SupabaseClient,subjectId:string,
  const{data,error}=await db.rpc('discover_correct_observation_item',{p_subject:subjectId,p_observation:observationId,p_item:itemId,p_changes:{...(c.name!==undefined?{name:c.name}:{}),...(c.section!==undefined?{section:c.section}:{}),...(c.description!==undefined?{description:c.description}:{}),...(c.price!==undefined?{price_text:c.price}:{}),...(c.category!==undefined?{beverage_category:c.category}:{})}});
  if(error){if(error.code==='P0002')return ok({error:'observation_item_not_found'},404);if(error.code==='22023')return ok({error:'invalid_correction'},400);log?.('observation item correction failed',error);return ok({error:'correction_save_failed'},500)}return ok({item:data,saved:true});
 }
+
+
+/** Read the caller's contribution-permission state for one owned observation. */
+export async function getObservationContribution(db: SupabaseClient, subjectId: string, observationId: string, log?: Log): Promise<Result> {
+  if (!z.string().uuid().safeParse(observationId).success) return ok({ error: 'observation_not_found' }, 404);
+  const { data: observation, error: lookupError } = await db.from('menu_observations')
+    .select('id,status').eq('id', observationId).eq('consumer_id', subjectId).maybeSingle();
+  if (lookupError || !observation) return ok({ error: 'observation_not_found' }, 404);
+  const { data, error } = await db.from('observation_contribution_grants')
+    .select('id,policy_version,granted_at,withdrawn_at')
+    .eq('observation_id', observationId).eq('consumer_id', subjectId)
+    .is('withdrawn_at', null).maybeSingle();
+  if (error) { log?.('contribution permission lookup failed', error); return ok({ error: 'contribution_permission_unavailable' }, 500); }
+  return ok({ granted: !!data, policyVersion: data?.policy_version ?? null, grantedAt: data?.granted_at ?? null });
+}
+
+/** Create an explicit, observation-specific contribution grant after review. */
+export async function grantObservationContribution(db: SupabaseClient, subjectId: string, observationId: string, body: unknown, log?: Log): Promise<Result> {
+  const parsed = z.object({ policyVersion: z.literal('discover-harmony-contribution-v1') }).strict().safeParse(body);
+  if (!parsed.success) return ok({ error: 'invalid_contribution_permission' }, 400);
+  if (!z.string().uuid().safeParse(observationId).success) return ok({ error: 'observation_not_found' }, 404);
+  const { data, error } = await db.rpc('discover_grant_observation_contribution', {
+    p_subject: subjectId, p_observation: observationId, p_policy_version: parsed.data.policyVersion
+  });
+  if (error) {
+    if (error.code === '42501') return ok({ error: 'observation_not_eligible' }, 409);
+    if (error.code === '23505') return ok({ error: 'contribution_permission_already_active' }, 409);
+    log?.('contribution permission grant failed', error);
+    return ok({ error: 'contribution_permission_failed' }, 500);
+  }
+  return ok({ granted: true, grantId: data, policyVersion: parsed.data.policyVersion }, 201);
+}
+
+/** Withdraw the active contribution grant while preserving a separate audit event. */
+export async function withdrawObservationContribution(db: SupabaseClient, subjectId: string, observationId: string, log?: Log): Promise<Result> {
+  if (!z.string().uuid().safeParse(observationId).success) return ok({ error: 'observation_not_found' }, 404);
+  const { data, error } = await db.rpc('discover_withdraw_observation_contribution', {
+    p_subject: subjectId, p_observation: observationId
+  });
+  if (error) { log?.('contribution permission withdrawal failed', error); return ok({ error: 'contribution_withdrawal_failed' }, 500); }
+  return ok({ withdrawn: data === true, alreadyInactive: data !== true });
+}
