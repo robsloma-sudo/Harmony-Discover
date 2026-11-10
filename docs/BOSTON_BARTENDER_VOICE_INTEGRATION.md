@@ -74,3 +74,17 @@ A Vitest suite covers missing authentication, valid grant handling, and rejectio
 `src/voice/voiceSessionCoordinator.ts` now coordinates the client-side sequence through injected platform adapters. It requires a separately confirmed consent flag before requesting OS microphone permission; it requests a short-lived grant only after permission is granted; and it enters `listening` only after the audio transport adapter's `connect()` resolves. Stop and interrupt close the adapter and return the state machine to a non-listening state. This is an orchestration layer only: no Expo microphone/audio transport adapter is implemented, and the server endpoint remains undeployed.
 
 A new Vitest suite covers consent gating, permission denial, successful transport readiness, and resource closure. It uses a mocked fetch response and injected adapter; it does not contact Supabase or a voice provider.
+
+## Implementation update — source branch, not deployed
+
+The source branch now contains `supabase/functions/discover-voice-session/index.ts`. It authenticates the signed-in user, checks the separate voice-consent record, applies the per-user DEV rate limit, and requests a 10-minute Realtime client secret. The endpoint source is not evidence of a deployed function; Discover DEV must still be checked independently.
+
+The current source-hardening branch adds:
+- exact browser-origin allow-listing through the server-side `DISCOVER_ALLOWED_ORIGINS` comma-separated environment variable;
+- `Cache-Control: no-store, private` and `Pragma: no-cache` on credential responses;
+- JSON content-type, strict request-shape, and 2 KiB body-size checks;
+- explicit instructions that user-authored memory values are untrusted data, not system instructions.
+
+For browser use, set `DISCOVER_ALLOWED_ORIGINS` in the Discover DEV Edge Function secrets/config to the exact HTTPS origin(s), without trailing slash (for example, the actual approved Netlify preview origin). Do not put this setting in an `EXPO_PUBLIC_*` variable. Requests without an Origin header are allowed for native clients; browser origins not on the allow-list are rejected.
+
+The Boston migration remains unapplied. Do not deploy the function until the migration ledger and source migration history have been reconciled. The current DEV ledger contains timestamped migrations through `20261110071228`, including `0011_pg_net_out_of_public` and `0012_menu_reading`; the branch's numbered `0011_marty_bartender.sql` is not a safe direct match for that ledger. Recover the complete applied migration source history before creating a correctly versioned follow-on migration.
