@@ -83,3 +83,33 @@ The original Harmony production project was not modified. No production credenti
 7. Test menu-reader rate limits both through the API and by direct function invocation.
 8. Complete Marty voice consent, rate-limit, expiry, CORS, browser WebRTC and real audio audition tests. Native iOS transport remains unvalidated.
 9. Only after successful DEV acceptance, request separate approval for any production integration. No PR merge, Netlify publish, production write or production deployment is authorized by this audit.
+
+
+## Quality-gate reconciliation — completed in Discover DEV
+
+Migration `20261110235839_discover_observation_quality_gate_v1` was applied to Discover DEV and committed to the source branch.
+
+The earlier `discover_observation_qualifies` helper required `venue_id IS NOT NULL`, but the actual consumer venue-confirmation API only stores a consumer-confirmed venue name in `venue_name_submitted` and sets `venue_confirmed=true`. No venue-resolution workflow is implemented in this source path. The helper therefore blocked otherwise eligible user-confirmed observations based on a UUID that the UI cannot currently resolve.
+
+The revised, shared quality gate:
+- requires all pages complete;
+- requires `min_ocr_confidence >= 0.90` (NULL fails closed);
+- requires zero unresolved flags;
+- rejects disputed observations;
+- requires structured menu data saved;
+- requires `venue_confirmed=true` and a non-empty consumer-confirmed/read venue name;
+- no longer requires a non-null `venue_id` until a real venue-resolution workflow exists.
+
+Both the grant RPC and staging routine now call the same helper. The staging evidence records quality gate version `discover-observation-quality-v1`, the actual OCR confidence and the 0.90 minimum threshold. Staging still requires a live observation-specific grant and leaves its sync ledger blocked.
+
+### DEV verification
+
+- Synthetic composite-row checks: valid 0.95 confidence + confirmed venue = true; 0.89 confidence = false; missing confidence = false; missing venue name = false; disputed = false.
+- Grant and stage RPC execute privileges: anon=false, authenticated=false, service_role=true.
+- No observations, grants, staged candidates, review events or ledger rows exist; no real user data was staged.
+- Security Advisor reviewed. Existing INFO findings for RLS-enabled private tables without policies remain expected defense-in-depth behavior because browser roles have no table grants. Auth leaked-password protection remains a separate WARN requiring dashboard configuration.
+- Original Harmony production remains read-only and untouched.
+
+### Remaining acceptance test limitation
+
+No authenticated synthetic observation fixture was inserted. The next test should create disposable test identities and observations in a rollback-only transaction or isolated DEV fixture, exercise grant → stage → withdrawal → replay, then verify every created row is removed or the isolated fixture is reset. Do not use real user data as a test fixture.
