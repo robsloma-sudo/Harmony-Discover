@@ -261,3 +261,12 @@ This table is only a backend gate. No consumer-facing consent wording, affirmati
 ### Legacy API consent-field cleanup
 
 The older Fastify observation route also accepted `consentToContribute` and persisted it to the deprecated `menu_observations.consent_to_contribute` field. Removed that input and write in the Discover source branch. The current mobile client already sends only the versioned menu-processing notice and does not request contribution permission. The new contribution-grant table remains unwired until a distinct, optional, unchecked-by-default consent UI and authenticated grant/revocation API are implemented with reviewed wording.
+
+
+### Contribution permission interaction and staging-state correction — 10 November 2026
+
+Implemented in Discover source: post-review, optional, unchecked-by-default contribution choice with explicit scope and withdrawal UI. Added authenticated GET/POST/DELETE API handlers under `/v1/observations/:id/contribution`; exact policy version validation; owner-scoped transactional grant/withdraw RPCs; immutable grant-event audit rows; regrant support with one active grant per observation. The DEV RPCs are SECURITY INVOKER and service_role-only. No real grant records exist.
+
+Found and corrected two more staging prerequisites while tracing the actual menu-reader path: the reader sets observation status to `ready_for_review` (not `complete`), and the API was not persisting the explicit processing-notice acknowledgement into `consent_to_processing`. The staging function now checks `ready_for_review`; observation creation now validates the exact processing notice version and persists `consent_to_processing=true` only after the existing UI acknowledgement. The reconstructed reader source now records `all_pages_complete` and `structured_menu_saved` after confirming persisted item rows. These are source changes only; the reconstructed reader has not been deployed.
+
+The staging routine still requires `venue_confirmed=true`; no venue-confirmation interaction has been implemented yet. Thus no user data can enter staging. No staging rows or contribution grants exist. The API source changes are not yet in the generated deployed Edge Function bundle and neither Netlify nor Supabase Edge Functions were deployed.
