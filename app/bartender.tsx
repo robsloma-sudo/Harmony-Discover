@@ -200,7 +200,6 @@ export default function BartenderScreen() {
         {lines.length === 0 ? <Text style={s.body}>No conversation yet.</Text> : lines.map(line => <View key={line.id} style={s.line}><Text style={s.lineWho}>{line.who.toUpperCase()}</Text><Text style={s.lineText}>{line.text}</Text></View>)}
       </View>
       <Text style={s.footer}>VOICE AND MEMORY ARE SEPARATE CONSENTS · NO BACKGROUND LISTENING · SESSION TRANSCRIPT IS NOT SAVED AS MEMORY</Text>
-      <audio ref={audioRef as any} />
     </ScrollView>
   );
 }
