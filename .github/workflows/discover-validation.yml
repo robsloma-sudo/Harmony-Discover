@@ -37,6 +37,8 @@ jobs:
           deno-version: v2.x
       - name: TypeScript validation
         run: npm run typecheck
+      - name: Build self-contained Discover API Edge Function
+        run: npm run build:edge
       - name: Validate Discover DEV Edge Functions
         run: |
           deno check --node-modules-dir=auto supabase/functions/discover-voice-session/index.ts
