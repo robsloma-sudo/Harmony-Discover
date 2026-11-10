@@ -247,3 +247,12 @@ A temporary synthetic DEV-only staged candidate was created inside a database te
 GitHub Actions validation completed successfully for commit `f7932b404439ab02656e347018e7926a3393ddfc` (workflow runs 42913768999 and 42913759722). All steps passed: locked dependency install, Node 22 setup, Deno setup, TypeScript validation, both Discover DEV Edge Function checks, full Vitest suite, and Expo web export. This confirms the source branch validates and exports; it does not constitute a Netlify deployment or an audio/device audition.
 
 The deployed Discover DEV `discover-voice-session` function was fetched and compared against the hardening branch source. Its deployed version 4 contains the same origin allow-list, body validation, consent checks, rate limiting, user-approved memory isolation, 60-second client-secret lifetime, and provider error redaction. The required `DISCOVER_ALLOWED_ORIGINS` value and credential presence remain unverified because Supabase function secrets are not readable through the available API. No credential was minted and no audio session was started.
+
+
+### Contribution grant correction — 10 November 2026
+
+The first staging routine incorrectly depended on the legacy `consent_to_contribute` field, despite the contract marking that field deprecated. Corrected in Discover DEV by `20261110222519_discover_observation_contribution_grants`: staging now requires a dedicated observation-specific grant row linked to the same consumer and observation, with a policy version and no withdrawal timestamp. The old flag is no longer referenced by the current function.
+
+Live ACL check: RLS enabled; anon/authenticated have no table privileges; service_role has SELECT/INSERT/UPDATE. Staging function is SECURITY INVOKER, service_role execute only. Counts at verification: zero observations, zero contribution grants, zero staged candidates.
+
+This table is only a backend gate. No consumer-facing consent wording, affirmative capture UI, or grant/revocation endpoint exists yet. Do not create real grants manually; implement and review the actual user-facing permission flow before staging can be used.
