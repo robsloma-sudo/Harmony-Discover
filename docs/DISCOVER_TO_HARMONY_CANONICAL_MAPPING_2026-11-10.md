@@ -57,6 +57,24 @@ Discover already captures menu observations and OCR candidates, while Harmony ha
 - `sources.source_type`, `evidence_class`, `authority_tier`, `access_method`, `licence_status`, and evidence purpose/stage arrays are constrained vocabularies. The integration must use a reviewed source mapping and must never invent authority tier or licence status.
 - `menus.account_id`, `menus.source_id`, and `menus.evidence_url` are required. The integration must resolve a valid Harmony account key, source record, and stable evidence URL/reference before menu creation.
 
+## Existing Harmony canonical menu intake (important discovery)
+
+The original Harmony production project already has a canonical intake path:
+
+1. Edge Function `submit-menu` (ACTIVE v27, `verify_jwt=false`) accepts a server-to-server request guarded by the `x-agent-secret` header.
+2. It validates the account key, publisher-owned HTTPS evidence URL, menu format/confidence, section types, and brand category payload.
+3. It calls the `public.submit_menu(..., p_needs_vision_pass boolean)` RPC.
+4. The RPC is `SECURITY DEFINER`, fixed to `search_path=public, pg_temp`, and executable only by `service_role` and `postgres` (not `anon`, `authenticated`, or `PUBLIC`).
+5. The RPC creates menu/section/item/brand-link rows, resolves source IDs from `sources.source_code`, computes content hashes, deduplicates identical captures, handles current-menu supersession/alternate captures, and performs cocktail-reference inference when appropriate.
+
+The active `promote-menus` worker is a separate feeder for the existing `staging_menu_extract` queue. It selects quality-approved rows, requires the pre-registered `NBCC-FIRECRAWL-MENUS` source, and submits batches through `submit-menu`. It is not a generic Discover integration worker and must not be pointed at Discover tables.
+
+**Recommended future integration:** after explicit production authorization, build a narrowly scoped server-side adapter that converts approved Discover candidates into the existing `submit-menu` payload and calls the canonical intake path. Do not write directly to `menus`, `menu_sections`, `menu_items`, or `menu_item_brands`; preserve the existing canonical dedupe/supersession logic.
+
+**Hard evidence constraint:** `submit-menu` requires a publisher-owned HTTPS `evidence_url` and rejects scraper/cache URLs. A Discover photo upload does not automatically supply such a URL. If there is no stable, permitted public source URL (or a separately approved new evidence intake contract), the candidate cannot use this existing path and must remain in Discover staging. Do not substitute a temporary signed Storage URL or invent a public URL.
+
+The `AGENT_SECRET` was not retrieved. No request was sent to the production intake endpoint, and no production data was written.
+
 ## Production write-boundary observations
 
 The inspected Harmony tables expose SELECT policies for authenticated readers and dedicated Harmony/menu-designer roles. The inspected `menus`, `menu_sections`, `menu_items`, `sources`, `field_provenance`, and `observation_reviews` tables had no authenticated INSERT/UPDATE/DELETE policies in the inspected policy inventory. This is consistent with a server-mediated canonical write path; the integration must not attempt direct browser writes.
