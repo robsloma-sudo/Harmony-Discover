@@ -1,0 +1,32 @@
+name: Discover development validation
+
+on:
+  push:
+    branches:
+      - discover-source-import-2026-11-10
+  pull_request:
+    branches:
+      - discover-source-import-2026-11-10
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out development branch
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: TypeScript validation
+        run: npm run typecheck
+      - name: Export web preview
+        run: npm run build:web
