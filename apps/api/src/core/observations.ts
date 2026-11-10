@@ -101,3 +101,29 @@ export async function confirmObservationVenue(db: SupabaseClient, subjectId: str
   if (!data) return ok({ error: 'observation_not_eligible' }, 409);
   return ok({ confirmed: true, venueName: data.venue_name_submitted });
 }
+
+
+/** List active contribution permissions so a signed-in user can manage or withdraw them later. */
+export async function listObservationContributions(db: SupabaseClient, subjectId: string, log?: Log): Promise<Result> {
+  const { data, error } = await db.from('observation_contribution_grants')
+    .select('id,observation_id,policy_version,granted_at,menu_observations!inner(venue_name_submitted,venue_name_read,captured_at,status)')
+    .eq('consumer_id', subjectId).is('withdrawn_at', null)
+    .order('granted_at', { ascending: false }).limit(100);
+  if (error) {
+    log?.('contribution permission list failed', error);
+    return ok({ error: 'contribution_permissions_unavailable' }, 500);
+  }
+  const contributions = (data ?? []).map((row: any) => {
+    const observation = Array.isArray(row.menu_observations) ? row.menu_observations[0] : row.menu_observations;
+    return {
+      grantId: row.id,
+      observationId: row.observation_id,
+      policyVersion: row.policy_version,
+      grantedAt: row.granted_at,
+      venueName: observation?.venue_name_submitted || observation?.venue_name_read || 'Unlabeled venue',
+      capturedAt: observation?.captured_at ?? null,
+      status: observation?.status ?? 'unknown',
+    };
+  });
+  return ok({ contributions });
+}
