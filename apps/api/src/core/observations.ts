@@ -84,3 +84,19 @@ export async function withdrawObservationContribution(db: SupabaseClient, subjec
   if (error) { log?.('contribution permission withdrawal failed', error); return ok({ error: 'contribution_withdrawal_failed' }, 500); }
   return ok({ withdrawn: data === true, alreadyInactive: data !== true });
 }
+
+
+/** Confirm the venue identity after the user reviews the extracted menu. */
+export async function confirmObservationVenue(db: SupabaseClient, subjectId: string, observationId: string, body: unknown, log?: Log): Promise<Result> {
+  const parsed = z.object({ venueName: z.string().trim().min(1).max(180) }).strict().safeParse(body);
+  if (!parsed.success) return ok({ error: 'invalid_venue_confirmation' }, 400);
+  if (!z.string().uuid().safeParse(observationId).success) return ok({ error: 'observation_not_found' }, 404);
+  const { data, error } = await db.from('menu_observations').update({
+    venue_name_submitted: parsed.data.venueName,
+    venue_confirmed: true,
+  }).eq('id', observationId).eq('consumer_id', subjectId).eq('status', 'ready_for_review')
+    .select('id,venue_name_submitted,venue_confirmed').maybeSingle();
+  if (error) { log?.('venue confirmation failed', error); return ok({ error: 'venue_confirmation_failed' }, 500); }
+  if (!data) return ok({ error: 'observation_not_eligible' }, 409);
+  return ok({ confirmed: true, venueName: data.venue_name_submitted });
+}
