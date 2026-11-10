@@ -119,3 +119,17 @@ export async function confirmObservationVenue(observationId: string, venueName: 
     body: JSON.stringify({ venueName }),
   });
 }
+
+export type ActiveMenuContribution = {
+  grantId: string;
+  observationId: string;
+  policyVersion: string;
+  grantedAt: string;
+  venueName: string;
+  capturedAt: string | null;
+  status: string;
+};
+export async function listActiveMenuContributions(): Promise<ActiveMenuContribution[]> {
+  const result = await request('/v1/me/contributions');
+  return Array.isArray(result.contributions) ? result.contributions as ActiveMenuContribution[] : [];
+}
