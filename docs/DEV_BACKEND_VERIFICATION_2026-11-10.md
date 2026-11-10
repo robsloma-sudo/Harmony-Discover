@@ -221,3 +221,17 @@ CI passed on commit `bfd8baca95a833613e02cdf0b1c0e3ab306f30ed`, including TypeSc
 - New candidates start pending; sync ledger starts blocked. This is intentional: there is no automatic promotion or production sync worker.
 - Runtime no-op test returned 0. Live DEV contains zero menu observations and zero staged candidates, so no personal data was staged. A consented fixture test remains to be run after the first authorized test record is created.
 - Security advisor still reports 18 RLS-enabled/no-policy informational findings, including the service-only integration schema tables. The schema is inaccessible to anon/authenticated and service_role-only; no broad policies were added.
+
+
+### Reviewer state machine and evidence immutability — 10 November 2026
+
+Applied Discover DEV migrations:
+- `20261110221859_discover_sync_review_state_machine`
+- `20261110221907_discover_sync_review_validation`
+- `20261110221926_discover_sync_immutable_evidence_audit`
+
+The service-role-only `harmony_sync.record_candidate_review(uuid,text,text,text)` routine accepts only approved, rejected, conflict, or withdrawn decisions; requires reviewer label and reason; locks the pending candidate; requires a matching sync-ledger row; appends a review event; and keeps the ledger blocked. Approval cannot enqueue or authorize a Harmony production write.
+
+A BEFORE UPDATE trigger prevents mutation of staged evidence, source identity/version, confidence, permission basis/reference, payload hash, and idempotency key. Review events are append-only at the table-privilege level: service_role has SELECT/INSERT but no UPDATE/DELETE. Live ACL verification confirms anon/authenticated have no schema USAGE or review-event access; service_role has SELECT/INSERT and no UPDATE/DELETE. The review and staging functions are SECURITY INVOKER and executable only by service_role.
+
+All three migration filenames now match the exact versions in the live Discover DEV ledger. No staging records exist, so reviewer transitions have not yet been tested with a consented fixture.
