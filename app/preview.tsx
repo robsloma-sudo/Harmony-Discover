@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
 import { useAuth } from '../src/auth/AuthContext';
-import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
+import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, confirmObservationVenue, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
 
 const reviewField = { backgroundColor: '#171B20', color: '#F2F0EA', borderWidth: 1, borderColor: '#39414A', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 } as const;
 
@@ -20,6 +20,8 @@ export default function Preview() {
   const [message, setMessage] = useState('');
   const [pageOrientations, setPageOrientations] = useState<Array<'portrait' | 'landscape' | 'square' | 'unknown'>>([]);
   const [contributionGranted, setContributionGranted] = useState(false);
+  const [venueName, setVenueName] = useState('');
+  const [venueConfirmed, setVenueConfirmed] = useState(false);
   const [contributionBusy, setContributionBusy] = useState(false);
 
   useEffect(() => {
@@ -43,6 +45,8 @@ export default function Preview() {
       setObservationId(result.id);
       setItems(result.items || []);
       setContributionGranted(false);
+      setVenueName(result.venue_name_read || '');
+      setVenueConfirmed(false);
       if (result.status === 'ready_for_review') {
         try { const permission = await getObservationContribution(result.id); setContributionGranted(permission.granted); }
         catch { setMessage('Menu read succeeded, but contribution-permission status could not be checked.'); }
@@ -127,10 +131,24 @@ export default function Preview() {
           </View>
         </>}
       </View>)}
+      <View style={{ marginTop: 18, padding: 14, borderWidth: 1, borderColor: '#39414A', borderRadius: 12, gap: 10 }}>
+        <Text style={styles.eyebrow}>VENUE VERIFICATION</Text>
+        <Text style={styles.itemTitle}>Confirm where this menu came from.</Text>
+        <Text style={styles.categoryDesc}>Check the venue name carefully. Harmony research needs a confirmed source, not a guess from the image reader.</Text>
+        <TextInput value={venueName} onChangeText={value => { setVenueName(value); setVenueConfirmed(false); }} placeholder="Venue name" placeholderTextColor="#858C95" style={reviewField} />
+        {venueConfirmed ? <Text style={{ color: '#B9D6C0', fontSize: 13, fontWeight: '700' }}>Venue confirmed: {venueName}</Text> :
+          <Pressable style={[styles.secondary, (!venueName.trim() || contributionBusy) && { opacity: 0.5 }]} disabled={!venueName.trim() || contributionBusy || !observationId} onPress={async () => {
+            if (!observationId) return;
+            setContributionBusy(true); setMessage('');
+            try { await confirmObservationVenue(observationId, venueName.trim()); setVenueConfirmed(true); setMessage('Venue identity confirmed for this scan.'); }
+            catch (e) { setMessage(e instanceof Error ? e.message : 'Could not confirm this venue.'); }
+            finally { setContributionBusy(false); }
+          }}><Text style={styles.secondaryText}>{contributionBusy ? 'Saving…' : 'Confirm venue'}</Text></Pressable>}
+      </View>
       <View style={{ marginTop: 18, padding: 14, borderWidth: 1, borderColor: '#66563D', borderRadius: 12, gap: 10 }}>
         <Text style={styles.eyebrow}>OPTIONAL · SEPARATE PERMISSION</Text>
         <Text style={styles.itemTitle}>Contribute this menu to Harmony research?</Text>
-        <Text style={styles.categoryDesc}>Only the extracted menu details shown above (item names, descriptions, prices, venue name and scan date) may be sent to a private review queue for possible inclusion in Harmony's beverage knowledge base. A person must review them. This does not publish the menu automatically.</Text>
+        <Text style={styles.categoryDesc}>Only the extracted menu details shown above (item names, descriptions, prices, your confirmed venue name and scan date) may be sent to a private review queue for possible inclusion in Harmony's beverage knowledge base. A person must review them. This does not publish the menu automatically.</Text>
         <Text style={styles.categoryDesc}>Your menu photos, personal conversations, private memories and account details are not included in this contribution. This choice is separate from permission to process the photos for your scan.</Text>
         {contributionGranted ? <>
           <Text style={{ color: '#B9D6C0', fontSize: 13, fontWeight: '700' }}>Contribution permission is active for this scan.</Text>
@@ -142,8 +160,8 @@ export default function Preview() {
             finally { setContributionBusy(false); }
           }}><Text style={styles.secondaryText}>{contributionBusy ? 'Withdrawing…' : 'Withdraw contribution permission'}</Text></Pressable>
         </> : <>
-          <Text style={styles.categoryDesc}>Nothing is contributed unless you choose the button below. You can withdraw permission later.</Text>
-          <Pressable style={[styles.primary, (contributionBusy || !observationId) && { opacity: 0.5 }]} disabled={contributionBusy || !observationId || items.length === 0} onPress={async () => {
+          <Text style={styles.categoryDesc}>Confirm the venue above first. Nothing is contributed unless you choose the button below. You can withdraw permission later.</Text>
+          <Pressable style={[styles.primary, (contributionBusy || !observationId) && { opacity: 0.5 }]} disabled={contributionBusy || !observationId || items.length === 0 || !venueConfirmed} onPress={async () => {
             if (!observationId) return;
             setContributionBusy(true); setMessage('');
             try { await grantObservationContribution(observationId); setContributionGranted(true); setMessage('Your separate contribution permission has been saved. The menu is not yet approved or published.'); }
