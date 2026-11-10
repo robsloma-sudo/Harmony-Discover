@@ -89,7 +89,7 @@ export default function Home() {
             <View style={s.voiceOfflineDot} />
           </Pressable>
           <View style={s.bartenderCopy}>
-            <View style={s.bartenderTopline}><Text style={s.bartenderName}>THE BARTENDER</Text><Text style={s.bartenderStatus}>VOICE OFFLINE</Text></View>
+            <View style={s.bartenderTopline}><Text style={s.bartenderName}>BOSTON BARTENDER</Text><Text style={s.bartenderStatus}>VOICE OFFLINE</Text></View>
             <Text style={s.bartenderLine}>“You gonna scan that menu, or just admire it?”</Text>
             {bartenderExpanded && <Text style={s.bartenderSubline}>Voice connection is not live yet. Tap again any time to keep him out of your way.</Text>}
             <View style={s.voiceStatus}><View style={s.voiceStatusDot} /><Text style={s.voiceStatusText}>VOICE NOT CONNECTED</Text></View>
