@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
 import { useAuth } from '../src/auth/AuthContext';
-import { processMenuPhotos, saveMenuItemCorrection, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
+import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
 
 const reviewField = { backgroundColor: '#171B20', color: '#F2F0EA', borderWidth: 1, borderColor: '#39414A', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 } as const;
 
@@ -19,6 +19,8 @@ export default function Preview() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [pageOrientations, setPageOrientations] = useState<Array<'portrait' | 'landscape' | 'square' | 'unknown'>>([]);
+  const [contributionGranted, setContributionGranted] = useState(false);
+  const [contributionBusy, setContributionBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -40,6 +42,11 @@ export default function Preview() {
       const result = await processMenuPhotos(pages, source, setMessage);
       setObservationId(result.id);
       setItems(result.items || []);
+      setContributionGranted(false);
+      if (result.status === 'ready_for_review') {
+        try { const permission = await getObservationContribution(result.id); setContributionGranted(permission.granted); }
+        catch { setMessage('Menu read succeeded, but contribution-permission status could not be checked.'); }
+      }
       setEditingId(null);
       if (result.status !== 'ready_for_review') setMessage(`Scan status: ${result.status}. Some pages may need another attempt.`);
       if (!result.items?.length) setMessage('No readable menu items were returned. Try a clearer photo with the menu filling the frame.');
@@ -120,6 +127,31 @@ export default function Preview() {
           </View>
         </>}
       </View>)}
+      <View style={{ marginTop: 18, padding: 14, borderWidth: 1, borderColor: '#66563D', borderRadius: 12, gap: 10 }}>
+        <Text style={styles.eyebrow}>OPTIONAL · SEPARATE PERMISSION</Text>
+        <Text style={styles.itemTitle}>Contribute this menu to Harmony research?</Text>
+        <Text style={styles.categoryDesc}>Only the extracted menu details shown above (item names, descriptions, prices, venue name and scan date) may be sent to a private review queue for possible inclusion in Harmony's beverage knowledge base. A person must review them. This does not publish the menu automatically.</Text>
+        <Text style={styles.categoryDesc}>Your menu photos, personal conversations, private memories and account details are not included in this contribution. This choice is separate from permission to process the photos for your scan.</Text>
+        {contributionGranted ? <>
+          <Text style={{ color: '#B9D6C0', fontSize: 13, fontWeight: '700' }}>Contribution permission is active for this scan.</Text>
+          <Pressable style={styles.secondary} disabled={contributionBusy} onPress={async () => {
+            if (!observationId) return;
+            setContributionBusy(true); setMessage('');
+            try { await withdrawObservationContribution(observationId); setContributionGranted(false); setMessage('Contribution permission withdrawn for this scan.'); }
+            catch (e) { setMessage(e instanceof Error ? e.message : 'Could not withdraw contribution permission.'); }
+            finally { setContributionBusy(false); }
+          }}><Text style={styles.secondaryText}>{contributionBusy ? 'Withdrawing…' : 'Withdraw contribution permission'}</Text></Pressable>
+        </> : <>
+          <Text style={styles.categoryDesc}>Nothing is contributed unless you choose the button below. You can withdraw permission later.</Text>
+          <Pressable style={[styles.primary, (contributionBusy || !observationId) && { opacity: 0.5 }]} disabled={contributionBusy || !observationId || items.length === 0} onPress={async () => {
+            if (!observationId) return;
+            setContributionBusy(true); setMessage('');
+            try { await grantObservationContribution(observationId); setContributionGranted(true); setMessage('Your separate contribution permission has been saved. The menu is not yet approved or published.'); }
+            catch (e) { setMessage(e instanceof Error ? e.message : 'Could not save contribution permission.'); }
+            finally { setContributionBusy(false); }
+          }}><Text style={styles.primaryText}>{contributionBusy ? 'Saving permission…' : 'Yes, allow this menu for research'}</Text></Pressable>
+        </>}
+      </View>
       <Pressable style={styles.secondary} onPress={() => { clear(); router.replace('/'); }}><Text style={styles.secondaryText}>Finish scan</Text></Pressable>
     </>}
   </Screen>;
