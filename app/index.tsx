@@ -7,7 +7,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 
-const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#AEB7C1', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
+const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
 export default function Home() {
   const camera = useRef<CameraView>(null);
