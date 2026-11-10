@@ -116,3 +116,12 @@ This contract does not authorize automatic consumer profiling, conversation inge
 Migration `20261110222519_discover_observation_contribution_grants` adds the observation-specific grant table and replaces the staging routine. The routine no longer reads the deprecated `consent_to_contribute` flag. It requires a grant row linked to the same observation and consumer, with a policy version and no withdrawal timestamp. RLS is enabled; anon/authenticated have no table privileges; service_role has SELECT/INSERT/UPDATE. The staging function is SECURITY INVOKER and service_role-only.
 
 The table is not yet wired to consumer-facing consent capture or revocation. No grants are present in DEV. Do not create a grant for a real observation until the consent notice, affirmative UI, API, and withdrawal behavior are implemented and reviewed.
+
+
+## Implemented contribution-permission interaction (DEV source only)
+
+The menu-review screen now offers a separate, affirmative opt-in after extraction results are shown. The choice is not preselected and is not part of the menu-photo processing acknowledgement. The notice limits the proposed contribution to extracted menu details (item names, descriptions, prices, venue name and scan date) for a private human-review queue; it says the menu is not automatically published and excludes menu photos, private conversations, memories and account details. The screen also provides a withdrawal action.
+
+Authenticated API source handlers support GET, POST and DELETE at `/v1/observations/:id/contribution`. The server uses the authenticated subject ID, validates the exact policy version, and calls service-role-only transactional database functions. Grants require an observation owned by the caller and currently in `ready_for_review`. Withdrawal marks the active grant withdrawn and writes a separate immutable grant-event record; a later re-grant can create a new grant while the partial unique index permits only one active grant per observation.
+
+The DEV schema now has a grant-event audit table and two service-role-only SECURITY INVOKER RPCs. Regrant/withdraw history is preserved. No real grants exist in DEV. These API changes are source-branch only; the generated `discover-api` deployment bundle and Netlify app have not been deployed.
