@@ -125,3 +125,12 @@ The function is SECURITY INVOKER and executable only by `service_role`; anon/aut
 Discover DEV now has a service-role-only `harmony_sync.record_candidate_review(uuid,text,text,text)` routine. It accepts `approved`, `rejected`, `conflict`, or `withdrawn`; requires a reviewer label and reason; locks a pending candidate; checks its sync-ledger row; appends a review event; and deliberately leaves the ledger `blocked`. A reviewer approval does not authorize or queue a production write.
 
 A database trigger makes source identity, source version, payload, evidence, confidence, permission basis/reference, payload hash, and idempotency key immutable after staging. Review events are append-only for service_role (SELECT/INSERT only; no UPDATE/DELETE). Live privilege checks confirm anon/authenticated cannot access the private schema and service_role cannot update/delete review events. These changes are DEV-only and have not been exercised against a consented test fixture because the project currently has no menu observations.
+
+
+## Implementation correction — observation-specific contribution grant
+
+The initial staging function briefly relied on the legacy `menu_observations.consent_to_contribute` flag. The ingestion contract itself correctly identified that field as deprecated, so that first gate was not sufficiently specific. It has been superseded by migration `20261110222519_discover_observation_contribution_grants`.
+
+The current staging function no longer reads `consent_to_contribute`. It requires a dedicated row in `public.observation_contribution_grants`, joined to the same observation and consumer, with a versioned policy and no withdrawal timestamp. The table has RLS enabled; anon/authenticated have no table privileges; service_role has SELECT/INSERT/UPDATE; the staging function is SECURITY INVOKER and executable only by service_role. Live verification confirmed all those privileges.
+
+The live DEV project currently has zero menu observations, zero contribution grants, and zero staged candidates. The new table is a persistence gate only: there is not yet a consumer-facing consent capture flow or an API to create/revoke a grant. Do not create grants manually for real users or stage records until the user-facing notice and affirmative consent interaction have been reviewed and implemented. The old migration remains in history but its function body has been replaced by this stricter implementation.
