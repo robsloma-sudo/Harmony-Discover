@@ -69,8 +69,15 @@ export async function processMenuPhotos(uris: string[], source: 'camera' | 'gall
     body: JSON.stringify({ processingNoticeVersion: 'discover-menu-processing-v1', source }),
   });
   const id = String(created.id);
-  for (const [index, blob] of preparedForms.entries()) {
-    await uploadPageWithRetry(id, blob, index + 1);
+  try {
+    for (const [index, blob] of preparedForms.entries()) {
+      await uploadPageWithRetry(id, blob, index + 1);
+    }
+  } catch (uploadError) {
+    // Best-effort cleanup prevents a partial upload from lingering in DEV.
+    try { await request(`/v1/observations/${id}`, { method: 'DELETE' }); }
+    catch { /* Keep the original page-upload error visible to the user. */ }
+    throw uploadError;
   }
   await request(`/v1/observations/${id}/complete`, { method: 'POST' });
   const readResult = await request(`/v1/observations/${id}/read`, { method: 'POST' });
