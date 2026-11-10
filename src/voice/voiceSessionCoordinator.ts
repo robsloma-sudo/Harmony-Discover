@@ -60,7 +60,11 @@ export class VoiceSessionCoordinator {
       this.current = { ...this.current, error: 'Could not request microphone permission.' };
       return this.current;
     }
-    if (!this.isCurrent(id)) return this.current;
+    if (!this.isCurrent(id)) {
+      // Permission may resolve after stop()/interrupt(); release any stream acquired late.
+      await this.config.platform.close().catch(() => undefined);
+      return this.current;
+    }
     if (permission !== 'granted') {
       this.send({ type: 'PERMISSION_DENIED' });
       this.current = { ...this.current, error: 'Microphone permission was not granted. The camera remains available.' };
@@ -71,6 +75,8 @@ export class VoiceSessionCoordinator {
     const grant = await requestVoiceSession(this.config);
     if (!this.isCurrent(id)) return this.current;
     if (!grant.ok) {
+      // Permission was granted and a stream may be open even though the server grant failed.
+      await this.config.platform.close().catch(() => undefined);
       this.send({ type: 'FAILED' });
       this.current = { ...this.current, error: grant.message };
       return this.current;
