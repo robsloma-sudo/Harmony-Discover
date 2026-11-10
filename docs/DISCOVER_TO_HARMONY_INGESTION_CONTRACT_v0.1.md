@@ -50,7 +50,8 @@ The older `consent_to_contribute` field is marked deprecated in the live Discove
 - `evidence`: source URL or asset reference, capture timestamp, page/position, and content hash where available.
 - `evidence_state`: e.g. `menu_observed`, `text_verified`, `reviewed`.
 - `confidence`: numeric 0–1 only when the producing method defines a calibrated interpretation; otherwise null.
-- `permission_basis`: explicit policy/consent code and version where required; never store raw consent text here.
+- `permission_basis`: constrained to `public_source_license`, `explicit_contribution_consent`, or `operator_attested_permission`; never treat the menu-processing notice as this permission.
+- `permission_reference`: required audit reference (e.g. stable license/source URL, versioned consent notice ID, or operator approval record ID), 1–500 characters; do not store raw consent text here.
 - `payload_hash`: deterministic hash of normalized allow-listed payload.
 - `idempotency_key`: deterministic key derived from source system + table + record ID + source version + entity type.
 - `review_status`: `pending`, `approved`, `rejected`, or `conflict`.
