@@ -106,3 +106,16 @@ The deployed `discover-retention` v1 handler independently checks the supplied `
 The deployed `discover-menu-read` v3 source is not present in the inspected repository source tree (GitHub code search found no matching source path). The `discover-api` router applies a per-user `observations` rate limit before proxying to the reader, but `discover-menu-read` is also independently addressable as a public Supabase Edge Function URL. Its current handler verifies the JWT and observation ownership but does not call `discover_rate_limit` itself before invoking Anthropic.
 
 Therefore a signed-in user can bypass the API router's rate limit by calling the reader function directly with their own observation ID, potentially increasing paid model usage. This is an authenticated cost-abuse risk, not an unauthenticated data-read bypass. Add an independent per-user rate limit inside the reader handler (and keep the outer API limit as defense in depth), then test both direct and proxied paths. Recover the canonical reader source before patching; do not edit generated output only.
+
+## Deletion and retention function review
+
+Read-only inspection of deployed database function definitions and ACLs confirmed:
+- `discover_check_cron_secret(text)` requires a supplied value of at least 32 characters and compares it to the Vault secret named `discover_cron_secret`. Execute permission is service-role-only.
+- `discover_photos_due_for_deletion(...)` selects qualifying observations that have a later qualifying observation at the same venue or have reached the configured photo age cap. It returns original asset paths and normalized extraction paths.
+- `discover_subject_storage_paths(uuid)` returns distinct original and normalized object paths for a subject's non-deleted assets.
+- `discover_start_deletion(uuid)` records a deletion request using a subject hash rather than the raw subject ID.
+- `discover_update_deletion(...)` updates the request status and completion metadata.
+- `discover_delete_subject_data(uuid)` removes learning questions/events/consent, private taste profiles, and menu observations; observation-related records cascade from observations.
+- The sensitive export, deletion, retention and rate-limit routines inspected are executable by `service_role`, not `anon` or `authenticated`.
+
+The deployed account handler's intended order is: record deletion receipt → remove Storage objects → record storage removal → delete subject rows → delete Auth user → close receipt. A failure records a failed state for retry. This is a sound fail-visible pattern, but no end-to-end deletion was attempted because there are currently zero observation rows and no test account/fixture was authorized. Validate retries, already-missing Storage objects, auth deletion, and residual hashed audit-record retention in a dedicated DEV test fixture before launch.
