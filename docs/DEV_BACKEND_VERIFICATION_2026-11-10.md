@@ -133,7 +133,7 @@ The recovered behavior:
 - Calls Anthropic's `claude-haiku-4-5` (unless `DISCOVER_MENU_MODEL` overrides it) with a strict transcription tool schema.
 - Persists extracted items and extraction payloads, then marks observations ready for user review.
 
-The reconstructed source adds an independent database-backed `discover_rate_limit` call, bucket `menu_read`, 10 calls per subject per 60 seconds, and fail-closed behavior. It also adds explicit browser-origin allow-listing and a 2 KiB JSON body limit. It is labeled as reconstructed and must be reviewed against the live artifact before deployment. No live function was replaced.
+The reconstructed source adds an independent database-backed `discover_rate_limit` call, bucket `menu_read`, 10 requests per subject per 60 seconds, and fail-closed behavior. A second limiter is called immediately before each Anthropic request: bucket `menu_read_page`, 20 actual model calls per subject per 60 seconds. This prevents one 12-page request from multiplying a request-level limit into 120 paid model calls. It also adds explicit browser-origin allow-listing and a 2 KiB JSON body limit. It is labeled as reconstructed and must be reviewed against the live artifact before deployment. No live function was replaced.
 
 ### First automated CI execution exposed the real baseline
 
@@ -150,3 +150,5 @@ The CI workflow was corrected to:
 - then run the full Vitest suite and Expo web export.
 
 The new workflow run is in progress. No green validation result is claimed until the latest run completes. The Fastify API workspace remains a separate build task; it is not being hidden by claiming that root app typecheck validates it.
+
+The recovered tool schema includes a `brands` array, and the full model tool payload is retained in `observation_extractions.ocr_payload`. The current normalized `observation_items` table has no dedicated brand column, so brand values are not promoted to normalized item fields yet. Do not silently overload `listed_ingredients`; if product requirements need first-class brand search/display, add a reviewed schema/API contract in a new timestamped migration after migration-history reconciliation.
