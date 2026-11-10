@@ -30,6 +30,13 @@ export default function Settings() {
       </View>
       <View style={styles.item}>
         <View style={{ flex: 1 }}>
+          <Text style={styles.itemTitle}>Menu contribution permissions</Text>
+          <Text style={styles.categoryDesc}>Review or withdraw optional research contributions</Text>
+        </View>
+        <Pressable onPress={() => router.push('/contributions')}><Text style={styles.price}>OPEN</Text></Pressable>
+      </View>
+      <View style={styles.item}>
+        <View style={{ flex: 1 }}>
           <Text style={styles.itemTitle}>Marty voice & memory</Text>
           <Text style={styles.categoryDesc}>Separate opt-ins, saved memories, and deletion controls</Text>
         </View>
