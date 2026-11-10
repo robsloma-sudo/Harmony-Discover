@@ -35,11 +35,11 @@ The inspected Git branch `discover-source-import-2026-11-10` contains:
 - `0002_observation_processing.sql`
 - `0003_learning_engine.sql`
 - `0010_observation_item_corrections.sql`
-- `0011_marty_bartender.sql` (Marty proposal only; NOT applied)
+- `20261110210500_marty_bartender.sql` (Marty proposal only; NOT applied)
 
 It does not contain the original source SQL for applied migrations 0004–0009, nor the source SQL for `0011_pg_net_out_of_public` and `0012_menu_reading`. The correction migration's source filename also differs from the live ledger name `observation_item_corrections`; its timestamp is 20261110071228. The branch's `0010_observation_item_corrections.sql` is a source filename, not proof that it is live ledger version 0010.
 
-The live database confirms that `observation_item_corrections` exists. The branch's Marty tables and RPC do not exist in DEV:
+The live database confirms that `observation_item_corrections` exists. The timestamped Marty proposal migration is `20261110210500_marty_bartender.sql`; it is source only. The branch's Marty tables and RPC do not exist in DEV:
 - `bartender_voice_consents`
 - `bartender_memories`
 - `bartender_comedy_evaluations`
@@ -87,4 +87,4 @@ The older `docs/DEV_BACKEND_VERIFICATION_2026-11-10.md` records `discover-api` v
 - Live ledger queried from Supabase DEV migration metadata.
 - Live schema, policies, grants, extension inventory and function inventory inspected read-only through Supabase.
 - Source files: `supabase/migrations/0001_discover_observations.sql`, `0002_observation_processing.sql`, `0003_learning_engine.sql`, and `0010_observation_item_corrections.sql`.
-- The migration `0011_marty_bartender.sql` remains proposal source only and is not applied.
+- The migration `20261110210500_marty_bartender.sql` remains proposal source only and is not applied.
