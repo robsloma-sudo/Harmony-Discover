@@ -19,7 +19,7 @@ export default function Home() {
   const [bartenderOpen, setBartenderOpen] = useState(true);
   const [bartenderExpanded, setBartenderExpanded] = useState(false);
   const [capturing, setCapturing] = useState(false);
-  const [torchEnabled, setTorchEnabled] = useState(false);
+  const [flashEnabled, setFlashEnabled] = useState(false);
   const [cameraMessage, setCameraMessage] = useState('');
   const { addPages } = useScan();
 
@@ -53,7 +53,7 @@ export default function Home() {
   return (
     <View style={s.root}>
       {permission.granted ? (
-        <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="back" enableTorch={torchEnabled} />
+        <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="back" flash={flashEnabled ? "on" : "off"} />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.permissionFallback]}>
           <View style={s.permissionCard}>
@@ -106,7 +106,7 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel="Favorites" style={s.utilityControl} onPress={() => router.push('/collection')}><Ionicons name="heart-outline" size={compactDock ? 15 : 17} color={C.ivory} /><Text style={s.utilityLabel}>FAVORITES</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Choose photos from gallery" style={s.primaryControl} onPress={openGallery}><Ionicons name="images-outline" size={compactDock ? 22 : 25} color={C.ivory} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing menu' : 'Capture menu'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel={torchEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, torchEnabled && s.primaryControlActive]} onPress={() => setTorchEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 22 : 25} color={torchEnabled ? C.brass : C.ivory} /></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={flashEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, flashEnabled && s.primaryControlActive]} onPress={() => setFlashEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 22 : 25} color={flashEnabled ? C.brass : C.ivory} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => router.push('/settings')}><Ionicons name="settings-outline" size={compactDock ? 15 : 17} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={bartenderOpen ? 'Hide bartender' : 'Show bartender'} style={s.utilityControl} onPress={() => setBartenderOpen(v => !v)}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={bartenderOpen ? C.brass : C.ivory} /><Text style={[s.utilityLabel, bartenderOpen && s.activeLabel]}>BARTENDER</Text></Pressable>
         </View>
