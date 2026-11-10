@@ -100,3 +100,9 @@ The live `cron.job` catalog contains two active schedules:
 - `discover-rate-limit-sweep`: `47 9 * * *` UTC. It calls `public.discover_purge_rate_limits()`; its latest recorded run on 10 November 2026 at 09:47 UTC succeeded.
 
 The deployed `discover-retention` v1 handler independently checks the supplied `x-discover-cron-secret` by calling `discover_check_cron_secret` with the service-role client. Catalog ACL inspection confirms this verifier and the sensitive retention/account functions are executable by `service_role`, not `anon` or `authenticated`. This is a positive control; the cron secret itself was never retrieved or displayed.
+
+## Additional reader abuse-control gap
+
+The deployed `discover-menu-read` v3 source is not present in the inspected repository source tree (GitHub code search found no matching source path). The `discover-api` router applies a per-user `observations` rate limit before proxying to the reader, but `discover-menu-read` is also independently addressable as a public Supabase Edge Function URL. Its current handler verifies the JWT and observation ownership but does not call `discover_rate_limit` itself before invoking Anthropic.
+
+Therefore a signed-in user can bypass the API router's rate limit by calling the reader function directly with their own observation ID, potentially increasing paid model usage. This is an authenticated cost-abuse risk, not an unauthenticated data-read bypass. Add an independent per-user rate limit inside the reader handler (and keep the outer API limit as defense in depth), then test both direct and proxied paths. Recover the canonical reader source before patching; do not edit generated output only.
