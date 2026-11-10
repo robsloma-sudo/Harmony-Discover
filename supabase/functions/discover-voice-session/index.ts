@@ -92,7 +92,7 @@ Deno.serve(async (request: Request) => {
 
     const windowStart = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
     const { data: allowed, error: rateError } = await admin.rpc("consume_marty_voice_rate_limit", {
-      p_user_id: authData.user.id, p_window_start: windowStart, p_limit: 8,
+      p_user_id: authData.user.id, p_window_start: windowStart, p_limit: 4,
     });
     if (rateError) return json({ error: "Voice session protection is not ready." }, 503, origin);
     if (allowed !== true) return json({ error: "Too many voice sessions. Wait a minute and try again." }, 429, origin);
@@ -119,7 +119,7 @@ Deno.serve(async (request: Request) => {
       method: "POST",
       headers: { Authorization: `Bearer ${openAiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        expires_after: { anchor: "created_at", seconds: 600 },
+        expires_after: { anchor: "created_at", seconds: 60 },
         session: {
           type: "realtime",
           model: MODEL,
