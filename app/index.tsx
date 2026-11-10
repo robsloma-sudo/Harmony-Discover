@@ -91,10 +91,10 @@ export default function Home() {
           <View style={s.bartenderCopy}>
             <View style={s.bartenderTopline}><Text style={s.bartenderName}>BOSTON BARTENDER</Text><Text style={s.bartenderStatus}>VOICE OFFLINE</Text></View>
             <Text style={s.bartenderLine}>“You gonna scan that menu, or just admire it?”</Text>
-            {bartenderExpanded && <Text style={s.bartenderSubline}>Voice connection is not live yet. Tap again any time to keep him out of your way.</Text>}
+            {bartenderExpanded && <Text style={s.bartenderSubline}>Open Marty to manage voice consent, start a push-to-talk session, or use typed fallback.</Text>}
             <View style={s.voiceStatus}><View style={s.voiceStatusDot} /><Text style={s.voiceStatusText}>VOICE NOT CONNECTED</Text></View>
           </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Show bartender details" style={s.detailsButton} onPress={() => setBartenderExpanded(v => !v)}><Ionicons name="ellipsis-horizontal" size={19} color={C.ivory} /></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Open Marty voice" style={s.detailsButton} onPress={() => router.push("/bartender")}><Ionicons name="ellipsis-horizontal" size={19} color={C.ivory} /></Pressable>
           <Pressable accessibilityLabel="Minimize bartender" style={s.dismissButton} onPress={() => setBartenderOpen(false)}><Ionicons name="chevron-down" size={17} color={C.muted} /></Pressable>
         </View>
       )}
