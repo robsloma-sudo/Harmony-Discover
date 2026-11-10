@@ -265,7 +265,7 @@ The older Fastify observation route also accepted `consentToContribute` and pers
 
 ### Contribution permission interaction and staging-state correction — 10 November 2026
 
-Implemented in Discover source: post-review, optional, unchecked-by-default contribution choice with explicit scope and withdrawal UI. Added authenticated GET/POST/DELETE API handlers under `/v1/observations/:id/contribution`; exact policy version validation; owner-scoped transactional grant/withdraw RPCs; immutable grant-event audit rows; regrant support with one active grant per observation. The DEV RPCs are SECURITY INVOKER and service_role-only. No real grant records exist.
+Implemented in Discover source: post-review, optional, unchecked-by-default contribution choice with explicit scope and withdrawal UI. Added authenticated GET/POST/DELETE API handlers under `/v1/observations/:id/contribution`; exact policy version validation; owner-scoped transactional grant/withdraw RPCs; append-only grant-event audit during the record's retention period rows; regrant support with one active grant per observation. The DEV RPCs are SECURITY INVOKER and service_role-only. No real grant records exist.
 
 Found and corrected two more staging prerequisites while tracing the actual menu-reader path: the reader sets observation status to `ready_for_review` (not `complete`), and the API was not persisting the explicit processing-notice acknowledgement into `consent_to_processing`. The staging function now checks `ready_for_review`; observation creation now validates the exact processing notice version and persists `consent_to_processing=true` only after the existing UI acknowledgement. The reconstructed reader source now records `all_pages_complete` and `structured_menu_saved` after confirming persisted item rows. These are source changes only; the reconstructed reader has not been deployed.
 
@@ -280,3 +280,8 @@ The staging routine still requires `venue_confirmed=true`; no venue-confirmation
 - Exact DEV migration ledger timestamps: grant lifecycle `20261110222941`; ready-for-review staging state `20261110223114`; grant eligibility `20261110223437`; withdrawal blocks staged candidates `20261110223506`.
 - The menu reader source now writes `all_pages_complete` and `structured_menu_saved` after checking persisted item rows. The Discover API source records the explicit processing notice as `consent_to_processing=true` and validates the exact notice version.
 - No observations, grants, grant events or staged candidates are present. No deployed app/API/reader changes have been made. CI is being rerun after the backend test path was moved outside the Expo TypeScript include scope.
+
+
+### Additional safety correction — 10 November 2026
+
+Menu scans are now capped at 12 image pages. The authenticated upload handler checks the current owned, non-deleted asset count before storing another image and rejects page 13. The reader independently requests an exact asset count and refuses to set `all_pages_complete=true` when the observation exceeds 12 pages. This closes a partial-scan edge case caused by the reader's bounded 12-asset query. CI now builds a self-contained API Edge Function bundle from the shared source and validates the generated entrypoint; the bundle output is git-ignored and must be regenerated with `npm run build:edge` before deployment.
