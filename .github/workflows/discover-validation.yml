@@ -39,8 +39,8 @@ jobs:
         run: npm run typecheck
       - name: Validate Discover DEV Edge Functions
         run: |
-          deno check supabase/functions/discover-voice-session/index.ts
-          deno check supabase/functions/discover-menu-read/index.ts
+          deno check --node-modules-dir=auto supabase/functions/discover-voice-session/index.ts
+          deno check --node-modules-dir=auto supabase/functions/discover-menu-read/index.ts
       - name: Run all unit tests
         run: npm run test:all
       - name: Export web preview
