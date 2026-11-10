@@ -15,6 +15,10 @@ declare const Deno: { env: { toObject(): Record<string, string> }; serve(h: (r: 
 let deps: EdgeDeps | null = null; let refused = '';
 try {
   const runtimeEnv = Deno.env.toObject();
+  const allowedOrigins = new Set((runtimeEnv.DISCOVER_ALLOWED_ORIGINS ?? '').split(',').map(v => v.trim()).filter(v => {
+    try { const parsed = new URL(v); return parsed.protocol === 'https:' && parsed.origin === v; } catch { return false; }
+  }));
+  if (!allowedOrigins.size) throw new Error('DISCOVER_ALLOWED_ORIGINS must contain at least one exact HTTPS origin');
   const db = createDiscoverClient({ DISCOVER_ENV: 'development', DISCOVER_ALLOWED_PROJECT_REFS: 'lqqmwqrffelgnbngrkep', ...runtimeEnv });
   deps = {
     identify: makeIdentify(db),
@@ -25,7 +29,7 @@ try {
       async deleteAuthUser(id) { const { error } = await db.auth.admin.deleteUser(id); if (error && error.status !== 404) throw new Error('auth_user_delete_failed'); },
     },
     observations: { db, limiter: dbLimiter(db, 'observations', 60, 60) },
-    allowedOrigins: new Set((runtimeEnv.DISCOVER_ALLOWED_ORIGINS ?? '').split(',').map(v => v.trim()).filter(Boolean)),
+    allowedOrigins,
     async readMenu(observationId, authorization) {
       const response = await fetch(runtimeEnv.SUPABASE_URL + '/functions/v1/discover-menu-read', {
         method: 'POST', headers: { authorization, 'content-type': 'application/json' },
