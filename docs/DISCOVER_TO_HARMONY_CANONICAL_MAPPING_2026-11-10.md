@@ -45,6 +45,18 @@ Discover already captures menu observations and OCR candidates, while Harmony ha
 - Discover's `menu_observations.venue_id` is a UUID field but was not found to establish a direct FK to Harmony `accounts`; it must not be interpreted as a Harmony account ID.
 - The Discover menu item schema has no normalized brand column. The reconstructed menu reader retains extracted brands in `observation_extractions.ocr_payload`; do not move brand text into `listed_ingredients`.
 
+## Canonical value constraints confirmed
+
+- `menus.menu_format`: `html`, `pdf`, `image`, `other`.
+- `menus.extraction_confidence`: `high`, `medium`, `low`, `unknown`.
+- `menus.raw_content_type`: `markdown`, `html`, `pdf_text`, `ocr_text`, `vision_json`.
+- `menu_sections.section_type`: `cocktails`, `spirits`, `wine`, `beer`, `food`, `other`, `unsectioned`.
+- `menu_items.item_type`: `cocktail`, `spirit_pour`, `flight`, `bottle`, `shot`, `other`, `unknown`. This is not the same vocabulary as Discover's `beverage_category`; do not directly copy `wine`, `beer`, `food`, or `non_alcoholic` into `item_type`.
+- `observation_reviews.review_status`: `unreviewed`, `matched`, `verified`, `rejected`, `needs_research`.
+- `field_provenance.status`: `verified`, `source_backed`, `inferred`, `unresolved`, `conflicting`, `deprecated`, `discontinued`, `unknown`, `needs_review`.
+- `sources.source_type`, `evidence_class`, `authority_tier`, `access_method`, `licence_status`, and evidence purpose/stage arrays are constrained vocabularies. The integration must use a reviewed source mapping and must never invent authority tier or licence status.
+- `menus.account_id`, `menus.source_id`, and `menus.evidence_url` are required. The integration must resolve a valid Harmony account key, source record, and stable evidence URL/reference before menu creation.
+
 ## Promotion pipeline (proposed)
 
 1. Discover menu observation and its assets/extractions/items are copied to private integration staging with exact source IDs, version, content hash, and evidence pointers.
