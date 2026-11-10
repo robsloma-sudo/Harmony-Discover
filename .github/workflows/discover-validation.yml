@@ -41,6 +41,7 @@ jobs:
         run: |
           deno check --node-modules-dir=auto supabase/functions/discover-voice-session/index.ts
           deno check --node-modules-dir=auto supabase/functions/discover-menu-read/index.ts
+          deno check --node-modules-dir=auto apps/edge/router.ts
       - name: Run all unit tests
         run: npm run test:all
       - name: Export web preview
