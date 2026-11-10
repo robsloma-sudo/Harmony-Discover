@@ -134,3 +134,8 @@ The prior "not deployed" statements above are historical and superseded by this 
 ### Realtime credential replay-window hardening
 
 The OpenAI Realtime client-secret documentation states that a client secret can be used to create multiple sessions until it expires; the established session can continue after that client-secret expiry. To reduce the replay window, the current DEV endpoint requests a 60-second client-secret lifetime and allows four mint requests per user per minute. The client validator rejects grants longer than two minutes to allow limited clock/network tolerance. This reduces exposure but does not make a bearer client secret single-use. The endpoint is ACTIVE as version 3 in Discover DEV; the deployed source was fetched and verified after deployment. No provider credential was minted and no audio session was opened during this verification.
+
+
+### Current Realtime API compatibility review
+
+The live OpenAI Realtime client-secret API reference confirms the configured `gpt-realtime-2.1` model, `ash` voice, audio-only output, manual turn detection (`turn_detection: null`), and speech speed `0.92` are supported configuration values. The input transcription model was changed from the deprecated `gpt-4o-mini-transcribe` to `gpt-live-transcribe`. The deployed Discover DEV function is ACTIVE version 4. This is a static API-schema review; a real provider credential/audio call is still pending.
