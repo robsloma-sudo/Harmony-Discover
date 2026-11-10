@@ -88,3 +88,20 @@ The current source-hardening branch adds:
 For browser use, set `DISCOVER_ALLOWED_ORIGINS` in the Discover DEV Edge Function secrets/config to the exact HTTPS origin(s), without trailing slash (for example, the actual approved Netlify preview origin). Do not put this setting in an `EXPO_PUBLIC_*` variable. Requests without an Origin header are allowed for native clients; browser origins not on the allow-list are rejected.
 
 The Boston migration remains unapplied. Do not deploy the function until the migration ledger and source migration history have been reconciled. The current DEV ledger contains timestamped migrations through `20261110071228`, including `0011_pg_net_out_of_public` and `0012_menu_reading`; the branch's numbered `0011_marty_bartender.sql` is not a safe direct match for that ledger. Recover the complete applied migration source history before creating a correctly versioned follow-on migration.
+
+## Lead-agent follow-up code review — 10 November 2026
+
+A static review of the current source branch found and corrected two lifecycle defects before any deployment:
+
+1. **Session credential startup crash:** the Edge Function initialized `memoryContext` by referencing `memories` before the database query declared that variable. This would have thrown a ReferenceError on every authenticated request reaching that line, even when memory consent was off. The initializer is now empty, and the memory query populates it only after checking current memory consent. User-authored memory values are serialized as JSON and explicitly treated as untrusted data.
+2. **Microphone cleanup / retry:** if microphone permission resolved after the user stopped or interrupted, the newly acquired stream could remain open. A failed ephemeral-grant request could also leave the stream allocated. The coordinator now closes the adapter in both cases; the UI clears a failed coordinator and allows retry. A regression assertion checks late-permission cleanup.
+
+These are source changes on the hardening branch only. No deployed function was changed. GitHub Actions still reports no workflow run or status check for the current branch, so the regression suite has not yet been executed in CI.
+
+## Remaining voice implementation limitations
+
+- The current actual media transport is web-only. The app explicitly blocks voice on native iOS/Android until a native audio/WebRTC adapter is implemented and device-tested.
+- The selected provider voice is `ash` as an audition baseline. No Boston accent, rasp, age, or local vocal identity has been verified in real audio.
+- Voice session transcripts exist only in in-memory screen state and are not persisted as memory.
+- Consent withdrawal prevents subsequent server-issued sessions. Existing active Realtime sessions are not remotely terminated by the settings write; the client must stop the active session. A production-ready consent UX should make this lifecycle explicit and close an active session immediately when voice is disabled.
+- The client-side typed fallback is available only after the Realtime data channel is connected; it is not a standalone non-voice chat path.
