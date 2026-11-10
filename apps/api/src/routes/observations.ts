@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 
 const createSchema = z.object({
   consentToProcessing: z.literal(true),
-  consentToContribute: z.boolean(),
   venueName: z.string().trim().max(180).optional(),
   capturedAt: z.string().datetime().optional(),
   source: z.enum(['camera','gallery']).default('camera')
@@ -22,7 +21,6 @@ export const observationRoutes: FastifyPluginAsync = async app => {
     const { error } = await db.from('menu_observations').insert({
       id, consumer_id: consumerId, status: 'created',
       consent_to_processing: parsed.data.consentToProcessing,
-      consent_to_contribute: parsed.data.consentToContribute,
       venue_name_submitted: parsed.data.venueName ?? null,
       capture_source: parsed.data.source,
       captured_at: parsed.data.capturedAt ?? new Date().toISOString()
