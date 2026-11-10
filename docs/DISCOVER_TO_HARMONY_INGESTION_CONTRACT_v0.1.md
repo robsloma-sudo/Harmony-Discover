@@ -23,7 +23,7 @@
 
 The current menu-scan UI asks the user to agree that menu photos will be uploaded to Discover and processed to transcribe the printed menu. The UI explicitly says this is separate from optional research or personalization consent. That processing notice is **not** permission to publish, syndicate, or promote the menu into Harmony's canonical database.
 
-The older `consent_to_contribute` field is marked deprecated in the live Discover schema. Do not reuse it as a substitute for a new, purpose-specific permission basis. A candidate can be staged only when there is a separate documented basis for that use (for example, a verified public source whose reuse terms allow it, or a distinct explicit contribution grant with a versioned notice). If no such basis exists, keep the observation in Discover and do not stage it.
+The older `consent_to_contribute` field is marked deprecated in the live Discover schema and is not used by the current staging routine. The current backend requires a separate row in `public.observation_contribution_grants`, linked to the same observation and consumer, with a versioned policy and no withdrawal timestamp. This table is service-role-only and RLS-enabled. It is not yet wired to consumer-facing consent capture or revocation; do not create real grants until that explicit UI/API and reviewed notice are implemented. A verified public-source license may be a separate permission basis in a future reviewed flow, but is not currently wired into staging.
 
 ## Initial eligibility matrix
 
@@ -109,3 +109,10 @@ A transition must record actor/service identity, prior state, new state, timesta
 ## Non-goals
 
 This contract does not authorize automatic consumer profiling, conversation ingestion, private-memory export, production writes, canonical overwrites, or deployment to the original Harmony application.
+
+
+## Current DEV implementation note
+
+Migration `20261110222519_discover_observation_contribution_grants` adds the observation-specific grant table and replaces the staging routine. The routine no longer reads the deprecated `consent_to_contribute` flag. It requires a grant row linked to the same observation and consumer, with a policy version and no withdrawal timestamp. RLS is enabled; anon/authenticated have no table privileges; service_role has SELECT/INSERT/UPDATE. The staging function is SECURITY INVOKER and service_role-only.
+
+The table is not yet wired to consumer-facing consent capture or revocation. No grants are present in DEV. Do not create a grant for a real observation until the consent notice, affirmative UI, API, and withdrawal behavior are implemented and reviewed.
