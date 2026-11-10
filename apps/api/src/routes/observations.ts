@@ -5,7 +5,7 @@ import { requireConsumerId } from '../lib/identity.js';
 import { randomUUID } from 'node:crypto';
 
 const createSchema = z.object({
-  consentToProcessing: z.literal(true),
+  processingNoticeVersion: z.literal('discover-menu-processing-v1'),
   venueName: z.string().trim().max(180).optional(),
   capturedAt: z.string().datetime().optional(),
   source: z.enum(['camera','gallery']).default('camera')
@@ -20,7 +20,8 @@ export const observationRoutes: FastifyPluginAsync = async app => {
     const id = randomUUID();
     const { error } = await db.from('menu_observations').insert({
       id, consumer_id: consumerId, status: 'created',
-      consent_to_processing: parsed.data.consentToProcessing,
+      consent_to_processing: true,
+      processing_notice_version: parsed.data.processingNoticeVersion,
       venue_name_submitted: parsed.data.venueName ?? null,
       capture_source: parsed.data.source,
       captured_at: parsed.data.capturedAt ?? new Date().toISOString()
@@ -63,6 +64,63 @@ export const observationRoutes: FastifyPluginAsync = async app => {
       return reply.code(500).send({ error: 'asset_metadata_failed' });
     }
     return reply.code(201).send({ status: 'received' });
+  });
+
+  app.post('/:id/venue-confirmation', async (request, reply) => {
+    const consumerId = await requireConsumerId(request);
+    const { id } = request.params as { id: string };
+    const parsed = z.object({ venueName: z.string().trim().min(1).max(180) }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_venue_confirmation' });
+    const { data, error } = await db.from('menu_observations').update({
+      venue_name_submitted: parsed.data.venueName, venue_confirmed: true
+    }).eq('id', id).eq('consumer_id', consumerId).eq('status', 'ready_for_review')
+      .select('id,venue_name_submitted').maybeSingle();
+    if (error) return reply.code(500).send({ error: 'venue_confirmation_failed' });
+    if (!data) return reply.code(409).send({ error: 'observation_not_eligible' });
+    return reply.send({ confirmed: true, venueName: data.venue_name_submitted });
+  });
+
+  app.get('/:id/contribution', async (request, reply) => {
+    const consumerId = await requireConsumerId(request);
+    const { id } = request.params as { id: string };
+    const { data: observation, error: lookupError } = await db.from('menu_observations')
+      .select('id').eq('id', id).eq('consumer_id', consumerId).maybeSingle();
+    if (lookupError || !observation) return reply.code(404).send({ error: 'observation_not_found' });
+    const { data, error } = await db.from('observation_contribution_grants')
+      .select('policy_version,granted_at').eq('observation_id', id).eq('consumer_id', consumerId)
+      .is('withdrawn_at', null).maybeSingle();
+    if (error) return reply.code(500).send({ error: 'contribution_permission_unavailable' });
+    return reply.send({ granted: !!data, policyVersion: data?.policy_version ?? null, grantedAt: data?.granted_at ?? null });
+  });
+
+  app.post('/:id/contribution', async (request, reply) => {
+    const consumerId = await requireConsumerId(request);
+    const { id } = request.params as { id: string };
+    const parsed = z.object({ policyVersion: z.literal('discover-harmony-contribution-v1') }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_contribution_permission' });
+    const { data, error } = await db.rpc('discover_grant_observation_contribution', {
+      p_subject: consumerId, p_observation: id, p_policy_version: parsed.data.policyVersion
+    });
+    if (error) {
+      if (error.code === '42501') return reply.code(409).send({ error: 'observation_not_eligible' });
+      if (error.code === '23505') return reply.code(409).send({ error: 'contribution_permission_already_active' });
+      request.log.error({ error }, 'contribution permission grant failed');
+      return reply.code(500).send({ error: 'contribution_permission_failed' });
+    }
+    return reply.code(201).send({ granted: true, grantId: data, policyVersion: parsed.data.policyVersion });
+  });
+
+  app.delete('/:id/contribution', async (request, reply) => {
+    const consumerId = await requireConsumerId(request);
+    const { id } = request.params as { id: string };
+    const { data, error } = await db.rpc('discover_withdraw_observation_contribution', {
+      p_subject: consumerId, p_observation: id
+    });
+    if (error) {
+      request.log.error({ error }, 'contribution permission withdrawal failed');
+      return reply.code(500).send({ error: 'contribution_withdrawal_failed' });
+    }
+    return reply.send({ withdrawn: data === true, alreadyInactive: data !== true });
   });
 
   app.post('/:id/complete', async (request, reply) => {
