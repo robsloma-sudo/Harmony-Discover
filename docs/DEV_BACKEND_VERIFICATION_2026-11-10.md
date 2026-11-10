@@ -235,3 +235,8 @@ The service-role-only `harmony_sync.record_candidate_review(uuid,text,text,text)
 A BEFORE UPDATE trigger prevents mutation of staged evidence, source identity/version, confidence, permission basis/reference, payload hash, and idempotency key. Review events are append-only at the table-privilege level: service_role has SELECT/INSERT but no UPDATE/DELETE. Live ACL verification confirms anon/authenticated have no schema USAGE or review-event access; service_role has SELECT/INSERT and no UPDATE/DELETE. The review and staging functions are SECURITY INVOKER and executable only by service_role.
 
 All three migration filenames now match the exact versions in the live Discover DEV ledger. No staging records exist, so reviewer transitions have not yet been tested with a consented fixture.
+
+
+### Review and evidence-integrity smoke test
+
+A temporary synthetic DEV-only staged candidate was created inside a database test block, reviewed through `record_candidate_review`, and checked for the expected state: candidate became `approved`, review event was appended, and sync ledger remained `blocked`. An attempted payload mutation was rejected by the immutability trigger. The test removed its temporary review event, ledger row, and candidate. A follow-up count confirmed all three tables returned to zero rows. This verifies the database state machine and trigger behavior without staging user data or contacting Harmony.
