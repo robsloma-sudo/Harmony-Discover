@@ -12,7 +12,7 @@ export default function Journey() {
       <Text style={styles.eyebrow}>YOUR JOURNEY</Text>
       <Text style={styles.title}>{journey.title}</Text>
       <Text style={styles.sub}>{journey.intro}</Text>
-      {journey.sections.map(section => (
+      {journey.sections.map((section: { heading: string; body: string; evidence: string }) => (
         <View key={section.heading} style={styles.journeySection}>
           <Text style={styles.sectionTitle}>{section.heading}</Text>
           <Text style={styles.body}>{section.body}</Text>
