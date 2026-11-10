@@ -17,7 +17,6 @@ export default function Home() {
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
   const [bartenderOpen, setBartenderOpen] = useState(true);
-  const [activeMode, setActiveMode] = useState<'camera' | 'read' | 'journey'>('camera');
   const [bartenderExpanded, setBartenderExpanded] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [torchEnabled, setTorchEnabled] = useState(false);
