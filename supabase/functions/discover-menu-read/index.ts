@@ -183,9 +183,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const complete = failures.length === 0 && pages === assets.length;
+  const { count: structuredItemCount, error: countError } = await db.from("observation_items")
+    .select("id", { count: "exact", head: true }).eq("observation_id", id).eq("consumer_id", subject);
+  if (countError) failures.push({ error: "structured_item_count_failed" });
+  const allPagesComplete = complete && failures.length === 0;
   await db.from("menu_observations").update({
     read_model: MODEL, read_at: new Date().toISOString(),
-    ...(complete ? { status: "ready_for_review" } : { status: "processing" }),
+    all_pages_complete: allPagesComplete,
+    structured_menu_saved: allPagesComplete && (structuredItemCount ?? 0) > 0,
+    ...(allPagesComplete ? { status: "ready_for_review" } : { status: "processing" }),
   }).eq("id", id).eq("consumer_id", subject);
   return reply({ ok: complete, observation_id: id, pages_read: pages, items_saved: itemsSaved,
     pages_skipped_as_already_read: skipped, failures }, complete ? 200 : 207, origin);
