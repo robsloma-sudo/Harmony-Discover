@@ -105,3 +105,27 @@ These are source changes on the hardening branch only. No deployed function was 
 - Voice session transcripts exist only in in-memory screen state and are not persisted as memory.
 - Consent withdrawal prevents subsequent server-issued sessions. Existing active Realtime sessions are not remotely terminated by the settings write; the client must stop the active session. A production-ready consent UX should make this lifecycle explicit and close an active session immediately when voice is disabled.
 - The client-side typed fallback is available only after the Realtime data channel is connected; it is not a standalone non-voice chat path.
+
+
+## Current DEV deployment — 10 November 2026
+
+The prior "not deployed" statements above are historical and superseded by this section.
+
+- Discover DEV migration `20261110215901_marty_bartender` is applied.
+- Discover DEV migration `20261110215936_marty_private_table_grants` is applied.
+- `discover-voice-session` is deployed and ACTIVE at version 2 in project `lqqmwqrffelgnbngrkep`, with gateway JWT verification disabled because the handler validates the bearer token itself.
+- The deployed function bundle contains `index.ts` and `_shared/martySullivanBoston.ts`. The deployed source was fetched after deployment and the inventory confirms version 2.
+- The app and Edge Function now import the same canonical Boston prompt module from `supabase/functions/discover-voice-session/_shared/martySullivanBoston.ts`; the old duplicate shared copy was removed.
+- No browser audition has been completed. The browser-origin allow-list is controlled by the server-side `DISCOVER_ALLOWED_ORIGINS` setting. Its actual value has not been verified. Browser voice remains blocked until the exact approved Discover preview origin is configured.
+- The Edge Function's required server-side values are `DISCOVER_ENV=development`, `DISCOVER_PROJECT_REF=lqqmwqrffelgnbngrkep`, `OPENAI_API_KEY`, plus Supabase URL/anon/service credentials. Secret values were not retrieved or displayed; their presence has not been independently verified.
+- No Realtime credential request or audio session has been performed. A deployed ACTIVE function does not prove the secrets/origin settings are complete or that the provider call succeeds.
+- Native iOS voice remains disabled in the UI pending a native audio adapter and device test.
+- Original Harmony production has not been changed.
+
+### Remaining validation
+1. Verify the required DEV function secrets are present without revealing their values.
+2. Configure `DISCOVER_ALLOWED_ORIGINS` to the exact Discover preview origin.
+3. Test OPTIONS/CORS and authenticated consent-denied/consent-approved calls.
+4. Verify the Realtime client-secret response and expiry without logging its token.
+5. Run an actual web push-to-talk audition, then test stop, interrupt, memory withdrawal, and rate limiting.
+6. Test native iOS separately; do not label it supported until device validation passes.
