@@ -1,4 +1,4 @@
-import type { LearningEvent, LearningEventName, LearningIngestDecision, ConsentSnapshot } from "../shared-types/learning-events";
+import type { LearningEvent, LearningEventName, LearningIngestDecision, ConsentSnapshot } from "../shared-types/learning-events.ts";
 const ALLOWED = new Set<LearningEventName>(["scan_started","scan_completed","extraction_corrected","menu_item_opened","journey_started","journey_feedback_submitted","question_intent_selected","question_submitted","item_saved","remix_created","remix_adjustment_made","recommendation_feedback","search_no_result","entity_match_rejected","content_reported"]);
 const FORBIDDEN = new Set(["email","phone","fullName","address","latitude","longitude","gps","rawText","questionText","photoUrl","imageUrl","ipAddress"]);
 export function validateLearningEvent(e: LearningEvent): string[] {
