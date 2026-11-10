@@ -9,7 +9,7 @@ import { processMenuPhotos, saveMenuItemCorrection, DiscoveredMenuItem } from '.
 const reviewField = { backgroundColor: '#171B20', color: '#F2F0EA', borderWidth: 1, borderColor: '#39414A', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 } as const;
 
 export default function Preview() {
-  const { pages, source, clear } = useScan();
+  const { pages, source, clear, removePage } = useScan();
   const { session, loading } = useAuth();
   const [processing, setProcessing] = useState(false);
   const [noticeAccepted, setNoticeAccepted] = useState(false);
@@ -32,6 +32,7 @@ export default function Preview() {
   }, [pages]);
 
   async function readMenu() {
+    if (!pages.length) { setMessage('Add at least one menu photo before reading.'); return; }
     if (!session) { router.push({ pathname: '/sign-in', params: { next: '/preview' } }); return; }
     if (!noticeAccepted) { setMessage('Please confirm the menu-processing notice before continuing.'); return; }
     setProcessing(true); setMessage('');
@@ -66,8 +67,11 @@ export default function Preview() {
     <Text style={styles.title}>{items ? 'Review the menu.' : 'Ready to read.'}</Text>
     <Text style={styles.sub}>{items ? 'These are the words our reader found in your photos. Check names and prices before using them.' : 'Your photos stay on this device until you choose to process them.'}</Text>
     <ScrollView horizontal style={{ maxHeight: 142 }} contentContainerStyle={{ gap: 10, paddingVertical: 10 }}>
-      {pages.map((uri, i) => <View key={i} style={{ width: 104, gap: 5 }}>
-        <Image source={{ uri }} resizeMode="cover" style={{ width: 104, height: 104, borderRadius: 12, borderWidth: 1, borderColor: '#39414A' }} />
+      {pages.map((uri, i) => <View key={`${uri}-${i}`} style={{ width: 104, gap: 5 }}>
+        <View style={{ width: 104, height: 104 }}>
+          <Image source={{ uri }} resizeMode="cover" style={{ width: 104, height: 104, borderRadius: 12, borderWidth: 1, borderColor: '#39414A' }} />
+          {!items && <Pressable accessibilityRole="button" accessibilityLabel={`Remove page ${i + 1}`} onPress={() => removePage(i)} style={{ position: 'absolute', top: 5, right: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: 'rgba(8,10,13,0.9)', borderWidth: 1, borderColor: '#D7B77A', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#F2F0EA', fontSize: 16, lineHeight: 19 }}>×</Text></Pressable>}
+        </View>
         <Text style={{ color: '#D7B77A', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' }}>
           {(pageOrientations[i] || 'detecting').toUpperCase()}
         </Text>
@@ -82,7 +86,8 @@ export default function Preview() {
         <Text style={[styles.categoryDesc, { flex: 1 }]}>I agree to have these menu photos securely uploaded to Discover and processed to transcribe the printed menu. This is separate from optional research or personalization consent.</Text>
       </Pressable>
       {!session && <Text style={styles.footnote}>You can capture photos first. A free account is required only when you choose to upload and read them.</Text>}
-      <Pressable style={[styles.primary, (!noticeAccepted || processing || loading) && { opacity: 0.45 }]} disabled={!noticeAccepted || processing || loading} onPress={readMenu}>
+      {pages.length === 0 && <Text style={styles.footnote}>No photos selected. Add a page to continue.</Text>}
+      <Pressable style={[styles.primary, (!pages.length || !noticeAccepted || processing || loading) && { opacity: 0.45 }]} disabled={!pages.length || !noticeAccepted || processing || loading} onPress={readMenu}>
         {processing ? <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}><ActivityIndicator color="#111" /><Text style={styles.primaryText}>Reading your menu…</Text></View> : <Text style={styles.primaryText}>{session ? 'Read this menu' : 'Sign in to read this menu'}</Text>}
       </Pressable>
     </>}
