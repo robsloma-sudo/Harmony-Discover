@@ -121,8 +121,18 @@ export default function BartenderScreen() {
     try {
       const result = await coordinator.start();
       if (result.voice.state === 'listening') setStatus('CONNECTED · HOLD TO TALK');
-      else { setStatus(result.voice.message); setError(result.error ?? 'Could not start the voice session.'); }
-    } catch { setError('Could not start Marty. Try again.'); setStatus('OFFLINE'); }
+      else {
+        coordinatorRef.current = null;
+        await adapter.close().catch(() => undefined);
+        setStatus(result.voice.message);
+        setError(result.error ?? 'Could not start the voice session.');
+      }
+    } catch {
+      coordinatorRef.current = null;
+      await adapter.close().catch(() => undefined);
+      setError('Could not start Marty. Try again.');
+      setStatus('OFFLINE');
+    }
     finally { setBusy(false); }
   }
 
