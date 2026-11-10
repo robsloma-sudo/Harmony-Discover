@@ -49,7 +49,7 @@ export default function BartenderSettingsScreen() {
       if (!memoryEnabled) {
         // Deletion is allowed by owner RLS even after consent withdrawal.
         const { error: deleteError } = await supabase.from('bartender_memories').delete().eq('user_id', userId);
-        if (deleteError && memories.length) throw deleteError;
+        if (deleteError) throw deleteError;
       }
       const now = new Date().toISOString();
       const { error } = await supabase.from('bartender_voice_consents').upsert({
