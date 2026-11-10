@@ -33,7 +33,7 @@ export function validateVoiceSessionGrant(value: unknown, now = Date.now()): Voi
   if (v.transport !== 'webrtc' && v.transport !== 'websocket') return { ok: false, reason: 'Unsupported voice transport.' };
   const expiry = Date.parse(v.expiresAt as string);
   if (!Number.isFinite(expiry) || expiry <= now) return { ok: false, reason: 'Voice session has expired.' };
-  // Ephemeral credentials should be short-lived. Reject unexpectedly long grants.
-  if (expiry - now > 15 * 60 * 1000) return { ok: false, reason: 'Voice session lifetime exceeds the allowed limit.' };
+  // Realtime client secrets are reusable until expiry; keep the accepted lifetime tightly bounded.
+  if (expiry - now > 2 * 60 * 1000) return { ok: false, reason: 'Voice session lifetime exceeds the allowed limit.' };
   return { ok: true, grant: v as unknown as VoiceSessionGrant };
 }
