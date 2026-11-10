@@ -115,7 +115,7 @@ This contract does not authorize automatic consumer profiling, conversation inge
 
 Migration `20261110222519_discover_observation_contribution_grants` adds the observation-specific grant table and replaces the staging routine. The routine no longer reads the deprecated `consent_to_contribute` flag. It requires a grant row linked to the same observation and consumer, with a policy version and no withdrawal timestamp. RLS is enabled; anon/authenticated have no table privileges; service_role has SELECT/INSERT/UPDATE. The staging function is SECURITY INVOKER and service_role-only.
 
-The table is not yet wired to consumer-facing consent capture or revocation. No grants are present in DEV. Do not create a grant for a real observation until the consent notice, affirmative UI, API, and withdrawal behavior are implemented and reviewed.
+The original migration note above is historical. See the latest implementation gates below for the current source status.
 
 
 ## Implemented contribution-permission interaction (DEV source only)
@@ -125,3 +125,18 @@ The menu-review screen now offers a separate, affirmative opt-in after extractio
 Authenticated API source handlers support GET, POST and DELETE at `/v1/observations/:id/contribution`. The server uses the authenticated subject ID, validates the exact policy version, and calls service-role-only transactional database functions. Grants require an observation owned by the caller and currently in `ready_for_review`. Withdrawal marks the active grant withdrawn and writes a separate immutable grant-event record; a later re-grant can create a new grant while the partial unique index permits only one active grant per observation.
 
 The DEV schema now has a grant-event audit table and two service-role-only SECURITY INVOKER RPCs. Regrant/withdraw history is preserved. No real grants exist in DEV. These API changes are source-branch only; the generated `discover-api` deployment bundle and Netlify app have not been deployed.
+
+
+## Latest implementation gates (supersedes earlier status notes)
+
+The current Discover source branch implements three distinct confirmations in order:
+
+1. The existing menu-processing acknowledgement is recorded as `consent_to_processing=true` with the exact accepted notice version. This is only permission to process the uploaded photos for the scan.
+2. After extraction, the user confirms the venue name through a separate owner-scoped endpoint. The endpoint only accepts observations in `ready_for_review`.
+3. The user may separately opt in to contribution. This action is unavailable until the venue has been confirmed. It covers extracted menu fields and user-saved corrections for a private human-review queue, not automatic publication.
+
+The contribution grant RPC independently checks ownership, `ready_for_review`, processing consent, venue confirmation, complete pages, saved structured items, no dispute and zero unresolved flags. It does not trust UI state. The staging routine independently checks the same scan-quality gates and requires an active observation-specific grant. The reader source now persists `all_pages_complete` and `structured_menu_saved` from the actual page/item results.
+
+Withdrawal marks the active grant withdrawn, appends a grant-event record, changes any not-yet-promoted staged candidate to `withdrawn`, appends a review event and keeps the sync ledger blocked. A later grant can be created as a new versioned grant. Withdrawal cannot silently retract an already-promoted canonical record; that requires a separate deletion/review process. No promotion worker or production integration is active.
+
+The grant/withdraw and venue-confirmation API handlers, mobile UI and reader status changes are source-branch only. They are not deployed to the live Discover app or Edge Functions. No real grants or staged records exist in DEV.
