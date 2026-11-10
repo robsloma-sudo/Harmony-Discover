@@ -57,6 +57,12 @@ Discover already captures menu observations and OCR candidates, while Harmony ha
 - `sources.source_type`, `evidence_class`, `authority_tier`, `access_method`, `licence_status`, and evidence purpose/stage arrays are constrained vocabularies. The integration must use a reviewed source mapping and must never invent authority tier or licence status.
 - `menus.account_id`, `menus.source_id`, and `menus.evidence_url` are required. The integration must resolve a valid Harmony account key, source record, and stable evidence URL/reference before menu creation.
 
+## Production write-boundary observations
+
+The inspected Harmony tables expose SELECT policies for authenticated readers and dedicated Harmony/menu-designer roles. The inspected `menus`, `menu_sections`, `menu_items`, `sources`, `field_provenance`, and `observation_reviews` tables had no authenticated INSERT/UPDATE/DELETE policies in the inspected policy inventory. This is consistent with a server-mediated canonical write path; the integration must not attempt direct browser writes.
+
+Only two triggers were found on the inspected set: `sources_set_updated_at` and `observation_reviews_set_updated_at`, both BEFORE UPDATE. No menu/menu-section/menu-item insert/update triggers were found in the inspected inventory. This does not prove that there are no dependent RPCs, views, functions, or application-side invariants. The canonical write path still needs to be traced through the actual Harmony server code before any production integration.
+
 ## Promotion pipeline (proposed)
 
 1. Discover menu observation and its assets/extractions/items are copied to private integration staging with exact source IDs, version, content hash, and evidence pointers.
