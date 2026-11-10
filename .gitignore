@@ -8,3 +8,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Generated Supabase Edge Function bundle; regenerate with npm run build:edge
+supabase/functions/discover-api/_shared/
