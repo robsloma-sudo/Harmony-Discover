@@ -31,17 +31,17 @@ export default function Scan() {
   return (
     <Screen>
       <Text style={styles.back} onPress={() => router.back()}>‹  Back</Text>
-      <Text style={styles.eyebrow}>MENU SCAN · {pages.length} PAGE{pages.length === 1 ? '' : 'S'} SELECTED</Text>
-      <Text style={styles.title}>Add another page.</Text>
-      <Text style={styles.sub}>Capture another side of the menu or select more photos. Your current pages will stay in this scan.</Text>
+      <Text style={styles.eyebrow}>{pages.length ? `MENU SCAN · ${pages.length} PAGE${pages.length === 1 ? '' : 'S'} SELECTED` : 'MENU SCAN'}</Text>
+      <Text style={styles.title}>{pages.length ? 'Add another page.' : 'Capture a menu.'}</Text>
+      <Text style={styles.sub}>{pages.length ? 'Capture another side of the menu or select more photos. Your current pages will stay in this scan.' : 'Take a photo of the menu or choose images from your library. You can review everything before uploading.'}</Text>
       <Pressable style={styles.primary} onPress={camera}>
-        <Text style={styles.primaryText}>Take another photo</Text>
-        <Text style={styles.primaryHint}>Add a camera capture</Text>
+        <Text style={styles.primaryText}>{pages.length ? 'Take another photo' : 'Take a photo'}</Text>
+        <Text style={styles.primaryHint}>{pages.length ? 'Add a camera capture' : 'Capture a menu page'}</Text>
       </Pressable>
       <Pressable style={styles.secondary} onPress={gallery}>
-        <Text style={styles.secondaryText}>Add from photos</Text>
+        <Text style={styles.secondaryText}>{pages.length ? 'Add from photos' : 'Choose from photos'}</Text>
       </Pressable>
-      <Text style={styles.footnote}>Photos remain on this device until you choose to process the scan.</Text>
+      <Text style={styles.footnote}>{pages.length ? 'Photos remain on this device until you choose to process the scan.' : 'Photos stay on this device until you choose to process the scan.'}</Text>
     </Screen>
   );
 }
