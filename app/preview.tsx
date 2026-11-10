@@ -37,7 +37,7 @@ export default function Preview() {
     if (!noticeAccepted) { setMessage('Please confirm the menu-processing notice before continuing.'); return; }
     setProcessing(true); setMessage('');
     try {
-      const result = await processMenuPhotos(pages, source);
+      const result = await processMenuPhotos(pages, source, setMessage);
       setObservationId(result.id);
       setItems(result.items || []);
       setEditingId(null);
