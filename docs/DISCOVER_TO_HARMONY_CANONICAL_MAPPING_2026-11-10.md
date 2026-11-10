@@ -109,3 +109,12 @@ No personal conversations, private memories, consumer IDs, private taste profile
 ## Code-level dry-run mapper
 
 The repository now includes `src/integration/harmonySubmitMenuMapper.ts` and `tests/harmony-submit-menu-mapper.test.ts`. The mapper accepts only an explicitly reviewed Harmony menu draft; it does not infer account identity, source authority, public evidence URL, menu item type, price, currency, or brand mapping from Discover OCR. It validates the exact `submit-menu` field vocabularies, HTTPS publisher-owned evidence URL, SHA-256 content hash, non-negative positions, numeric price strings, currency code, brand category, and the PDF/image positive-item guard. It produces the request payload only; it does not call the production endpoint or write any data. Tests cover accepted mapping, blocked evidence URLs, empty PDF/image captures, invalid canonical fields, and preserving text-only prices without inventing a numeric amount.
+
+
+## Consent-gated staging execution — DEV only
+
+A service-role-only, SECURITY INVOKER routine now exists in Discover DEV: `harmony_sync.stage_eligible_menu_observations(integer)`. It selects only observations that meet every gate: status `complete`; processing consent true; per-observation contribution consent true; confirmed venue; all pages complete; no dispute; zero unresolved flags; structured menu saved; and the user's latest `aggregate_research` consent record is granted and not withdrawn.
+
+The staged payload excludes consumer IDs, account IDs, storage object paths, signed asset URLs, and private taste/conversation data. It carries the consent record ID and policy version as permission provenance, source observation/item IDs, menu text/price/category/ingredient evidence, and latest correction values. Candidates are initially `pending`; the sync ledger is deliberately `blocked` pending independent human review and canonical mapping. No worker promotes anything to Harmony.
+
+The function is SECURITY INVOKER and executable only by `service_role`; anon/authenticated execute privileges are false. Discover DEV currently has zero menu observations and zero aggregate-research consent records, so an actual execution returned `staged = 0`, with zero candidates, review events, or ledger rows. No user data was staged. This is a no-op verification, not an end-to-end test with a consented fixture.
