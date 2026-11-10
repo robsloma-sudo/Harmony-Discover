@@ -4,7 +4,7 @@ import { exportData, requestDeletion, type AccountStore } from '../api/src/core/
 import {
   addAsset, completeObservation, createObservation, getObservation, correctObservationItem,
   discardIncompleteObservation, getObservationContribution, grantObservationContribution,
-  withdrawObservationContribution, confirmObservationVenue, MAX_UPLOAD_BYTES,
+  withdrawObservationContribution, confirmObservationVenue, listObservationContributions, MAX_UPLOAD_BYTES,
 } from '../api/src/core/observations.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -102,6 +102,7 @@ export async function handle(req: Request, deps: EdgeDeps): Promise<Response> {
     if (account) {
       const services = { identify: deps.identify, ...deps.account };
       if (path === '/v1/me/export' && method === 'GET') return respond(await exportData(services, subject, deps.log));
+      if (path === '/v1/me/contributions' && method === 'GET') return respond(await listObservationContributions(deps.observations!.db, subject, deps.log));
       if (path === '/v1/me' && method === 'DELETE') {
         const body = await readJson(req, 1024, fail);
         return body.ok ? respond(await requestDeletion(services, subject, body.body, deps.log)) : body.response;
