@@ -126,7 +126,7 @@ Deno.serve(async (request: Request) => {
           instructions: martyBostonInstructions + martyBostonComedyCraft + memoryContext,
           output_modalities: ["audio"],
           audio: {
-            input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: null },
+            input: { transcription: { model: "gpt-live-transcribe" }, turn_detection: null },
             output: { voice: VOICE, speed: 0.92 },
           },
         },
