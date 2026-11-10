@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - discover-source-import-2026-11-10
+      - marty-boston-security-hardening-2026-11-10
   pull_request:
     branches:
       - discover-source-import-2026-11-10
@@ -28,5 +29,7 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: TypeScript validation
         run: npm run typecheck
+      - name: Run all unit tests
+        run: npm run test:all
       - name: Export web preview
         run: npm run build:web
