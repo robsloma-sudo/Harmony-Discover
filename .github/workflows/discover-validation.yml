@@ -23,12 +23,20 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - name: TypeScript validation
         run: npm run typecheck
+      - name: Validate Discover DEV Edge Functions
+        run: |
+          deno check supabase/functions/discover-voice-session/index.ts
+          deno check supabase/functions/discover-menu-read/index.ts
       - name: Run all unit tests
         run: npm run test:all
       - name: Export web preview
