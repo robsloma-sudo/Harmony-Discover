@@ -240,3 +240,10 @@ All three migration filenames now match the exact versions in the live Discover 
 ### Review and evidence-integrity smoke test
 
 A temporary synthetic DEV-only staged candidate was created inside a database test block, reviewed through `record_candidate_review`, and checked for the expected state: candidate became `approved`, review event was appended, and sync ledger remained `blocked`. An attempted payload mutation was rejected by the immutability trigger. The test removed its temporary review event, ledger row, and candidate. A follow-up count confirmed all three tables returned to zero rows. This verifies the database state machine and trigger behavior without staging user data or contacting Harmony.
+
+
+### Final validation run — 10 November 2026, 22:22 UTC
+
+GitHub Actions validation completed successfully for commit `f7932b404439ab02656e347018e7926a3393ddfc` (workflow runs 42913768999 and 42913759722). All steps passed: locked dependency install, Node 22 setup, Deno setup, TypeScript validation, both Discover DEV Edge Function checks, full Vitest suite, and Expo web export. This confirms the source branch validates and exports; it does not constitute a Netlify deployment or an audio/device audition.
+
+The deployed Discover DEV `discover-voice-session` function was fetched and compared against the hardening branch source. Its deployed version 4 contains the same origin allow-list, body validation, consent checks, rate limiting, user-approved memory isolation, 60-second client-secret lifetime, and provider error redaction. The required `DISCOVER_ALLOWED_ORIGINS` value and credential presence remain unverified because Supabase function secrets are not readable through the available API. No credential was minted and no audio session was started.
