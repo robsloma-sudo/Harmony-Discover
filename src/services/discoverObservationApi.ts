@@ -52,9 +52,12 @@ async function uploadPageWithRetry(observationId: string, blob: Blob, pageNumber
   throw new Error(`Could not upload menu page ${pageNumber} after retries: ${reason}`);
 }
 
-export async function processMenuPhotos(uris: string[], source: 'camera' | 'gallery'): Promise<ObservationResult> {
+export type MenuProcessingProgress = (message: string) => void;
+
+export async function processMenuPhotos(uris: string[], source: 'camera' | 'gallery', onProgress?: MenuProcessingProgress): Promise<ObservationResult> {
   if (!uris.length) throw new Error('Choose at least one menu photo.');
 
+  onProgress?.('Preparing your photos…');
   // Convert every page first so a local image-conversion failure cannot create
   // an empty or partially populated observation on the server.
   const preparedForms = await Promise.all(uris.map(async (uri, index) => {
@@ -71,6 +74,7 @@ export async function processMenuPhotos(uris: string[], source: 'camera' | 'gall
   const id = String(created.id);
   try {
     for (const [index, blob] of preparedForms.entries()) {
+      onProgress?.(`Uploading page ${index + 1} of ${preparedForms.length}…`);
       await uploadPageWithRetry(id, blob, index + 1);
     }
   } catch (uploadError) {
@@ -79,6 +83,7 @@ export async function processMenuPhotos(uris: string[], source: 'camera' | 'gall
     catch { /* Keep the original page-upload error visible to the user. */ }
     throw uploadError;
   }
+  onProgress?.('Reading the menu…');
   await request(`/v1/observations/${id}/complete`, { method: 'POST' });
   const readResult = await request(`/v1/observations/${id}/read`, { method: 'POST' });
   const observation = await request(`/v1/observations/${id}`) as ObservationResult;
