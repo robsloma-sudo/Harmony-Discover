@@ -92,3 +92,11 @@ The Performance Advisor reported two missing covering indexes on `observation_it
 The Performance Advisor also reported 10 unused indexes. Since the DEV project is new and contains no meaningful observation/learning records, this is not sufficient evidence to drop them; retain until realistic workload data exists.
 
 No database writes, migration application, Auth setting changes, Edge Function deployments, or production operations occurred during this follow-up.
+
+## Retention scheduler verification — read-only
+
+The live `cron.job` catalog contains two active schedules:
+- `discover-retention-daily`: `17 9 * * *` UTC. The command references `vault.decrypted_secrets` for the function URL and cron header; no secret values were read. Its latest recorded run on 10 November 2026 at 09:17 UTC succeeded.
+- `discover-rate-limit-sweep`: `47 9 * * *` UTC. It calls `public.discover_purge_rate_limits()`; its latest recorded run on 10 November 2026 at 09:47 UTC succeeded.
+
+The deployed `discover-retention` v1 handler independently checks the supplied `x-discover-cron-secret` by calling `discover_check_cron_secret` with the service-role client. Catalog ACL inspection confirms this verifier and the sensitive retention/account functions are executable by `service_role`, not `anon` or `authenticated`. This is a positive control; the cron secret itself was never retrieved or displayed.
