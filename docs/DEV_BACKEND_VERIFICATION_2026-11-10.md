@@ -119,3 +119,34 @@ Read-only inspection of deployed database function definitions and ACLs confirme
 - The sensitive export, deletion, retention and rate-limit routines inspected are executable by `service_role`, not `anon` or `authenticated`.
 
 The deployed account handler's intended order is: record deletion receipt → remove Storage objects → record storage removal → delete subject rows → delete Auth user → close receipt. A failure records a failed state for retry. This is a sound fail-visible pattern, but no end-to-end deletion was attempted because there are currently zero observation rows and no test account/fixture was authorized. Validate retries, already-missing Storage objects, auth deletion, and residual hashed audit-record retention in a dedicated DEV test fixture before launch.
+
+## Follow-up source recovery and CI findings — 10 November 2026, 21:03 UTC
+
+### Menu reader source recovered
+
+The live `discover-menu-read` v3 source was retrieved from the DEV Edge Function inventory. Its original repository file was absent from the source-import branch. A clearly labeled reconstructed source file now exists at `supabase/functions/discover-menu-read/index.ts` on the hardening branch.
+
+The recovered behavior:
+- Authenticates a Supabase bearer token.
+- Verifies the observation belongs to that user.
+- Signs private menu image URLs for 10 minutes.
+- Calls Anthropic's `claude-haiku-4-5` (unless `DISCOVER_MENU_MODEL` overrides it) with a strict transcription tool schema.
+- Persists extracted items and extraction payloads, then marks observations ready for user review.
+
+The reconstructed source adds an independent database-backed `discover_rate_limit` call, bucket `menu_read`, 10 calls per subject per 60 seconds, and fail-closed behavior. It also adds explicit browser-origin allow-listing and a 2 KiB JSON body limit. It is labeled as reconstructed and must be reviewed against the live artifact before deployment. No live function was replaced.
+
+### First automated CI execution exposed the real baseline
+
+The newly added GitHub Actions workflow did run. `npm ci` succeeded, but root TypeScript validation failed. The errors exposed that the root Expo tsconfig was unintentionally pulling in unrelated code:
+- the old archived Floot Marty source;
+- the unfinished Fastify API workspace, whose dependencies are not in the root package;
+- Deno Edge Function files, which need Deno's type/runtime checker;
+- app-only issues: one `.tsx` import option, one untyped mock Journey section, and two permission-mock return types.
+
+The CI workflow was corrected to:
+- run Node 22 (the lockfile resolves Supabase JS 2.119.0, whose packages declare Node >=22);
+- scope the root TypeScript check to `app/`, `src/`, and `tests/`;
+- validate the two Supabase Edge Functions separately using Deno;
+- then run the full Vitest suite and Expo web export.
+
+The new workflow run is in progress. No green validation result is claimed until the latest run completes. The Fastify API workspace remains a separate build task; it is not being hidden by claiming that root app typecheck validates it.
