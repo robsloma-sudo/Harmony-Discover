@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, Image, Pressable, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
@@ -18,6 +18,18 @@ export default function Preview() {
   const [observationId, setObservationId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  const [pageOrientations, setPageOrientations] = useState<Array<'portrait' | 'landscape' | 'square' | 'unknown'>>([]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all(pages.map(uri => new Promise<'portrait' | 'landscape' | 'square' | 'unknown'>(resolve => {
+      Image.getSize(uri, (width, height) => {
+        if (Math.abs(width - height) < 2) resolve('square');
+        else resolve(width > height ? 'landscape' : 'portrait');
+      }, () => resolve('unknown'));
+    }))).then(results => { if (active) setPageOrientations(results); });
+    return () => { active = false; };
+  }, [pages]);
 
   async function readMenu() {
     if (!session) { router.push({ pathname: '/sign-in', params: { next: '/preview' } }); return; }
@@ -53,8 +65,13 @@ export default function Preview() {
     <Text style={styles.eyebrow}>MENU SCAN</Text>
     <Text style={styles.title}>{items ? 'Review the menu.' : 'Ready to read.'}</Text>
     <Text style={styles.sub}>{items ? 'These are the words our reader found in your photos. Check names and prices before using them.' : 'Your photos stay on this device until you choose to process them.'}</Text>
-    <ScrollView horizontal style={{ maxHeight: 116 }} contentContainerStyle={{ gap: 10, paddingVertical: 10 }}>
-      {pages.map((uri, i) => <Image key={i} source={{ uri }} style={{ width: 88, height: 104, borderRadius: 12 }} />)}
+    <ScrollView horizontal style={{ maxHeight: 142 }} contentContainerStyle={{ gap: 10, paddingVertical: 10 }}>
+      {pages.map((uri, i) => <View key={i} style={{ width: 104, gap: 5 }}>
+        <Image source={{ uri }} resizeMode="cover" style={{ width: 104, height: 104, borderRadius: 12, borderWidth: 1, borderColor: '#39414A' }} />
+        <Text style={{ color: '#D7B77A', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' }}>
+          {(pageOrientations[i] || 'detecting').toUpperCase()}
+        </Text>
+      </View>)}
     </ScrollView>
     {!items && <>
       <Pressable onPress={() => setNoticeAccepted(v => !v)} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 16 }}>
