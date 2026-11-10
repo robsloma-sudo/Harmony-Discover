@@ -285,3 +285,14 @@ The staging routine still requires `venue_confirmed=true`; no venue-confirmation
 ### Additional safety correction — 10 November 2026
 
 Menu scans are now capped at 12 image pages. The authenticated upload handler checks the current owned, non-deleted asset count before storing another image and rejects page 13. The reader independently requests an exact asset count and refuses to set `all_pages_complete=true` when the observation exceeds 12 pages. This closes a partial-scan edge case caused by the reader's bounded 12-asset query. CI now builds a self-contained API Edge Function bundle from the shared source and validates the generated entrypoint; the bundle output is git-ignored and must be regenerated with `npm run build:edge` before deployment.
+
+
+## Contribution controls and final CI update — 10 November 2026
+- Added a signed-in account screen at `/contributions`, linked from Settings, to list active observation-specific menu contribution permissions and withdraw them with confirmation.
+- Added `GET /v1/me/contributions` using the authenticated subject scope; the existing withdraw endpoint records the event and the DEV withdrawal routine marks unpromoted candidates withdrawn and keeps the sync ledger blocked.
+- Added migration `20261110230000_discover_contribution_fk_indexes` for the five remaining FK indexes reported by the performance advisor. Applied successfully to `harmony-discover-dev` only.
+- Advisor now reports no unindexed foreign keys for these contribution/Marty tables. The 20 unused-index notices are expected in an empty DEV environment and are not a reason to drop indexes. The Auth connection allocation informational notice remains.
+- Security advisor remains at 20 informational RLS-enabled/no-policy findings for service-mediated tables plus the existing leaked-password-protection warning. No broad client policies were added.
+- DEV counts remain zero observations, grants, grant events, staged candidates, review events and sync-ledger rows.
+- CI passed on `e1a0fb95317d1d263e46d6fa9baef966e4cc86a1` including TypeScript, Edge bundle build, Deno validation, full unit tests and web export. The new FK-index migration commit `88adf4557e92341d333f6daefb34d7620548dbe1` is under CI now.
+- Contribution API and UI are source-only until the reviewed Discover API deployment is approved. No Edge Function deployment, Netlify release, PR merge, or original Harmony production write occurred.
