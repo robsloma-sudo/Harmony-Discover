@@ -36,8 +36,9 @@ Two new migrations have now been applied to Discover DEV only:
 |---|---|---|
 | 20261110211524 | discover_harmony_sync_staging | Private `harmony_sync` schema with staged candidates, sync ledger, review events, and canonical mapping receipts |
 | 20261110211548 | observation_correction_fk_indexes | Adds indexes on `observation_item_corrections.consumer_id` and `.observation_id` |
+| 20261110211821 | discover_sync_permission_audit | Requires an enumerated permission basis and auditable permission reference on every staged candidate |
 
-The staging schema contains four tables. All four have RLS enabled; `anon` and `authenticated` have no SELECT privilege; `service_role` has SELECT privilege. The schema is not exposed through the public client schema. No candidate records have been staged, and no production connection or sync worker exists.
+The staging schema contains four tables. All four have RLS enabled; `anon` and `authenticated` have no schema USAGE or table SELECT privilege; `service_role` has schema USAGE and table SELECT privilege. Each candidate must now supply a constrained permission basis (`public_source_license`, `explicit_contribution_consent`, or `operator_attested_permission`) and a 1–500 character audit reference. No candidate records have been staged, and no production connection or sync worker exists.
 
 The performance advisor no longer reports unindexed foreign keys on `observation_item_corrections`. It reports unused indexes (expected on a newly created, empty staging schema) and an Auth connection allocation advisory. The security advisor reports the four private staging tables as RLS-enabled/no-policy, which is intentional service-only default-deny, plus existing service-only tables and the existing leaked-password-protection warning. No client policies were added.
 
