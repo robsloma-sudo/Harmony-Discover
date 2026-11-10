@@ -152,3 +152,51 @@ The CI workflow was corrected to:
 The new workflow run is in progress. No green validation result is claimed until the latest run completes. The Fastify API workspace remains a separate build task; it is not being hidden by claiming that root app typecheck validates it.
 
 The recovered tool schema includes a `brands` array, and the full model tool payload is retained in `observation_extractions.ocr_payload`. The current normalized `observation_items` table has no dedicated brand column, so brand values are not promoted to normalized item fields yet. Do not silently overload `listed_ingredients`; if product requirements need first-class brand search/display, add a reviewed schema/API contract in a new timestamped migration after migration-history reconciliation.
+
+
+## Current implementation status — 10 November 2026, 21:17 UTC
+
+This section supersedes the earlier statements in this document that the correction-index migration was source-only and that no migrations had been applied after the read-only audit.
+
+### DEV-only migrations now applied
+
+- `20261110211524_discover_harmony_sync_staging`: creates private schema `harmony_sync` with `staged_candidates`, `sync_ledger`, `review_events`, and `canonical_mappings`.
+- `20261110211548_observation_correction_fk_indexes`: adds indexes for `observation_item_corrections.consumer_id` and `observation_id`.
+
+Both are recorded in the live Discover DEV migration ledger and their source filenames are aligned to the exact ledger versions. The Marty migration remains unapplied. No Edge Function has been deployed.
+
+### Staging schema security verification
+
+- All four `harmony_sync` tables have RLS enabled.
+- `anon` and `authenticated` have no schema USAGE and no table SELECT privilege.
+- `service_role` has schema USAGE and table SELECT privilege.
+- No staging rows exist; no ingestion writer, reviewer UI, sync worker, or production connector exists yet.
+- The schema is not exposed to the client roles. The database setting for exposed API schemas is unset (default behavior), and the client roles have no schema USAGE regardless.
+
+### Advisor results after migrations
+
+- The two missing foreign-key index findings on `observation_item_corrections` have cleared.
+- The security advisor reports four additional RLS-enabled/no-policy findings for the private staging tables. This is intentional default-deny service-only access, not a request to add client policies.
+- Existing service-only tables continue to generate no-policy informational findings.
+- The leaked-password-protection warning remains.
+- Unused-index findings increased because the new tables and indexes have no workload yet. Do not remove them before realistic workload measurements.
+
+### Harmony production schema mapping
+
+Read-only catalog inspection of original Harmony confirmed the canonical model:
+- `accounts` → venue identity.
+- `menus` → menu identity and source/account association.
+- `menu_sections` → menu hierarchy.
+- `menu_items` → orderable menu lines.
+- `sources`, `observations`, `field_provenance`, and `observation_reviews` → evidence, provenance, and review.
+- `brands`, `products`, `cocktail_specs`, and `cocktail_spec_components` → canonical beverage/product intelligence.
+
+Important identity constraint: `menus.account_id` references the text key `accounts.account_id`, whereas `observations.account_id` references the UUID `accounts.id`. These keys must never be interchanged.
+
+Canonical menu vocabularies and required fields were inspected and recorded in `docs/DISCOVER_TO_HARMONY_CANONICAL_MAPPING_2026-11-10.md`. In particular, Discover's `beverage_category` does not map directly to Harmony's narrower `menu_items.item_type` vocabulary.
+
+The inspected canonical tables expose SELECT policies to authenticated/Harmony reader roles, but no authenticated INSERT/UPDATE/DELETE policies were found on the inspected menu/source/provenance/review tables. This points to a server-mediated write path. That path still must be traced in Harmony application/server code before any production integration. Harmony production remains read-only and has received no writes.
+
+### CI status
+
+CI passed on commit `bfd8baca95a833613e02cdf0b1c0e3ab306f30ed`, including TypeScript, both Deno checks, all unit tests, and Expo web export. A fresh validation run is pending for the subsequent docs and migration filename-alignment commits. Do not infer latest-head success from the earlier green run.
