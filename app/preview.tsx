@@ -149,7 +149,7 @@ export default function Preview() {
         <Text style={styles.eyebrow}>OPTIONAL · SEPARATE PERMISSION</Text>
         <Text style={styles.itemTitle}>Contribute this menu to Harmony research?</Text>
         <Text style={styles.categoryDesc}>Only the extracted menu details shown above (item names, descriptions, prices, your confirmed venue name and scan date) may be sent to a private review queue for possible inclusion in Harmony's beverage knowledge base. A person must review them. This does not publish the menu automatically.</Text>
-        <Text style={styles.categoryDesc}>Your menu photos, personal conversations, private memories and account details are not included in this contribution. This choice is separate from permission to process the photos for your scan.</Text>
+        <Text style={styles.categoryDesc}>Your menu photos, personal conversations, private memories and account details are not included in this contribution. The scan's venue identity, menu sections, item categories, printed details, and corrections you saved may be included. This choice is separate from permission to process the photos for your scan.</Text>
         {contributionGranted ? <>
           <Text style={{ color: '#B9D6C0', fontSize: 13, fontWeight: '700' }}>Contribution permission is active for this scan.</Text>
           <Pressable style={styles.secondary} disabled={contributionBusy} onPress={async () => {
@@ -160,7 +160,7 @@ export default function Preview() {
             finally { setContributionBusy(false); }
           }}><Text style={styles.secondaryText}>{contributionBusy ? 'Withdrawing…' : 'Withdraw contribution permission'}</Text></Pressable>
         </> : <>
-          <Text style={styles.categoryDesc}>Confirm the venue above first. Nothing is contributed unless you choose the button below. You can withdraw permission later.</Text>
+          <Text style={styles.categoryDesc}>Confirm the venue above first. Nothing is contributed unless you choose the button below. You can withdraw permission later. Withdrawal blocks pending Discover review; if information has already been promoted to Harmony, removal requires a separate deletion review.</Text>
           <Pressable style={[styles.primary, (contributionBusy || !observationId) && { opacity: 0.5 }]} disabled={contributionBusy || !observationId || items.length === 0 || !venueConfirmed} onPress={async () => {
             if (!observationId) return;
             setContributionBusy(true); setMessage('');
