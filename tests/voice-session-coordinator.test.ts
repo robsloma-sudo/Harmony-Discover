@@ -67,7 +67,7 @@ describe('VoiceSessionCoordinator', () => {
     let resolveConnect!: () => void;
     const pendingConnect = new Promise<void>(resolve => { resolveConnect = resolve; });
     const p: VoicePlatformAdapter = {
-      requestMicrophonePermission: vi.fn(async () => 'granted'),
+      requestMicrophonePermission: vi.fn(async (): Promise<'granted' | 'denied'> => 'granted'),
       connect: vi.fn(() => pendingConnect),
       close: vi.fn(async () => undefined),
     };
