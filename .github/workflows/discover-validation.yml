@@ -42,6 +42,7 @@ jobs:
           deno check --node-modules-dir=auto supabase/functions/discover-voice-session/index.ts
           deno check --node-modules-dir=auto supabase/functions/discover-menu-read/index.ts
           deno check --node-modules-dir=auto apps/edge/discover-api.ts
+          deno check --node-modules-dir=auto supabase/functions/discover-api/index.ts
           deno test --node-modules-dir=auto apps/api/tests/observation-contribution-permission.deno.ts
       - name: Run all unit tests
         run: npm run test:all
