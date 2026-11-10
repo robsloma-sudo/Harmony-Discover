@@ -28,7 +28,21 @@ export default function Settings() {
           <Text style={styles.categoryDesc}>Photos are selected by you before processing</Text>
         </View>
       </View>
-      <Text style={styles.footnote}>More preferences will appear here as the Discover experience is completed.</Text>
+      <View style={styles.item}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.itemTitle}>Marty voice & memory</Text>
+          <Text style={styles.categoryDesc}>Separate opt-ins, saved memories, and deletion controls</Text>
+        </View>
+        <Pressable onPress={() => router.push('/bartender-settings')}><Text style={styles.price}>OPEN</Text></Pressable>
+      </View>
+      <View style={styles.item}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.itemTitle}>Marty Comedy Lab</Text>
+          <Text style={styles.categoryDesc}>33 original scenarios and six human-scored dimensions</Text>
+        </View>
+        <Pressable onPress={() => router.push('/comedy-lab')}><Text style={styles.price}>OPEN</Text></Pressable>
+      </View>
+      <Text style={styles.footnote}>Voice sessions remain unavailable until the reviewed DEV endpoint and real audio transport are validated.</Text>
       <Pressable style={styles.primary} onPress={() => router.back()}>
         <Text style={styles.primaryText}>Return to camera</Text>
       </Pressable>
