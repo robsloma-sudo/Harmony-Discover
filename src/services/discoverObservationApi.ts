@@ -112,3 +112,10 @@ export async function grantObservationContribution(observationId: string): Promi
 export async function withdrawObservationContribution(observationId: string): Promise<void> {
   await request(`/v1/observations/${observationId}/contribution`, { method: 'DELETE' });
 }
+
+export async function confirmObservationVenue(observationId: string, venueName: string): Promise<void> {
+  await request(`/v1/observations/${observationId}/venue-confirmation`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ venueName }),
+  });
+}
