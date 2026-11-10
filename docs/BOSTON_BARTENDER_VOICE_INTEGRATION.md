@@ -139,3 +139,14 @@ The OpenAI Realtime client-secret documentation states that a client secret can 
 ### Current Realtime API compatibility review
 
 The live OpenAI Realtime client-secret API reference confirms the configured `gpt-realtime-2.1` model, `ash` voice, audio-only output, manual turn detection (`turn_detection: null`), and speech speed `0.92` are supported configuration values. The input transcription model was changed from the deprecated `gpt-4o-mini-transcribe` to `gpt-live-transcribe`. The deployed Discover DEV function is ACTIVE version 4. This is a static API-schema review; a real provider credential/audio call is still pending.
+
+
+### Discover preview origin identified
+
+The previously shared Harmony Discover Netlify deployment is `https://cosmic-choux-065ee2.netlify.app`. The exact browser origin to add to the Discover DEV `DISCOVER_ALLOWED_ORIGINS` setting is:
+
+```text
+https://cosmic-choux-065ee2.netlify.app
+```
+
+This value has been documented but not yet written to Supabase Function secrets. No saved browser profile is currently recorded as signed in to Supabase, so dashboard configuration requires the user to confirm an existing signed-in profile or complete a sign-in setup session.
