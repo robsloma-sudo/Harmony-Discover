@@ -31,14 +31,13 @@ async function request(path: string, init: RequestInit = {}) {
   return body;
 }
 
-async function uploadPageWithRetry(observationId: string, form: FormData, pageNumber: number) {
+async function uploadPageWithRetry(observationId: string, blob: Blob, pageNumber: number) {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       // Rebuild the request per attempt; browsers may consume multipart request bodies.
       const retryForm = new FormData();
-      const file = form.get('file');
-      if (file) retryForm.append('file', file);
+      retryForm.append('file', blob, `menu-page-${pageNumber}.jpg`);
       await request(`/v1/observations/${observationId}/assets`, { method: 'POST', body: retryForm });
       return;
     } catch (error) {
@@ -62,9 +61,7 @@ export async function processMenuPhotos(uris: string[], source: 'camera' | 'gall
     const converted = await ImageManipulator.manipulateAsync(uri, [], { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG });
     const response = await fetch(converted.uri);
     const blob = await response.blob();
-    const form = new FormData();
-    form.append('file', blob, `menu-page-${index + 1}.jpg`);
-    return form;
+    return blob;
   }));
 
   const created = await request('/v1/observations', {
@@ -72,8 +69,8 @@ export async function processMenuPhotos(uris: string[], source: 'camera' | 'gall
     body: JSON.stringify({ processingNoticeVersion: 'discover-menu-processing-v1', source }),
   });
   const id = String(created.id);
-  for (const [index, form] of preparedForms.entries()) {
-    await uploadPageWithRetry(id, form, index + 1);
+  for (const [index, blob] of preparedForms.entries()) {
+    await uploadPageWithRetry(id, blob, index + 1);
   }
   await request(`/v1/observations/${id}/complete`, { method: 'POST' });
   const readResult = await request(`/v1/observations/${id}/read`, { method: 'POST' });
