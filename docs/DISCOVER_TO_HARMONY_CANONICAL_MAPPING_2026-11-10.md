@@ -104,3 +104,8 @@ Only two triggers were found on the inspected set: `sources_set_updated_at` and 
 ## Explicit exclusions
 
 No personal conversations, private memories, consumer IDs, private taste profiles, or unaggregated learning events are candidates for transfer. Harmony remains read-only until separately authorized.
+
+
+## Code-level dry-run mapper
+
+The repository now includes `src/integration/harmonySubmitMenuMapper.ts` and `tests/harmony-submit-menu-mapper.test.ts`. The mapper accepts only an explicitly reviewed Harmony menu draft; it does not infer account identity, source authority, public evidence URL, menu item type, price, currency, or brand mapping from Discover OCR. It validates the exact `submit-menu` field vocabularies, HTTPS publisher-owned evidence URL, SHA-256 content hash, non-negative positions, numeric price strings, currency code, brand category, and the PDF/image positive-item guard. It produces the request payload only; it does not call the production endpoint or write any data. Tests cover accepted mapping, blocked evidence URLs, empty PDF/image captures, invalid canonical fields, and preserving text-only prices without inventing a numeric amount.
