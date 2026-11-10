@@ -60,6 +60,7 @@ describe('VoiceSessionCoordinator', () => {
     expect(result.voice.state).toBe('offline');
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(p.connect).not.toHaveBeenCalled();
+    expect(p.close).toHaveBeenCalled();
   });
 
   it('closes a connection that resolves after the user stops', async () => {
