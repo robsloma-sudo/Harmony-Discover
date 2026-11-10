@@ -118,3 +118,10 @@ A service-role-only, SECURITY INVOKER routine now exists in Discover DEV: `harmo
 The staged payload excludes consumer IDs, account IDs, storage object paths, signed asset URLs, and private taste/conversation data. It carries the consent record ID and policy version as permission provenance, source observation/item IDs, menu text/price/category/ingredient evidence, and latest correction values. Candidates are initially `pending`; the sync ledger is deliberately `blocked` pending independent human review and canonical mapping. No worker promotes anything to Harmony.
 
 The function is SECURITY INVOKER and executable only by `service_role`; anon/authenticated execute privileges are false. Discover DEV currently has zero menu observations and zero aggregate-research consent records, so an actual execution returned `staged = 0`, with zero candidates, review events, or ledger rows. No user data was staged. This is a no-op verification, not an end-to-end test with a consented fixture.
+
+
+## Reviewer state machine and evidence integrity
+
+Discover DEV now has a service-role-only `harmony_sync.record_candidate_review(uuid,text,text,text)` routine. It accepts `approved`, `rejected`, `conflict`, or `withdrawn`; requires a reviewer label and reason; locks a pending candidate; checks its sync-ledger row; appends a review event; and deliberately leaves the ledger `blocked`. A reviewer approval does not authorize or queue a production write.
+
+A database trigger makes source identity, source version, payload, evidence, confidence, permission basis/reference, payload hash, and idempotency key immutable after staging. Review events are append-only for service_role (SELECT/INSERT only; no UPDATE/DELETE). Live privilege checks confirm anon/authenticated cannot access the private schema and service_role cannot update/delete review events. These changes are DEV-only and have not been exercised against a consented test fixture because the project currently has no menu observations.
