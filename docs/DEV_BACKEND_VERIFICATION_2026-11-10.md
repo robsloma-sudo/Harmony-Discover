@@ -8,7 +8,7 @@ Read-only inspection of Supabase project `lqqmwqrffelgnbngrkep`. No database wri
 
 | Function | Version | State | JWT gateway |
 |---|---:|---|---|
-| `discover-api` | 3 | ACTIVE | `verify_jwt=false`; handler independently verifies the Supabase bearer token with `auth.getUser()` |
+| `discover-api` | 6 | ACTIVE | `verify_jwt=false`; current v6 handler independently verifies the Supabase bearer token with `auth.getUser()` |
 | `discover-menu-read` | 3 | ACTIVE | `verify_jwt=true`; also verifies the user token and observation ownership |
 | `discover-retention` | 1 | ACTIVE | `verify_jwt=false` |
 
@@ -72,3 +72,22 @@ Design and review an authenticated, owner-scoped correction endpoint and append-
 ## Deployment status
 
 Iteration 22 is an editable source package only. No Netlify deployment was performed. Dependency installation, TypeScript typecheck, Expo build, and iPhone end-to-end testing remain outstanding.
+
+## Follow-up read-only audit — 10 November 2026, 20:56 UTC
+
+A fresh read-only inspection supersedes any older function-version statements above:
+- `discover-api`: ACTIVE v6, `verify_jwt=false`; the deployed v6 entrypoint creates a server-side service-role client only after a fail-closed Discover DEV environment check. Its identity adapter validates the bearer token with Supabase Auth.
+- `discover-menu-read`: ACTIVE v3, `verify_jwt=true`; the deployed source still sets wildcard CORS (`Access-Control-Allow-Origin: *`). It verifies the bearer token and checks observation ownership. Review and replace wildcard browser origins with an explicit allow-list before broader public exposure.
+- `discover-retention`: ACTIVE v1, `verify_jwt=false`; inspect its cron-secret validation and deployment configuration before treating it as a hardened scheduled endpoint.
+
+Fresh catalog inspection found 17 public base tables, all with RLS enabled. Six explicit policies are present: owner SELECT on `menu_observations`, `observation_assets`, and `observation_items`; owner SELECT/INSERT/UPDATE on `personal_taste_profiles`. The other 13 RLS-enabled tables have no policies, consistent with service-mediated access and default-deny RLS. Do not add broad client policies to clear the linter.
+
+The Security Advisor reported:
+- 13 informational `rls_enabled_no_policy` findings for the service-only tables listed in `docs/DEV_MIGRATION_RECONCILIATION_2026-11-10.md`.
+- 1 warning: Auth leaked-password protection is disabled.
+
+The Performance Advisor reported two missing covering indexes on `observation_item_corrections` foreign keys: `consumer_id` and `observation_id`. A source-only follow-up migration `20261110210000_observation_correction_fk_indexes.sql` has been added on the hardening branch. It has not been applied.
+
+The Performance Advisor also reported 10 unused indexes. Since the DEV project is new and contains no meaningful observation/learning records, this is not sufficient evidence to drop them; retain until realistic workload data exists.
+
+No database writes, migration application, Auth setting changes, Edge Function deployments, or production operations occurred during this follow-up.
