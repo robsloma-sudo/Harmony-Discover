@@ -2,11 +2,11 @@
 
 **Audit date:** 10 November 2026  
 **Project:** `harmony-discover-dev` — `lqqmwqrffelgnbngrkep`  
-**Mode:** Read-only database inspection. No SQL writes, migrations, function deployments, secrets changes, or production operations.
+**Mode:** Historical source-gap audit plus verified DEV-only migrations. Original Harmony production remains read-only.
 
 ## Executive finding
 
-Do not apply the Marty migration yet. The Git branch's migration directory is not a complete, ledger-aligned representation of the live Discover DEV database. The live project has 13 applied migrations; source branch history has gaps and a filename/sequence mismatch.
+The original Discover DEV migration history still has source gaps: applied migrations 0004–0009, 0011_pg_net_out_of_public, and 0012_menu_reading are not represented by their original SQL in the current source branch. Do not fabricate or replay replacements for those historical migrations. This does not prevent applying new forward-only migrations to the existing DEV database, but a fresh environment bootstrap remains incomplete until an authoritative source recovery or catalog-derived baseline snapshot is prepared.
 
 ## Live migration ledger
 
@@ -30,39 +30,31 @@ The live Supabase migration ledger returned:
 
 ## Follow-up DEV changes (read-only verification after applying isolated migrations)
 
-Two new migrations have now been applied to Discover DEV only:
+Five additional migrations have now been applied to Discover DEV only:
 
 | Version | Applied migration name | Purpose |
 |---|---|---|
 | 20261110211524 | discover_harmony_sync_staging | Private `harmony_sync` schema with staged candidates, sync ledger, review events, and canonical mapping receipts |
 | 20261110211548 | observation_correction_fk_indexes | Adds indexes on `observation_item_corrections.consumer_id` and `.observation_id` |
 | 20261110211821 | discover_sync_permission_audit | Requires an enumerated permission basis and auditable permission reference on every staged candidate |
+| 20261110215901 | marty_bartender | Adds voice consent, private user-entered memories, Comedy Lab evaluations, and service-only rate limiting |
+| 20261110215936 | marty_private_table_grants | Revokes inherited PUBLIC/anon grants; keeps rate-limit table backend-only |
 
 The staging schema contains four tables. All four have RLS enabled; `anon` and `authenticated` have no schema USAGE or table SELECT privilege; `service_role` has schema USAGE and table SELECT privilege. Each candidate must now supply a constrained permission basis (`public_source_license`, `explicit_contribution_consent`, or `operator_attested_permission`) and a 1–500 character audit reference. No candidate records have been staged, and no production connection or sync worker exists.
 
 The performance advisor no longer reports unindexed foreign keys on `observation_item_corrections`. It reports unused indexes (expected on a newly created, empty staging schema) and an Auth connection allocation advisory. The security advisor reports the four private staging tables as RLS-enabled/no-policy, which is intentional service-only default-deny, plus existing service-only tables and the existing leaked-password-protection warning. No client policies were added.
 
-The source filenames in Git have been aligned to the actual versions returned by the DEV migration ledger. The Marty migration remains unapplied.
+All seven new migration source filenames in Git are aligned to the actual versions returned by the DEV migration ledger. Marty tables and the rate-limit RPC now exist in Discover DEV. The historical source gaps remain open.
 
 ## Source branch comparison
 
-The inspected Git branch `discover-source-import-2026-11-10` contains:
-- `0001_discover_observations.sql`
-- `0002_observation_processing.sql`
-- `0003_learning_engine.sql`
-- `0010_observation_item_corrections.sql`
-- `20261110210500_marty_bartender.sql` (Marty proposal only; NOT applied)
+The inspected working branch contains the original `0001_discover_observations.sql`, `0002_observation_processing.sql`, `0003_learning_engine.sql`, and the correction migration source. It also contains forward-only migrations aligned to all seven newly applied DEV ledger versions, including Marty and its privilege hardening.
 
 It does not contain the original source SQL for applied migrations 0004–0009, nor the source SQL for `0011_pg_net_out_of_public` and `0012_menu_reading`. The correction migration's source filename also differs from the live ledger name `observation_item_corrections`; its timestamp is 20261110071228. The branch's `0010_observation_item_corrections.sql` is a source filename, not proof that it is live ledger version 0010.
 
-The live database confirms that `observation_item_corrections` exists. The timestamped Marty proposal migration is `20261110210500_marty_bartender.sql`; it is source only. The branch's Marty tables and RPC do not exist in DEV:
-- `bartender_voice_consents`
-- `bartender_memories`
-- `bartender_comedy_evaluations`
-- `marty_voice_rate_limits`
-- `consume_marty_voice_rate_limit(...)`
+The live database confirms that `observation_item_corrections` exists. The timestamped Marty proposal migration is `20261110210500_marty_bartender.sql`; it is source only. Live DEV now contains the four Marty tables and `consume_marty_voice_rate_limit(uuid,timestamptz,integer)`. The RPC is SECURITY INVOKER and executable only by service_role. A follow-up ACL query confirmed anon has no SELECT privilege on any Marty table; authenticated users have no privilege on the backend-only rate-limit table; service_role retains required access.
 
-**Required action:** recover the original SQL for all missing applied migrations from the authoritative source/backup. If exact originals cannot be recovered, produce a separately labeled schema-reconciliation snapshot from live catalog definitions, not fabricated historical migrations. The two new migrations above are already recorded and their source filenames are aligned to their exact live ledger versions. Add Marty only as a new migration after the latest live version and review it against the actual live schema before applying.
+**Required action:** recover the original SQL for all missing applied migrations from the authoritative source/backup. If exact originals cannot be recovered, produce a separately labeled schema-reconciliation snapshot from live catalog definitions, not fabricated historical migrations. New forward migrations must continue to be appended after the latest live ledger version.
 
 ## Live DEV schema and RLS observations
 
@@ -90,13 +82,12 @@ The older `docs/DEV_BACKEND_VERIFICATION_2026-11-10.md` records `discover-api` v
 ## Marty release gates
 
 1. Recover or formally replace the missing historical migration source; never replay reconstructed old migrations against the live DEV database.
-2. Create a new, uniquely timestamped Marty migration after the current ledger head.
-3. Review owner scoping, RLS, grants, service-role-only rate limiting, indexes, consent withdrawal semantics and deletion behavior.
-4. Confirm the Realtime client-secret endpoint has the correct DEV-only environment checks and allowed-origin configuration.
-5. Validate source, TypeScript, unit tests, web export and real browser audio.
-6. Apply the migration and deploy the Edge Function to Discover DEV only after explicit user approval.
-7. Recheck the live schema, security advisors, endpoint behavior, consent denial, rate limits, credential expiry and client bundle for leaked permanent secrets.
-8. Keep Harmony production read-only and undeployed.
+2. Verify Discover DEV Edge Function secrets and allowed-origin configuration without exposing secret values.
+3. Deploy the Realtime session endpoint to Discover DEV only; it is not yet in the live function inventory.
+4. Test voice consent denial, active consent, memory withdrawal/deletion, rate limiting, credential expiry, browser CORS and actual WebRTC audio.
+5. Confirm the voice endpoint's deployed source matches the reviewed Git commit.
+6. Test with an authorized DEV test account and remove test artifacts afterward.
+7. Keep Harmony production read-only and undeployed.
 
 ## Source references
 
@@ -104,3 +95,10 @@ The older `docs/DEV_BACKEND_VERIFICATION_2026-11-10.md` records `discover-api` v
 - Live schema, policies, grants, extension inventory and function inventory inspected read-only through Supabase.
 - Source files: `supabase/migrations/0001_discover_observations.sql`, `0002_observation_processing.sql`, `0003_learning_engine.sql`, and `0010_observation_item_corrections.sql`.
 - The migration `20261110210500_marty_bartender.sql` remains proposal source only and is not applied.
+
+
+## Marty migration verification update — 10 November 2026
+
+The Marty schema migration was applied to Discover DEV as ledger version `20261110215901`, followed by privilege hardening `20261110215936`. The live table inventory confirms all four tables and their columns. All four tables have RLS enabled. After the ACL hardening migration, anon SELECT is false on all four; authenticated SELECT is false on the service-only rate-limit table; service_role SELECT is true. The RPC is SECURITY INVOKER, and execute privilege is service_role-only. No Marty Edge Function is deployed yet.
+
+The security advisor reports 18 RLS-enabled/no-policy informational findings, including the service-only rate-limit table and existing internal Discover tables, plus the pre-existing leaked-password-protection warning. These are not addressed by adding broad client policies. The three user-facing Marty tables have explicit owner-scoped policies; the rate-limit table is service-only.
