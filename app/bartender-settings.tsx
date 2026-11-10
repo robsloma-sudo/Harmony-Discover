@@ -46,12 +46,9 @@ export default function BartenderSettingsScreen() {
     if (!userId || busy) return;
     setBusy(true); setStatus('Saving your choices…');
     try {
-      if (!memoryEnabled) {
-        // Deletion is allowed by owner RLS even after consent withdrawal.
-        const { error: deleteError } = await supabase.from('bartender_memories').delete().eq('user_id', userId);
-        if (deleteError) throw deleteError;
-      }
       const now = new Date().toISOString();
+      // Withdraw consent first so no new session can use memory while cleanup runs.
+      // The owner DELETE policy remains available even after memory consent is false.
       const { error } = await supabase.from('bartender_voice_consents').upsert({
         user_id: userId,
         voice_enabled: voiceEnabled,
@@ -65,7 +62,15 @@ export default function BartenderSettingsScreen() {
         updated_at: now,
       }, { onConflict: 'user_id' });
       if (error) throw error;
-      if (!memoryEnabled) setMemories([]);
+      if (!memoryEnabled) {
+        const { error: deleteError } = await supabase.from('bartender_memories').delete().eq('user_id', userId);
+        if (deleteError) {
+          setMemories([]);
+          setStatus('Memory consent is off, but stored entries could not be fully deleted. Retry or contact support.');
+          return;
+        }
+        setMemories([]);
+      }
       setStatus('Saved. Voice and memory permissions are separate and can be changed here.');
     } catch {
       setStatus('Could not save consent. Check that the Discover DEV migration is applied.');
