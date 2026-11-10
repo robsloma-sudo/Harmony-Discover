@@ -18,30 +18,62 @@ async function authHeaders() {
   if (!token) throw new Error('Sign in to process this menu.');
   return { authorization: `Bearer ${token}`, apikey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '' };
 }
+class DiscoverRequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 async function request(path: string, init: RequestInit = {}) {
   if (!DISCOVER_API_URL) throw new Error('Discover API is not configured.');
   const headers = await authHeaders();
   const response = await fetch(`${DISCOVER_API_URL}${path}`, { ...init, headers: { ...headers, ...(init.headers || {}) } });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || `Discover request failed (${response.status}).`);
+  if (!response.ok) throw new DiscoverRequestError(body.error || `Discover request failed (${response.status}).`, response.status);
   return body;
+}
+
+async function uploadPageWithRetry(observationId: string, form: FormData, pageNumber: number) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      // Rebuild the request per attempt; browsers may consume multipart request bodies.
+      const retryForm = new FormData();
+      const file = form.get('file');
+      if (file) retryForm.append('file', file);
+      await request(`/v1/observations/${observationId}/assets`, { method: 'POST', body: retryForm });
+      return;
+    } catch (error) {
+      lastError = error;
+      const status = error instanceof DiscoverRequestError ? error.status : 0;
+      const retryable = status === 0 || status === 408 || status === 429 || status >= 500;
+      if (!retryable || attempt === 2) break;
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  }
+  const reason = lastError instanceof Error ? lastError.message : 'network error';
+  throw new Error(`Could not upload menu page ${pageNumber} after retries: ${reason}`);
 }
 
 export async function processMenuPhotos(uris: string[], source: 'camera' | 'gallery'): Promise<ObservationResult> {
   if (!uris.length) throw new Error('Choose at least one menu photo.');
-  const created = await request('/v1/observations', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ processingNoticeVersion: 'discover-menu-processing-v1', source }),
-  });
-  const id = String(created.id);
-  for (const [index, uri] of uris.entries()) {
-    // Normalize every selected image to JPEG. This also handles iPhone HEIC/HEIF photos.
+
+  // Convert every page first so a local image-conversion failure cannot create
+  // an empty or partially populated observation on the server.
+  const preparedForms = await Promise.all(uris.map(async (uri, index) => {
     const converted = await ImageManipulator.manipulateAsync(uri, [], { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG });
     const response = await fetch(converted.uri);
     const blob = await response.blob();
     const form = new FormData();
     form.append('file', blob, `menu-page-${index + 1}.jpg`);
-    await request(`/v1/observations/${id}/assets`, { method: 'POST', body: form });
+    return form;
+  }));
+
+  const created = await request('/v1/observations', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ processingNoticeVersion: 'discover-menu-processing-v1', source }),
+  });
+  const id = String(created.id);
+  for (const [index, form] of preparedForms.entries()) {
+    await uploadPageWithRetry(id, form, index + 1);
   }
   await request(`/v1/observations/${id}/complete`, { method: 'POST' });
   const readResult = await request(`/v1/observations/${id}/read`, { method: 'POST' });
