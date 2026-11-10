@@ -1,5 +1,5 @@
 [build]
-  command = "npm install --no-audit --no-fund && npx expo export --platform web"
+  command = "npm ci --no-audit --no-fund && npm run build:web"
   publish = "dist"
 
 [[redirects]]
