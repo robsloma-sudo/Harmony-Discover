@@ -28,6 +28,21 @@ The live Supabase migration ledger returned:
 | 20261109220329 | 0012_menu_reading |
 | 20261110071228 | observation_item_corrections |
 
+## Follow-up DEV changes (read-only verification after applying isolated migrations)
+
+Two new migrations have now been applied to Discover DEV only:
+
+| Version | Applied migration name | Purpose |
+|---|---|---|
+| 20261110211524 | discover_harmony_sync_staging | Private `harmony_sync` schema with staged candidates, sync ledger, review events, and canonical mapping receipts |
+| 20261110211548 | observation_correction_fk_indexes | Adds indexes on `observation_item_corrections.consumer_id` and `.observation_id` |
+
+The staging schema contains four tables. All four have RLS enabled; `anon` and `authenticated` have no SELECT privilege; `service_role` has SELECT privilege. The schema is not exposed through the public client schema. No candidate records have been staged, and no production connection or sync worker exists.
+
+The performance advisor no longer reports unindexed foreign keys on `observation_item_corrections`. It reports unused indexes (expected on a newly created, empty staging schema) and an Auth connection allocation advisory. The security advisor reports the four private staging tables as RLS-enabled/no-policy, which is intentional service-only default-deny, plus existing service-only tables and the existing leaked-password-protection warning. No client policies were added.
+
+The source filenames in Git have been aligned to the actual versions returned by the DEV migration ledger. The Marty migration remains unapplied.
+
 ## Source branch comparison
 
 The inspected Git branch `discover-source-import-2026-11-10` contains:
@@ -46,7 +61,7 @@ The live database confirms that `observation_item_corrections` exists. The times
 - `marty_voice_rate_limits`
 - `consume_marty_voice_rate_limit(...)`
 
-**Required action:** recover the original SQL for all missing applied migrations from the authoritative source/backup. If exact originals cannot be recovered, produce a separately labeled schema-reconciliation snapshot from live catalog definitions, not fabricated historical migrations. Then add Marty as a new migration after the latest live version, using a unique timestamp later than `20261110071228`, and review it against the actual live schema before applying.
+**Required action:** recover the original SQL for all missing applied migrations from the authoritative source/backup. If exact originals cannot be recovered, produce a separately labeled schema-reconciliation snapshot from live catalog definitions, not fabricated historical migrations. The two new migrations above are already recorded and their source filenames are aligned to their exact live ledger versions. Add Marty only as a new migration after the latest live version and review it against the actual live schema before applying.
 
 ## Live DEV schema and RLS observations
 
