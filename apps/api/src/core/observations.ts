@@ -11,6 +11,30 @@ export async function addAsset(db:SupabaseClient,subjectId:string,observationId:
 export async function completeObservation(db:SupabaseClient,subjectId:string,observationId:string,log?:Log):Promise<Result>{if(!z.string().uuid().safeParse(observationId).success)return ok({error:'observation_not_completable'},409);const{data,error}=await db.from('menu_observations').update({status:'received'}).eq('id',observationId).eq('consumer_id',subjectId).eq('status','created').select('id,status').maybeSingle();if(error||!data)return ok({error:'observation_not_completable'},409);const{error:queueError}=await db.from('observation_jobs').upsert({observation_id:observationId,job_type:'validate_assets',status:'queued',available_at:new Date().toISOString()},{onConflict:'observation_id,job_type',ignoreDuplicates:true});if(queueError){log?.('job enqueue failed',queueError);return ok({error:'processing_enqueue_failed'},500)}return ok({id:observationId,status:'received',processing:'queued'},202)}
 export async function getObservation(db:SupabaseClient,subjectId:string,observationId:string,log?:Log):Promise<Result>{if(!z.string().uuid().safeParse(observationId).success)return ok({error:'observation_not_found'},404);const{data,error}=await db.rpc('discover_observation_result',{p_subject:subjectId,p_observation:observationId});if(error){log?.('observation read failed',error);return ok({error:'observation_read_failed'},500)}if(!data)return ok({error:'observation_not_found'},404);return ok(data)}
 
+
+/** Remove an incomplete upload owned by the caller. Only observations still in
+ * the initial upload state can be discarded; processing scans are preserved. */
+export async function discardIncompleteObservation(db: SupabaseClient, subjectId: string, observationId: string, log?: Log): Promise<Result> {
+  if (!z.string().uuid().safeParse(observationId).success) return ok({ error: 'observation_not_found' }, 404);
+  const { data: observation, error: lookupError } = await db.from('menu_observations')
+    .select('id,status').eq('id', observationId).eq('consumer_id', subjectId).maybeSingle();
+  if (lookupError || !observation) return ok({ error: 'observation_not_found' }, 404);
+  if (observation.status !== 'created') return ok({ error: 'observation_not_discardable' }, 409);
+
+  const { data: assets, error: assetsError } = await db.from('observation_assets')
+    .select('object_path').eq('observation_id', observationId).eq('consumer_id', subjectId);
+  if (assetsError) { log?.('incomplete scan asset lookup failed', assetsError); return ok({ error: 'scan_cleanup_failed' }, 500); }
+  const paths = (assets ?? []).map((asset: { object_path: string }) => asset.object_path);
+  if (paths.length) {
+    const { error: storageError } = await db.storage.from(BUCKET).remove(paths);
+    if (storageError) { log?.('incomplete scan storage cleanup failed', storageError); return ok({ error: 'scan_cleanup_failed' }, 500); }
+  }
+  const { error: deleteError } = await db.from('menu_observations')
+    .delete().eq('id', observationId).eq('consumer_id', subjectId).eq('status', 'created');
+  if (deleteError) { log?.('incomplete scan record cleanup failed', deleteError); return ok({ error: 'scan_cleanup_failed' }, 500); }
+  return ok({ discarded: true });
+}
+
 /** Atomic, owner-checked correction with append-only before/after audit. */
 export async function correctObservationItem(db:SupabaseClient,subjectId:string,observationId:string,itemId:string,body:unknown,log?:Log):Promise<Result>{
  const schema=z.object({changes:z.object({name:z.string().trim().min(1).max(200).optional(),section:z.string().max(80).nullable().optional(),description:z.string().max(600).nullable().optional(),price:z.string().max(40).nullable().optional(),category:z.enum(['cocktail','wine','beer','spirits','non_alcoholic','food','other']).optional()}).strict().refine(v=>Object.keys(v).length>0,'At least one field is required')}).strict();
