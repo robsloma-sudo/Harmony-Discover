@@ -163,8 +163,10 @@ This section supersedes the earlier statements in this document that the correct
 - `20261110211524_discover_harmony_sync_staging`: creates private schema `harmony_sync` with `staged_candidates`, `sync_ledger`, `review_events`, and `canonical_mappings`.
 - `20261110211548_observation_correction_fk_indexes`: adds indexes for `observation_item_corrections.consumer_id` and `observation_id`.
 - `20261110211821_discover_sync_permission_audit`: requires a constrained permission basis and auditable permission reference for each staged candidate.
+- `20261110215901_marty_bartender`: creates Marty voice consent, user-entered memories, private Comedy Lab evaluations, and a service-only atomic voice rate limiter.
+- `20261110215936_marty_private_table_grants`: removes inherited PUBLIC/anon grants from Marty tables and removes all client grants from the voice rate-limit table.
 
-Both are recorded in the live Discover DEV migration ledger and their source filenames are aligned to the exact ledger versions. The Marty migration remains unapplied. No Edge Function has been deployed.
+All five migrations are recorded in the live Discover DEV ledger and source filenames are aligned to the exact ledger versions. No Marty Edge Function has been deployed.
 
 ### Staging schema security verification
 
@@ -173,6 +175,13 @@ Both are recorded in the live Discover DEV migration ledger and their source fil
 - `service_role` has schema USAGE and table SELECT privilege.
 - No staging rows exist; no ingestion writer, reviewer UI, sync worker, or production connector exists yet. Candidate writes now require one of `public_source_license`, `explicit_contribution_consent`, or `operator_attested_permission`, plus a non-empty permission reference.
 - The schema is not exposed to the client roles. The database setting for exposed API schemas is unset (default behavior), and the client roles have no schema USAGE regardless.
+
+### Marty table security verification
+
+- `bartender_voice_consents`, `bartender_memories`, and `bartender_comedy_evaluations` have RLS enabled; authenticated users retain explicit table grants but access is restricted by owner policies. Anonymous table access is revoked.
+- `marty_voice_rate_limits` has RLS enabled and no anon/authenticated table privileges. Only `service_role` has table privileges.
+- `consume_marty_voice_rate_limit(uuid,timestamptz,integer)` is `SECURITY INVOKER`, executable only by `service_role`, and not executable by anon/authenticated.
+- The first ACL check exposed inherited PUBLIC privileges on newly created tables. A follow-up migration removed them; a second live privilege query confirmed anon SELECT is false on all four Marty tables, authenticated SELECT is false on the rate-limit table, and service-role SELECT remains true.
 
 ### Advisor results after migrations
 
