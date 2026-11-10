@@ -102,3 +102,13 @@ The older `docs/DEV_BACKEND_VERIFICATION_2026-11-10.md` records `discover-api` v
 The Marty schema migration was applied to Discover DEV as ledger version `20261110215901`, followed by privilege hardening `20261110215936`. The live table inventory confirms all four tables and their columns. All four tables have RLS enabled. After the ACL hardening migration, anon SELECT is false on all four; authenticated SELECT is false on the service-only rate-limit table; service_role SELECT is true. The RPC is SECURITY INVOKER, and execute privilege is service_role-only. No Marty Edge Function is deployed yet.
 
 The security advisor reports 18 RLS-enabled/no-policy informational findings, including the service-only rate-limit table and existing internal Discover tables, plus the pre-existing leaked-password-protection warning. These are not addressed by adding broad client policies. The three user-facing Marty tables have explicit owner-scoped policies; the rate-limit table is service-only.
+
+
+## Final live inventory verification — 10 November 2026
+
+- `public`: 21 base tables; all 21 have RLS enabled.
+- `harmony_sync`: 4 base tables; all 4 have RLS enabled.
+- Marty tables are included in the public count: `bartender_voice_consents`, `bartender_memories`, `bartender_comedy_evaluations`, and `marty_voice_rate_limits`.
+- `discover-voice-session` is deployed in Discover DEV as ACTIVE version 2. Deployed bundle files were fetched and verified: `index.ts` and `_shared/martySullivanBoston.ts`.
+- The latest CI run for commit `b113f2987b48086102c5ae12a6dada207c96c6b2` completed successfully: TypeScript, Deno checks, all unit tests, and Expo web export.
+- The historical migration source gaps remain unresolved. A fresh project bootstrap cannot yet be reproduced from this repository alone. No fabricated historical migrations have been added.
