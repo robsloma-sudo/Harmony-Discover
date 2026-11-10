@@ -113,7 +113,24 @@ export async function listObservationContributions(db: SupabaseClient, subjectId
     log?.('contribution permission list failed', error);
     return ok({ error: 'contribution_permissions_unavailable' }, 500);
   }
-  const contributions = (data ?? []).map((row: any) => {
+  type ContributionRow = {
+    id: string;
+    observation_id: string;
+    policy_version: string;
+    granted_at: string;
+    menu_observations: {
+      venue_name_submitted: string | null;
+      venue_name_read: string | null;
+      captured_at: string | null;
+      status: string;
+    } | Array<{
+      venue_name_submitted: string | null;
+      venue_name_read: string | null;
+      captured_at: string | null;
+      status: string;
+    }> | null;
+  };
+  const contributions = ((data ?? []) as unknown as ContributionRow[]).map(row => {
     const observation = Array.isArray(row.menu_observations) ? row.menu_observations[0] : row.menu_observations;
     return {
       grantId: row.id,
