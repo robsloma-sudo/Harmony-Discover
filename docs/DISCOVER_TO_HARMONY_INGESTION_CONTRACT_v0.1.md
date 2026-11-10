@@ -140,3 +140,8 @@ The contribution grant RPC independently checks ownership, `ready_for_review`, p
 Withdrawal marks the active grant withdrawn, appends a grant-event record, changes any not-yet-promoted staged candidate to `withdrawn`, appends a review event and keeps the sync ledger blocked. A later grant can be created as a new versioned grant. Withdrawal cannot silently retract an already-promoted canonical record; that requires a separate deletion/review process. No promotion worker or production integration is active.
 
 The grant/withdraw and venue-confirmation API handlers, mobile UI and reader status changes are source-branch only. They are not deployed to the live Discover app or Edge Functions. No real grants or staged records exist in DEV.
+
+
+### Additional safety correction — 10 November 2026
+
+Menu scans are now capped at 12 image pages. The authenticated upload handler checks the current owned, non-deleted asset count before storing another image and rejects page 13. The reader independently requests an exact asset count and refuses to set `all_pages_complete=true` when the observation exceeds 12 pages. This closes a partial-scan edge case caused by the reader's bounded 12-asset query. CI now builds a self-contained API Edge Function bundle from the shared source and validates the generated entrypoint; the bundle output is git-ignored and must be regenerated with `npm run build:edge` before deployment.
