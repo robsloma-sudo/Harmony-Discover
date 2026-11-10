@@ -5,6 +5,7 @@ type ScanContextValue = {
   source: 'camera' | 'gallery';
   addPages: (uris: string[], source?: 'camera' | 'gallery') => void;
   appendPages: (uris: string[], source?: 'camera' | 'gallery') => void;
+  removePage: (index: number) => void;
   clear: () => void;
 };
 
@@ -28,6 +29,9 @@ export function ScanProvider({ children }: { children: ReactNode }) {
         appendPages: (uris, from = 'camera') => {
           setSource(current => current === from ? current : from);
           setPages(old => [...old, ...uris]);
+        },
+        removePage: index => {
+          setPages(old => old.filter((_, pageIndex) => pageIndex !== index));
         },
         clear: () => {
           setPages([]);
