@@ -270,3 +270,13 @@ Implemented in Discover source: post-review, optional, unchecked-by-default cont
 Found and corrected two more staging prerequisites while tracing the actual menu-reader path: the reader sets observation status to `ready_for_review` (not `complete`), and the API was not persisting the explicit processing-notice acknowledgement into `consent_to_processing`. The staging function now checks `ready_for_review`; observation creation now validates the exact processing notice version and persists `consent_to_processing=true` only after the existing UI acknowledgement. The reconstructed reader source now records `all_pages_complete` and `structured_menu_saved` after confirming persisted item rows. These are source changes only; the reconstructed reader has not been deployed.
 
 The staging routine still requires `venue_confirmed=true`; no venue-confirmation interaction has been implemented yet. Thus no user data can enter staging. No staging rows or contribution grants exist. The API source changes are not yet in the generated deployed Edge Function bundle and neither Netlify nor Supabase Edge Functions were deployed.
+
+
+### Latest consent and staging corrections — 10 November 2026
+
+- Added owner-scoped venue confirmation endpoint `POST /v1/observations/:id/venue-confirmation`; the review screen requires the user to confirm the venue name before contribution opt-in.
+- The contribution grant RPC now independently requires ownership, ready-for-review state, processing acknowledgement, venue confirmation, all pages complete, structured items saved, no dispute and zero unresolved flags.
+- Withdrawal now also blocks any not-yet-promoted staging candidate, changes its review status to `withdrawn`, appends a review event and leaves its sync ledger blocked. Already-promoted canonical records require a separate deletion review; no such promotion path is active.
+- Exact DEV migration ledger timestamps: grant lifecycle `20261110222941`; ready-for-review staging state `20261110223114`; grant eligibility `20261110223437`; withdrawal blocks staged candidates `20261110223506`.
+- The menu reader source now writes `all_pages_complete` and `structured_menu_saved` after checking persisted item rows. The Discover API source records the explicit processing notice as `consent_to_processing=true` and validates the exact notice version.
+- No observations, grants, grant events or staged candidates are present. No deployed app/API/reader changes have been made. CI is being rerun after the backend test path was moved outside the Expo TypeScript include scope.
