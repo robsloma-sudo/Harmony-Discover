@@ -108,11 +108,17 @@ Deno.serve(async (req: Request) => {
     return reply({ error: rateError ? "rate_limit_unavailable" : "rate_limited" }, rateError ? 503 : 429, origin);
   }
 
-  const { data: assets, error: assetsError } = await db.from("observation_assets")
-    .select("id,object_path,mime_type,byte_size,sha256,processing_status")
+  const { data: assets, count: assetCount, error: assetsError } = await db.from("observation_assets")
+    .select("id,object_path,mime_type,byte_size,sha256,processing_status", { count: "exact" })
     .eq("observation_id", id).eq("consumer_id", subject).is("deleted_at", null)
     .order("created_at", { ascending: true }).limit(12);
   if (assetsError || !assets?.length) return reply({ error: "no_assets" }, 409, origin);
+  if ((assetCount ?? assets.length) > 12) {
+    await db.from("menu_observations").update({
+      all_pages_complete: false, structured_menu_saved: false, status: "processing",
+    }).eq("id", id).eq("consumer_id", subject);
+    return reply({ error: "page_limit_exceeded", max_pages: 12 }, 413, origin);
+  }
 
   let pages = 0, itemsSaved = 0, skipped = 0;
   const failures: Array<Record<string, unknown>> = [];
