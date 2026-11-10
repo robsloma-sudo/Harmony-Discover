@@ -74,6 +74,9 @@ export default function Preview() {
       </View>)}
     </ScrollView>
     {!items && <>
+      <Pressable style={styles.secondary} onPress={() => router.push('/scan')}>
+        <Text style={styles.secondaryText}>+ Add another page</Text>
+      </Pressable>
       <Pressable onPress={() => setNoticeAccepted(v => !v)} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 16 }}>
         <View style={{ width: 22, height: 22, borderRadius: 5, borderWidth: 1, borderColor: noticeAccepted ? '#AEB7C1' : '#68717D', backgroundColor: noticeAccepted ? '#AEB7C1' : 'transparent', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#111', fontWeight: '900' }}>{noticeAccepted ? '✓' : ''}</Text></View>
         <Text style={[styles.categoryDesc, { flex: 1 }]}>I agree to have these menu photos securely uploaded to Discover and processed to transcribe the printed menu. This is separate from optional research or personalization consent.</Text>
