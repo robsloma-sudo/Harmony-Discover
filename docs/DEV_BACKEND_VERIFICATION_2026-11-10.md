@@ -162,6 +162,7 @@ This section supersedes the earlier statements in this document that the correct
 
 - `20261110211524_discover_harmony_sync_staging`: creates private schema `harmony_sync` with `staged_candidates`, `sync_ledger`, `review_events`, and `canonical_mappings`.
 - `20261110211548_observation_correction_fk_indexes`: adds indexes for `observation_item_corrections.consumer_id` and `observation_id`.
+- `20261110211821_discover_sync_permission_audit`: requires a constrained permission basis and auditable permission reference for each staged candidate.
 
 Both are recorded in the live Discover DEV migration ledger and their source filenames are aligned to the exact ledger versions. The Marty migration remains unapplied. No Edge Function has been deployed.
 
@@ -170,7 +171,7 @@ Both are recorded in the live Discover DEV migration ledger and their source fil
 - All four `harmony_sync` tables have RLS enabled.
 - `anon` and `authenticated` have no schema USAGE and no table SELECT privilege.
 - `service_role` has schema USAGE and table SELECT privilege.
-- No staging rows exist; no ingestion writer, reviewer UI, sync worker, or production connector exists yet.
+- No staging rows exist; no ingestion writer, reviewer UI, sync worker, or production connector exists yet. Candidate writes now require one of `public_source_license`, `explicit_contribution_consent`, or `operator_attested_permission`, plus a non-empty permission reference.
 - The schema is not exposed to the client roles. The database setting for exposed API schemas is unset (default behavior), and the client roles have no schema USAGE regardless.
 
 ### Advisor results after migrations
