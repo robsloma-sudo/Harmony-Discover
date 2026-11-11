@@ -30,6 +30,7 @@ export default function BartenderScreen() {
   const sessionStartedResolveRef = useRef<(() => void) | null>(null);
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
   const transportClosingRef = useRef(false);
+  const pendingNavigationRef = useRef<(() => void) | null>(null);
 
   function failTransport(dc: RTCDataChannel, pc: RTCPeerConnection, message: string) {
     if (dcRef.current !== dc || pcRef.current !== pc || transportClosingRef.current) return;
@@ -90,19 +91,18 @@ export default function BartenderScreen() {
     if (name === "navigate_discover") {
       const path = screens[String(args.screen)];
       if (!path) return "That screen is not available in Harmony Discover.";
-      if (args.screen === "nearby") {
-        router.push({ pathname: "/nearby", params: { ...(radius ? { radius } : {}), ...(category && category !== "all" ? { category } : {}), ...(search ? { search } : {}) } });
-        return "Opening the Nearby Atlas.";
-      }
-      router.push(path as never);
-      return "Opening " + String(args.screen) + ".";
+      pendingNavigationRef.current = () => {
+        if (args.screen === "nearby") router.push({ pathname: "/nearby", params: { ...(radius ? { radius } : {}), ...(category && category !== "all" ? { category } : {}), ...(search ? { search } : {}) } });
+        else router.push(path as never);
+      };
+      return "Opening " + (args.screen === "nearby" ? "the Nearby Atlas" : String(args.screen)) + ".";
     }
     if (name === "control_nearby_atlas") {
       const action = String(args.action);
-      if (action === "set_radius" && radius) router.push({ pathname: "/nearby", params: { radius } });
-      else if (action === "set_category" && category) router.push({ pathname: "/nearby", params: { category: category === "all" ? "" : category } });
-      else if (action === "search" && search) router.push({ pathname: "/nearby", params: { search } });
-      else if (action === "recenter") router.push({ pathname: "/nearby", params: { recenter: String(Date.now()) } });
+      if (action === "set_radius" && radius) pendingNavigationRef.current = () => router.push({ pathname: "/nearby", params: { radius } });
+      else if (action === "set_category" && category) pendingNavigationRef.current = () => router.push({ pathname: "/nearby", params: { category: category === "all" ? "" : category } });
+      else if (action === "search" && search) pendingNavigationRef.current = () => router.push({ pathname: "/nearby", params: { search } });
+      else if (action === "recenter") pendingNavigationRef.current = () => router.push({ pathname: "/nearby", params: { recenter: String(Date.now()) } });
       else return "I need a valid radius, category, or search phrase to do that.";
       return action === "recenter" ? "Recentering the Atlas on your location." : "Updating the Nearby Atlas.";
     }
@@ -138,7 +138,12 @@ export default function BartenderScreen() {
         }
         if (data.type === 'response.output_audio_transcript.done' && data.transcript) addLine('marty', data.transcript);
         if (data.type === 'response.output_audio_transcript.delta' && data.delta) setStatus('MARTY IS SPEAKING');
-        if (data.type === 'response.done') setStatus('CONNECTED · HOLD TO TALK');
+        if (data.type === 'response.done') {
+          setStatus('CONNECTED · HOLD TO TALK');
+          const navigate = pendingNavigationRef.current;
+          pendingNavigationRef.current = null;
+          if (navigate) setTimeout(navigate, 250);
+        }
         if (data.type === 'error') {
           sessionStartedRejectRef.current?.(new Error('Realtime session reported an error.'));
           sessionStartedRejectRef.current = null;
