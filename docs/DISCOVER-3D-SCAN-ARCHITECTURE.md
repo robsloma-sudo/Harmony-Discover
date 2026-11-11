@@ -216,3 +216,89 @@ The hardware target is now known well enough to begin an iPhone-first prototype.
 - Apple iPhone 17 technical specifications: https://support.apple.com/en-us/125089
 - Apple iPhone 17 Pro technical specifications (LiDAR listed): https://support.apple.com/en-us/125091
 - Apple ARKit scene reconstruction overview: https://developer.apple.com/documentation/ARKit/visualizing-and-interacting-with-a-reconstructed-scene
+
+## Live bar-inventory extension: bottle identity, liquid state and remaining volume
+
+**Product direction:** evolve 3D Live Bottle into a fast, video-based bar inventory workflow. An operator should be able to pan along a back bar or speed rail, with the scanner detecting distinct containers, recognizing products/SKUs, estimating remaining contents and producing a reviewable count. The camera/render loop remains on-device; no continuous video upload.
+
+### Per-object inference pipeline
+
+Treat each physical object as a tracked container hypothesis with independently scored evidence:
+
+1. **Container detection:** bottle/can/other/unknown classification using full silhouette and temporal visual evidence. Generic rectangles are proposal regions only and must never count as bottle detections.
+2. **Bottle geometry:** estimate body profile, shoulder, neck, base, width/height ratio, closure and visible label/embossing regions. Track a stable object ID across frames and camera motion.
+3. **Product/SKU identity:** use label/OCR evidence and the separate catalog agent's contract. Distinguish package size/SKU variants (e.g. 720 mL, 750 mL, 1 L, 1.5 L) rather than treating brand recognition as capacity recognition. Keep visual identity confidence separate from catalog-match confidence.
+4. **Liquid interface:** locate the physical liquid/air boundary within the bottle body, using multiple sharp frames and temporal consistency. Use edge/refraction/appearance cues and bottle geometry; reject printed label graphics, seams, glare, condensation, background edges and reflections. A visible line is evidence, not proof by itself.
+5. **Volume calculation:** map the interface height into the bottle's calibrated internal volume profile. For an approximately axisymmetric bottle with internal radius profile r(z), remaining volume is V(z)=π∫[0,z]r(h)^2 dh, with z measured from the internal base to the detected liquid surface. Use a measured/validated internal profile where possible; do not equate fill-height percentage with volume percentage.
+6. **Inventory result:** report estimated remaining mL, US fl oz, percent of nominal capacity, package capacity, product identity, confidence and evidence provenance. Preserve uncertainty and abstain when the interface or capacity cannot be trusted.
+
+### Capacity and calibration hierarchy
+
+- First choice: catalog-confirmed exact SKU/package size and a validated bottle-family internal profile.
+- Second choice: a previously calibrated digital twin for that exact bottle/package variant, with source and uncertainty recorded.
+- Third choice: guided user calibration or known-volume reference, explicitly labeled as user-calibrated.
+- Last resort: geometry-only estimate with a broad uncertainty interval; do not present it as an exact milliliter count.
+- Nominal capacity is not necessarily brimful internal capacity. Account for headspace, bottle design and manufacturer fill level. Store nominal package size separately from modeled internal capacity.
+- Never infer 750 mL merely from a familiar silhouette. 720 mL, 750 mL, 1 L and 1.5 L variants can share nearly identical shapes.
+
+### Optical limits and safeguards
+
+Liquid-interface visibility varies materially:
+- Clear spirits in clear glass may provide weak contrast; dark spirits can be easier in some lighting but reflections can mimic a boundary.
+- Opaque, frosted, ceramic, metal, heavily tinted or fully wrapped containers may hide the interface.
+- Labels can cover the liquid line; the line may only be visible through an unlabelled rear/side window.
+- Curved glass causes refraction and apparent line displacement. Camera angle, parallax, highlights, condensation, bubbles, foam and motion blur can corrupt the estimate.
+- A bottle can be partially occluded by neighboring stock, speed rails, hands or bar equipment.
+
+Therefore collect several viewpoints while the user pans, choose sharp frames, track the same physical object, and fuse only consistent observations. If the liquid line is not observable, return the state level_unreadable rather than inventing a fill estimate. If confidence is low, prompt for a short close-up/side-angle pass or manual correction.
+
+### Fast bar sweep experience
+
+- User selects a bar area/revenue-center inventory session and starts a guided video sweep.
+- Detect and track candidate containers across frames; deduplicate the same physical bottle seen in adjacent frames or from multiple angles.
+- Prioritize wide, sharp frames for counting and SKU labels; request targeted close-ups only for unresolved identity or liquid level.
+- Show a live progress rail: detected containers, confirmed products, unreadable labels, unreadable liquid levels and duplicates/occlusions.
+- Generate a draft inventory grouped by SKU/package size, with bottle count and estimated remaining volume; keep each bottle-level observation inspectable.
+- Require review for ambiguous SKU, package size, hidden liquid line, low confidence or possible duplicate. Do not silently round uncertainty into exact stock.
+- Support rapid manual overrides and preserve the original model estimate plus user correction.
+
+### Proposed per-bottle observation contract
+
+Each observation should include:
+- observation_id, scan_session_id, private owner_id, track_id, timestamps and capture device/capabilities.
+- container_class, classifier score, geometry profile and geometry confidence.
+- product_match_ref (optional), package capacity in mL, package-size source, SKU match score/status.
+- liquid_interface: visible/unreadable/occluded/ambiguous, normalized interface coordinates, source frame IDs, multi-frame agreement and confidence.
+- remaining_volume_ml, remaining_volume_us_fl_oz, remaining_percent, uncertainty interval, calculation method and calibration/profile reference.
+- evidence frame/crop references, model/version identifiers, user review state and correction history.
+- explicit estimated vs measured status. A camera-derived fill estimate is not a physical measurement.
+
+This is a proposed Discover DEV contract only; it does not authorize database migrations, uploads, or production writes.
+
+### Acceptance gates for inventory use
+
+- Distinguish bottle-shaped containers from arbitrary rectangular objects on a representative bar scene.
+- Keep one physical bottle as one track during a continuous sweep; avoid duplicate counts when the camera revisits it.
+- Demonstrate liquid-interface detection across clear, dark, tinted and opaque packaging, and explicitly abstain where it is not visible.
+- Validate volume estimates against known fill volumes across several bottle geometries and capacities, including 720 mL, 750 mL, 1 L and 1.5 L examples.
+- Report error distributions by bottle family, liquid type, lighting and view angle; do not claim one universal accuracy number.
+- Test dense shelves, overlapping bottles, label occlusion, backlighting, reflections, condensation, motion blur and partial visibility.
+- Only enable automatic inventory export after SKU identity, duplicate suppression and volume estimation each pass separate confidence/accuracy gates.
+
+### Recommended implementation sequence
+
+A. Build a representative validation set with annotated bottle masks, liquid-interface lines, SKU/package capacities and known remaining volumes. Include negative examples such as glasses, shakers, jars, decanters, empty display props and non-bottle rectangular objects.
+
+B. Add bottle/container classification and instance segmentation. Keep generic rectangle proposals as a low-level candidate generator only.
+
+C. Add temporal multi-object tracking and stable world/image association across a sweep. Track IDs must survive short occlusions and viewpoint changes without merging adjacent bottles.
+
+D. Add liquid-interface detection on selected sharp frames. Store line geometry and evidence before attempting volume conversion.
+
+E. Add bottle-family internal profile models and volume integration. Calibrate against known-volume ground truth and retain uncertainty.
+
+F. Integrate product/SKU package size through the separate catalog contract, then produce a reviewable inventory session.
+
+G. Add session persistence and export only after privacy, retention, owner isolation, deletion, review and audit rules are approved.
+
+**Immediate next engineering gate:** do not add a speculative liquid-line detector to the current generic rectangle stream. First define and annotate the bottle/liquid validation dataset and implement a container-instance segmentation interface. This prevents a brittle heuristic from being mistaken for reliable inventory intelligence.
