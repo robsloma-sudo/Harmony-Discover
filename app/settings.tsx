@@ -16,6 +16,13 @@ export default function Settings() {
         </View>
         <Text style={styles.price}>AUTO</Text>
       </View>
+      <Pressable style={styles.item} onPress={() => router.push('/arkit-diagnostics')}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.itemTitle}>ARKit diagnostics</Text>
+          <Text style={styles.categoryDesc}>Check native tracking, depth and mesh capabilities</Text>
+        </View>
+        <Text style={styles.price}>TEST</Text>
+      </Pressable>
       <View style={styles.item}>
         <View style={{ flex: 1 }}>
           <Text style={styles.itemTitle}>Camera access</Text>
