@@ -29,7 +29,6 @@ export default function BartenderScreen() {
   const sessionStartedRef = useRef(false);
   const sessionStartedResolveRef = useRef<(() => void) | null>(null);
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
-  const sessionClosedResolveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -50,36 +49,15 @@ export default function BartenderScreen() {
 
   const closeTransport = useCallback(async () => {
     isTalkingRef.current = false;
-    // Stop capture immediately; graceful server finalization must never keep the mic live.
+    // Stop capture immediately, then close the WebRTC transport.
     streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
-    if (audioRef.current) audioRef.current.pause();
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
+    sessionStartedRef.current = false;
     sessionStartedRejectRef.current?.(new Error('Voice session closed before it was ready.'));
     sessionStartedRejectRef.current = null;
     sessionStartedResolveRef.current = null;
-
-    const channel = dcRef.current;
-    if (channel?.readyState === 'open' && sessionStartedRef.current) {
-      await new Promise<void>(resolve => {
-        let finished = false;
-        const finish = () => {
-          if (finished) return;
-          finished = true;
-          window.clearTimeout(timeout);
-          sessionClosedResolveRef.current = null;
-          resolve();
-        };
-        const timeout = window.setTimeout(finish, 2500);
-        sessionClosedResolveRef.current = finish;
-        try { channel.send(JSON.stringify({ type: 'session.close' })); }
-        catch { finish(); }
-      });
-    }
-
-    sessionStartedRef.current = false;
-    try { channel?.close(); } catch {}
+    try { dcRef.current?.close(); } catch {}
     try { pcRef.current?.close(); } catch {}
-    streamRef.current?.getTracks().forEach(track => track.stop());
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
     dcRef.current = null; pcRef.current = null; streamRef.current = null; audioRef.current = null;
   }, []);
 
@@ -96,15 +74,11 @@ export default function BartenderScreen() {
     dc.onmessage = event => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'session.started') {
+        if (data.type === 'session.created') {
           sessionStartedRef.current = true;
           sessionStartedRejectRef.current = null;
           sessionStartedResolveRef.current?.();
           sessionStartedResolveRef.current = null;
-        }
-        if (data.type === 'session.closed') {
-          sessionStartedRef.current = false;
-          sessionClosedResolveRef.current?.();
         }
         if (data.type === 'conversation.item.input_audio_transcription.completed' && data.transcript) addLine('you', data.transcript);
         if (data.type === 'response.output_audio_transcript.done' && data.transcript) addLine('marty', data.transcript);
