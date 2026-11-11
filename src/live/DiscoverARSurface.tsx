@@ -3,6 +3,7 @@ import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView, type BarcodeScanningResult } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame } from '../services/discoverLiveApi';
+import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -17,6 +18,8 @@ type NativeProps = ViewProps & {
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }> } }) => void;
+  onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap }) => void;
+  onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
 
@@ -38,7 +41,7 @@ if (Platform.OS === 'ios') {
 function WebLiveCamera(props: NativeProps) {
   const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates });
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus });
   callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates };
 
   useEffect(() => {
@@ -51,6 +54,8 @@ function WebLiveCamera(props: NativeProps) {
     let stream: MediaStream | null = null;
     let frameCheck = 0;
     let recognitionTimer = 0;
+    let depthTimer = 0;
+    let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
     type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
@@ -202,6 +207,15 @@ function WebLiveCamera(props: NativeProps) {
         video.playsInline = true;
         await video.play();
 
+        depthEstimator = new BrowserDepthEstimator(
+          depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
+          status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
+        );
+        depthEstimator.start();
+        depthTimer = window.setInterval(() => {
+          if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
+        }, 1700);
+
         const verifyFrame = () => {
           if (disposed) return;
           const current = videoRef.current;
@@ -225,6 +239,8 @@ function WebLiveCamera(props: NativeProps) {
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
+      if (depthTimer) window.clearInterval(depthTimer);
+      depthEstimator?.dispose();
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
