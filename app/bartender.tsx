@@ -26,6 +26,10 @@ export default function BartenderScreen() {
   const dcRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isTalkingRef = useRef(false);
+  const sessionStartedRef = useRef(false);
+  const sessionStartedResolveRef = useRef<(() => void) | null>(null);
+  const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
+  const sessionClosedResolveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -46,7 +50,30 @@ export default function BartenderScreen() {
 
   const closeTransport = useCallback(async () => {
     isTalkingRef.current = false;
-    try { dcRef.current?.close(); } catch {}
+    sessionStartedRejectRef.current?.(new Error('Voice session closed before it was ready.'));
+    sessionStartedRejectRef.current = null;
+    sessionStartedResolveRef.current = null;
+
+    const channel = dcRef.current;
+    if (channel?.readyState === 'open' && sessionStartedRef.current) {
+      await new Promise<void>(resolve => {
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          window.clearTimeout(timeout);
+          sessionClosedResolveRef.current = null;
+          resolve();
+        };
+        const timeout = window.setTimeout(finish, 2500);
+        sessionClosedResolveRef.current = finish;
+        try { channel.send(JSON.stringify({ type: 'session.close' })); }
+        catch { finish(); }
+      });
+    }
+
+    sessionStartedRef.current = false;
+    try { channel?.close(); } catch {}
     try { pcRef.current?.close(); } catch {}
     streamRef.current?.getTracks().forEach(track => track.stop());
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
@@ -54,6 +81,7 @@ export default function BartenderScreen() {
   }, []);
 
   async function connectTransport(grant: VoiceSessionGrant) {
+    sessionStartedRef.current = false;
     const stream = streamRef.current;
     if (!stream) throw new Error('Microphone permission is missing.');
     const pc = new RTCPeerConnection();
@@ -65,11 +93,25 @@ export default function BartenderScreen() {
     dc.onmessage = event => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === 'session.started') {
+          sessionStartedRef.current = true;
+          sessionStartedRejectRef.current = null;
+          sessionStartedResolveRef.current?.();
+          sessionStartedResolveRef.current = null;
+        }
+        if (data.type === 'session.closed') {
+          sessionStartedRef.current = false;
+          sessionClosedResolveRef.current?.();
+        }
         if (data.type === 'conversation.item.input_audio_transcription.completed' && data.transcript) addLine('you', data.transcript);
         if (data.type === 'response.output_audio_transcript.done' && data.transcript) addLine('marty', data.transcript);
         if (data.type === 'response.output_audio_transcript.delta' && data.delta) setStatus('MARTY IS SPEAKING');
         if (data.type === 'response.done') setStatus('CONNECTED · HOLD TO TALK');
-        if (data.type === 'error') setError('Realtime session reported an error.');
+        if (data.type === 'error') {
+          sessionStartedRejectRef.current?.(new Error('Realtime session reported an error.'));
+          sessionStartedRejectRef.current = null;
+          setError('Realtime session reported an error.');
+        }
       } catch { /* Ignore non-JSON data-channel messages. */ }
     };
     const offer = await pc.createOffer();
@@ -94,6 +136,25 @@ export default function BartenderScreen() {
       dc.onopen = ready;
       dc.onerror = () => { window.clearTimeout(timeout); reject(new Error('Realtime data channel failed.')); };
       if (dc.readyState === 'open') ready();
+    });
+    await new Promise<void>((resolve, reject) => {
+      if (sessionStartedRef.current) { resolve(); return; }
+      const timeout = window.setTimeout(() => {
+        sessionStartedResolveRef.current = null;
+        sessionStartedRejectRef.current = null;
+        reject(new Error('Realtime session did not become ready.'));
+      }, 12000);
+      sessionStartedResolveRef.current = () => {
+        window.clearTimeout(timeout);
+        sessionStartedRejectRef.current = null;
+        resolve();
+      };
+      sessionStartedRejectRef.current = error => {
+        window.clearTimeout(timeout);
+        sessionStartedResolveRef.current = null;
+        reject(error);
+      };
+      if (sessionStartedRef.current) sessionStartedResolveRef.current();
     });
     addLine('system', 'Marty is at the bar. Hold the button when you want to speak.');
   }
