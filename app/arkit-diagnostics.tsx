@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
-import { getDiscoverARKitCapabilities, type ARKitCapabilities } from '../src/services/discoverARKit';
+import { createScannerCapabilityProfile, getDiscoverARKitCapabilities, getFriendlyIPhoneModel, type ARKitCapabilities } from '../src/services/discoverARKit';
 
 function Capability({ label, value }: { label: string; value: boolean }) {
   return (
@@ -46,6 +46,7 @@ export default function ARKitDiagnostics() {
       {loading ? <View style={{ padding: 24, alignItems: 'center' }}><ActivityIndicator /><Text style={styles.categoryDesc}>Checking device capabilities…</Text></View> : null}
       {error ? <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}><Text style={styles.itemTitle}>Native module unavailable</Text><Text style={styles.categoryDesc}>{error}</Text></View> : null}
       {data ? <>
+        <View style={styles.item}><View style={{ flex: 1 }}><Text style={styles.itemTitle}>Detected iPhone</Text><Text style={styles.categoryDesc}>{getFriendlyIPhoneModel(data.machineIdentifier)}</Text></View></View>
         <View style={styles.item}><View style={{ flex: 1 }}><Text style={styles.itemTitle}>Hardware identifier</Text><Text style={styles.categoryDesc}>{data.machineIdentifier}</Text></View></View>
         <View style={styles.item}><View style={{ flex: 1 }}><Text style={styles.itemTitle}>Device / OS</Text><Text style={styles.categoryDesc}>{data.model} · iOS {data.systemVersion}</Text></View></View>
         <Capability label="ARKit world tracking" value={data.worldTrackingSupported} />
@@ -53,6 +54,12 @@ export default function ARKitDiagnostics() {
         <Capability label="Smoothed scene depth" value={data.smoothedSceneDepthSupported} />
         <Capability label="Scene mesh reconstruction" value={data.meshReconstructionSupported} />
         <View style={styles.item}><View style={{ flex: 1 }}><Text style={styles.itemTitle}>LiDAR assumption</Text><Text style={styles.categoryDesc}>Never inferred from model name</Text></View><Text style={styles.price}>FALSE</Text></View>
+        <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+          <Text style={styles.itemTitle}>Selected scanner profile</Text>
+          <Text style={styles.categoryDesc}>{createScannerCapabilityProfile(data).tier.replace('_', ' ').toUpperCase()}</Text>
+          <Text style={styles.categoryDesc}>{createScannerCapabilityProfile(data).reason}</Text>
+          <Text style={styles.categoryDesc}>Available modes: {createScannerCapabilityProfile(data).modes.join(', ')}</Text>
+        </View>
         <View style={styles.item}><View style={{ flex: 1 }}><Text style={styles.itemTitle}>AR session</Text><Text style={styles.categoryDesc}>Not started by this diagnostic</Text></View><Text style={styles.price}>IDLE</Text></View>
       </> : null}
       <Pressable style={styles.primary} onPress={() => void refresh()}><Text style={styles.primaryText}>Run capability check again</Text></Pressable>
