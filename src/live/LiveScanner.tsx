@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type MenuGlimpse } from '../services/discoverLiveApi';
@@ -23,6 +23,12 @@ function makeSession() {
 }
 function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void}) {
  const sweep=useRef(new Animated.Value(0)).current;
+ const [frame,setFrame]=useState({width:0,height:0});
+ const [imageSize,setImageSize]=useState({width:0,height:0});
+ useEffect(()=>{let alive=true;Image.getSize(uri,(width,height)=>{if(alive)setImageSize({width,height});},()=>undefined);return()=>{alive=false;};},[uri]);
+ const scale=imageSize.width&&imageSize.height&&frame.width&&frame.height?Math.min(frame.width/imageSize.width,frame.height/imageSize.height):0;
+ const renderedWidth=imageSize.width*scale, renderedHeight=imageSize.height*scale;
+ const offsetX=(frame.width-renderedWidth)/2, offsetY=(frame.height-renderedHeight)/2;
  useEffect(()=>{
   if(state.status!=='reading') return;
   sweep.setValue(0);
@@ -30,11 +36,11 @@ function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void
   loop.start();return()=>loop.stop();
  },[state.status,sweep]);
  const translateY=sweep.interpolate({inputRange:[0,1],outputRange:[0,260]});
- return <Pressable onPress={onPress} style={s.photo}>
+ return <Pressable onLayout={event=>setFrame({width:event.nativeEvent.layout.width,height:event.nativeEvent.layout.height})} onPress={onPress} style={s.photo}>
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
   <Animated.View pointerEvents="none" style={[s.sweep,{transform:[{translateY}]}]}/>
-  {state.bottles.map((b,i)=><View key={keyOf(b)+i} style={[s.tag,{left:(((b.box.x0+b.box.x1)/2*100)+'%') as `${number}%`,top:(Math.max(8,b.box.y0*100-2)+'%') as `${number}%`}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'Unsure':nameOf(b)||'Bottle'}</Text></View>)}
+  {scale>0&&state.bottles.map((b,i)=>{const x0=Math.max(0,Math.min(1,b.box.x0)),y0=Math.max(0,Math.min(1,b.box.y0)),x1=Math.max(x0,Math.min(1,b.box.x1)),y1=Math.max(y0,Math.min(1,b.box.y1));return <View key={keyOf(b)+i} pointerEvents="none" style={[s.box,{left:offsetX+x0*renderedWidth,top:offsetY+y0*renderedHeight,width:Math.max(18,(x1-x0)*renderedWidth),height:Math.max(24,(y1-y0)*renderedHeight),borderColor:b.state==='unsure'?C.amber:C.blue}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'CHECK':nameOf(b)||'Bottle'}</Text></View>;})}
   <View style={s.photoStatus}>{state.status==='reading'?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>READING LABELS</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
@@ -49,6 +55,7 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
  const [saving,setSaving]=useState(false);
  const [note,setNote]=useState('');
  const [removed,setRemoved]=useState<Record<string,boolean>>({});
+ const [selectedKey,setSelectedKey]=useState<string>('');
  const started=useRef<Record<number,boolean>>({});
  const patch=(i:number,next:Partial<PhotoState>)=>setStates(old=>old.map((x,k)=>k===i?{...x,...next}:x));
  useEffect(()=>{
@@ -77,15 +84,21 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
  const menuPages=uris.filter((_,i)=>!!states[i]?.menu);
  const menuItems=states.reduce((n,x)=>n+(x.menu?.items.length||0),0);
  const current=states[active]||EMPTY;
- const focus=current.bottles.filter(b=>b.state!=='unsure').sort((a,b)=>Math.abs((a.box.x0+a.box.x1)/2-.5)-Math.abs((b.box.x0+b.box.x1)/2-.5))[0];
+ const focus=current.bottles.find(b=>keyOf(b)===selectedKey)||current.bottles.filter(b=>b.state!=='unsure').sort((a,b)=>Math.abs((a.box.x0+a.box.x1)/2-.5)-Math.abs((b.box.x0+b.box.x1)/2-.5))[0];
  const facts=focus?factsOf(focus):(current.menu?.items.slice(0,10).map(x=>[x.price||x.type,x.name] as [string,string])||[]);
  const reading=states.filter(x=>x.status==='reading').length;
+ async function retryPhoto(index:number){
+  const uri=uris[index];if(!uri)return;patch(index,{status:'reading',note:'',bottles:[],menu:null});
+  try{const resized=await ImageManipulator.manipulateAsync(uri,[{resize:{width:1100}}],{compress:0.82,format:ImageManipulator.SaveFormat.JPEG,base64:true});if(!resized.base64)throw new Error('image_conversion_failed');const result=await readLiveFrame(resized.base64);patch(index,{status:'done',bottles:result.bottles,menu:result.menu.visible?result.menu:null});}
+  catch(error){patch(index,{status:'error',note:bottleErrorMessage(error)});}
+ }
+ function openJourney(b:BottleRead){router.push({pathname:'/journey',params:{source:'discover',entityType:'product',title:nameOf(b),brand:b.match?.brand||b.brand,expression:b.product,category:CATEGORY[b.category]||b.category,proof:b.proof,size:b.size}});}
  async function save(){
   if(!tally.length||saving)return;setSaving(true);setNote('');
-  try{const result=await saveBottleSightings(session,venue.trim(),tally);setNote('Saved '+result.saved+' bottle'+(result.saved===1?'':'s')+' to your sightings');setReview(false);setRemoved(old=>({...old,...Object.fromEntries(tally.map(b=>[keyOf(b),true]))}));}
+  try{const result=await saveBottleSightings(session,venue.trim(),tally);setNote('Saved '+result.saved+' bottle'+(result.saved===1?'':'s')+' privately to Discover. Not published to Harmony.');setReview(false);setRemoved(old=>({...old,...Object.fromEntries(tally.map(b=>[keyOf(b),true]))}));}
   catch(error){setNote(bottleErrorMessage(error));}finally{setSaving(false);}
  }
- function keepMenu(){if(!menuPages.length)return;addPages(menuPages,source);router.push('/preview');}
+ function keepMenu(){if(!menuPages.length)return;addPages(uris,source);router.push('/preview');}
  return <View style={s.root}>
   <View style={s.header}>
    <Pressable onPress={()=>{if(uris.length>1&&active!==-1)setActive(-1);else onClose();}}><Text style={s.back}>‹ {uris.length>1&&active!==-1?'ALL PHOTOS':'SCAN AGAIN'}</Text></Pressable>
@@ -97,6 +110,8 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
    <ScrollView style={s.details} contentContainerStyle={s.detailsContent}>
     {focus?<><Text style={s.product}>{nameOf(focus)||'Bottle read'}</Text><Text style={[s.match,focus.state==='matched'?{color:C.green}:{color:C.muted}]}>{focus.state==='matched'?'✓ CATALOG MATCH':'READ FROM LABEL · NOT CONFIRMED'}</Text></>:current.menu?<><Text style={s.product}>{current.menu.title||'Menu detected'}</Text><Text style={s.match}>{current.menu.items.length+' MENU ITEMS FOUND'}</Text></>:<Text style={s.empty}>{current.status==='reading'?'Tracing label edges and reading printed text…':current.status==='error'?current.note:'No clearly readable bottle or menu on this photo.'}</Text>}
     <View style={s.factGrid}>{facts.map(([label,value],i)=><View key={label+i} style={s.fact}><Text style={s.factLabel}>{label.toUpperCase()}</Text><Text style={s.factValue}>{value}</Text></View>)}</View>
+    {current.status==='error'&&<Pressable onPress={()=>void retryPhoto(active)} style={s.secondaryAction}><Text style={s.actionText}>RETRY THIS PHOTO</Text></Pressable>}
+    {!!focus&&<Pressable onPress={()=>openJourney(focus)} style={s.journeyAction}><Text style={s.journeyActionText}>EXPLORE THIS PRODUCT IN JOURNEYS</Text></Pressable>}
    </ScrollView>
   </>}
   {!!note&&<Text style={s.note}>{note}</Text>}
@@ -104,6 +119,7 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
    <View style={s.actions}>{menuPages.length>0&&<Pressable onPress={keepMenu} style={s.textAction}><Text style={s.actionText}>KEEP MENU</Text></Pressable>}{tally.length>0&&<Pressable onPress={()=>setReview(true)} style={s.saveButton}><Text style={s.saveText}>REVIEW BOTTLES</Text></Pressable>}</View>
   </View>
   {review&&<View style={s.reviewOverlay}><View style={s.reviewHeader}><Text style={s.reviewTitle}>BOTTLES READ</Text><Pressable onPress={()=>setReview(false)}><Text style={s.back}>BACK</Text></Pressable></View>
+   <Text style={s.reviewNotice}>These sightings are private to your Discover account. They are not published to Harmony Core or Harmony Journeys.</Text>
    <ScrollView style={{flex:1}}>{tally.map(b=><View key={keyOf(b)} style={s.reviewRow}><View style={{flex:1}}><Text style={s.reviewName}>{nameOf(b)}</Text><Text style={s.reviewMeta}>{[CATEGORY[b.category],clean(b.details?.vintage),clean(b.details?.classification),b.proof].filter(Boolean).join(' · ')}</Text></View><Pressable onPress={()=>setRemoved(old=>({...old,[keyOf(b)]:true}))}><Text style={s.remove}>×</Text></Pressable></View>)}</ScrollView>
    <TextInput value={venue} onChangeText={setVenue} placeholder="Venue (optional)" placeholderTextColor="#8093B5" style={s.venue}/>
    <Pressable onPress={save} disabled={!tally.length||saving} style={[s.saveButton,{alignSelf:'stretch',alignItems:'center',opacity:!tally.length||saving?0.45:1}]}>{saving?<ActivityIndicator color="#07101F"/>:<Text style={s.saveText}>SAVE {tally.length} SIGHTINGS</Text>}</Pressable>
@@ -112,10 +128,10 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
 }
 const s=StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg,paddingTop:8},header:{height:58,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,borderBottomWidth:1,borderBottomColor:C.line},back:{color:C.blue,fontSize:11,fontWeight:'900',letterSpacing:1.2},headerCenter:{alignItems:'center'},kicker:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:2},headline:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1.4,marginTop:4},
- hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.22)'},sweep:{position:'absolute',left:0,right:0,top:0,height:3,backgroundColor:'#DCEBFF',shadowColor:C.blue,shadowOpacity:1,shadowRadius:12,elevation:9},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
+ hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},box:{position:'absolute',borderWidth:1.5,borderRadius:5,backgroundColor:'rgba(4,12,42,.08)'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.22)'},sweep:{position:'absolute',left:0,right:0,top:0,height:3,backgroundColor:'#DCEBFF',shadowColor:C.blue,shadowOpacity:1,shadowRadius:12,elevation:9},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
  thumbs:{paddingHorizontal:12,paddingBottom:8,gap:8},thumb:{width:56,height:66,borderWidth:1,borderColor:C.line,borderRadius:8,overflow:'hidden'},thumbOn:{borderColor:C.blue,borderWidth:2},thumbImage:{width:'100%',height:46},thumbLabel:{color:C.muted,textAlign:'center',fontSize:9,paddingTop:2},
  details:{maxHeight:220,borderTopWidth:1,borderTopColor:C.line},detailsContent:{padding:16},product:{color:C.text,fontSize:23,fontWeight:'900',textShadowColor:C.blue,textShadowRadius:10},match:{color:C.green,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginTop:5},empty:{color:C.muted,fontSize:12,lineHeight:18},factGrid:{flexDirection:'row',flexWrap:'wrap',gap:12,marginTop:14},fact:{width:'46%',minHeight:40},factLabel:{color:C.blue,fontSize:8,fontWeight:'900',letterSpacing:1},factValue:{color:C.text,fontSize:12,fontWeight:'700',marginTop:3},
- note:{color:C.green,fontSize:11,textAlign:'center',paddingVertical:6},footer:{paddingHorizontal:16,paddingTop:10,paddingBottom:24,borderTopWidth:1,borderTopColor:C.line},tally:{color:C.muted,fontSize:9,fontWeight:'900',letterSpacing:1.1},actions:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:8},textAction:{paddingVertical:10},actionText:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1},saveButton:{backgroundColor:C.blue,paddingVertical:12,paddingHorizontal:16,borderRadius:8},saveText:{color:'#061020',fontSize:10,fontWeight:'900',letterSpacing:1},
+ note:{color:C.green,fontSize:11,textAlign:'center',paddingVertical:6},secondaryAction:{alignSelf:'flex-start',marginTop:14,paddingVertical:10,paddingHorizontal:13,borderWidth:1,borderColor:C.line,borderRadius:8},journeyAction:{marginTop:14,paddingVertical:13,paddingHorizontal:14,borderRadius:8,backgroundColor:C.brass,alignItems:'center'},journeyActionText:{color:'#07101F',fontSize:10,fontWeight:'900',letterSpacing:1},reviewNotice:{color:C.muted,fontSize:11,lineHeight:16,marginBottom:12},footer:{paddingHorizontal:16,paddingTop:10,paddingBottom:24,borderTopWidth:1,borderTopColor:C.line},tally:{color:C.muted,fontSize:9,fontWeight:'900',letterSpacing:1.1},actions:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:8},textAction:{paddingVertical:10},actionText:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1},saveButton:{backgroundColor:C.blue,paddingVertical:12,paddingHorizontal:16,borderRadius:8},saveText:{color:'#061020',fontSize:10,fontWeight:'900',letterSpacing:1},
  reviewOverlay:{...StyleSheet.absoluteFillObject,backgroundColor:'#061024',padding:20,paddingTop:44},reviewHeader:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:18},reviewTitle:{color:C.text,fontSize:22,fontWeight:'900'},reviewRow:{flexDirection:'row',alignItems:'center',paddingVertical:13,borderBottomWidth:1,borderBottomColor:C.line},reviewName:{color:C.text,fontSize:14,fontWeight:'800'},reviewMeta:{color:C.muted,fontSize:10,marginTop:4},remove:{color:C.amber,fontSize:26,paddingHorizontal:10},venue:{color:C.text,borderBottomWidth:1,borderBottomColor:C.blue,paddingVertical:12,marginBottom:14},
  grid:{flex:1,flexDirection:'row',flexWrap:'wrap',gap:8,padding:10,alignContent:'flex-start'},gridCell:{width:'48%',height:210}
 });
