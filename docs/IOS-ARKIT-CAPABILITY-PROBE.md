@@ -12,6 +12,7 @@
 - A native `ARSCNView` surface that starts/stops an ARKit world-tracking session and reports normal, limited, unavailable, interrupted and paused states.
 - Throttled on-device Vision rectangle proposals (up to 4 analysis requests per second), with blue candidate outlines and frame skipping when analysis is busy.
 - Candidate outlines are cleared when AR tracking degrades, so the UI does not leave stale geometry on screen.
+- Consecutive rectangle proposals are associated by intersection-over-union and smoothed across frames. Temporary track IDs and rectangle confidence are exposed to the diagnostic UI; they are not object identity IDs.
 - An isolated `/arkit-live-test` screen linked from ARKit diagnostics. It requires camera permission and gives the user an explicit start/pause control.
 - Scene-depth semantics are enabled only when the runtime API reports support and the iOS 14 availability guard is met.
 
