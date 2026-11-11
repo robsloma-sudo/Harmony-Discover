@@ -10,6 +10,7 @@ export default function ARKitLiveTest() {
   const [active, setActive] = useState(false);
   const [tracking, setTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'not_started' });
   const [error, setError] = useState('');
+  const [candidateCount, setCandidateCount] = useState(0);
 
   const start = async () => {
     setError('');
@@ -35,6 +36,7 @@ export default function ARKitLiveTest() {
           style={{ flex: 1 }}
           active={active}
           onTrackingUpdate={event => setTracking(event.nativeEvent)}
+          onVisualCandidates={event => setCandidateCount(event.nativeEvent.count)}
           onARError={event => { setError(event.nativeEvent.message || 'ARKit session failed.'); setActive(false); }}
           onARReady={() => setError('')}
         />
@@ -46,6 +48,11 @@ export default function ARKitLiveTest() {
         <Text style={styles.itemTitle}>Tracking state</Text>
         <Text style={styles.price}>{tracking.state.toUpperCase().replace('_', ' ')}</Text>
         <Text style={styles.categoryDesc}>{tracking.reason || 'Camera pose tracking is stable.'}</Text>
+      </View>
+      <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+        <Text style={styles.itemTitle}>Live geometry candidates</Text>
+        <Text style={styles.price}>{active ? candidateCount + ' CANDIDATES' : 'INACTIVE'}</Text>
+        <Text style={styles.categoryDesc}>Blue rectangles are Vision-detected rectangular regions, not confirmed bottles or measured bottle contours. They are refreshed from camera frames while the AR session is active.</Text>
       </View>
       {!!error && <Text style={styles.categoryDesc}>{error}</Text>}
       {!permission && <ActivityIndicator />}
