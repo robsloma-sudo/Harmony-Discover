@@ -137,7 +137,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let pixelBuffer = frame.capturedImage
-    CVPixelBufferRetain(pixelBuffer)
     let rawWidth = CVPixelBufferGetWidth(pixelBuffer)
     let rawHeight = CVPixelBufferGetHeight(pixelBuffer)
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
@@ -146,6 +145,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let imageHeight = swapsDimensions ? rawWidth : rawHeight
 
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
+    CVPixelBufferRetain(pixelBuffer)
     visionQueue.async { [weak self] in
       defer {
         CVPixelBufferRelease(pixelBuffer)
