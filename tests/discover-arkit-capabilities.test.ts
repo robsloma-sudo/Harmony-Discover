@@ -59,6 +59,12 @@ describe('getFriendlyIPhoneModel', () => {
     expect(getFriendlyIPhoneModel('iPhone13,3')).toBe('iPhone 12 Pro');
     expect(getFriendlyIPhoneModel('iPhone16,1')).toBe('iPhone 15 Pro');
     expect(getFriendlyIPhoneModel('iPhone17,3')).toBe('iPhone 16');
+    expect(getFriendlyIPhoneModel('iPhone18,3')).toBe('iPhone 17');
+    expect(getFriendlyIPhoneModel('iPhone18,1')).toBe('iPhone 17 Pro');
+    expect(getFriendlyIPhoneModel('iPhone18,2')).toBe('iPhone 17 Pro Max');
+    expect(getFriendlyIPhoneModel('iPhone18,4')).toBe('iPhone Air');
+    expect(getFriendlyIPhoneModel('iPhone18,5')).toBe('iPhone 17e');
+    expect(getFriendlyIPhoneModel('iPhone19,2')).toBe('iPhone 18 Pro');
   });
 
   it('preserves unknown identifiers rather than guessing a model', () => {
