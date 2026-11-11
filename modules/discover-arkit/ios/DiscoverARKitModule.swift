@@ -190,7 +190,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
             "frameTimestamp": now
           ])
         }
-      }      } catch {
+      } catch {
         DispatchQueue.main.async { [weak self] in
           self?.onARError(["message": "Live visual analysis failed: \(error.localizedDescription)"])
         }
