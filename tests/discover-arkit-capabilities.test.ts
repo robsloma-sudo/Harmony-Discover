@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createScannerCapabilityProfile, getFriendlyIPhoneModel } from '../src/services/discoverARKit';
+import { createScannerCapabilityProfile, getFriendlyIPhoneModel } from '../src/services/scannerCapabilities';
 import type { ARKitCapabilities } from '../src/services/discoverARKit';
 
 const base: ARKitCapabilities = {
