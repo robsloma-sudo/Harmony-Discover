@@ -84,9 +84,9 @@ export function integrateBottleVolumeMl(
     const z1 = boundaries[i];
     const r0 = radiusAt(profile, z0);
     const r1 = radiusAt(profile, z1);
-    const area0 = Math.PI * r0 * r0;
-    const area1 = Math.PI * r1 * r1;
-    cubicMm += ((area0 + area1) / 2) * (z1 - z0);
+    // Radius is linearly interpolated between samples. Integrate r(z)^2
+    // analytically over that segment instead of approximating the area curve.
+    cubicMm += (Math.PI * (z1 - z0) / 3) * (r0 * r0 + r0 * r1 + r1 * r1);
   }
   return cubicMm / 1000;
 }
