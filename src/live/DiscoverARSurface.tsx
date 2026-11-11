@@ -58,6 +58,56 @@ function WebLiveCamera(props: NativeProps) {
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     let lastRecognitionStartedAt = 0;
     const recognitionIntervalMs = 2500;
+    // Temporal object tracker for the web camera path. Cloud detections arrive
+    // intermittently; stable IDs and smoothed boxes keep an object visually
+    // attached between recognition passes instead of resetting by array index.
+    type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number };
+    let webTracks: WebTrack[] = [];
+    let nextWebTrackId = 1;
+    const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
+      const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
+      const right = Math.min(a.x + a.width, b.x + b.width), bottom = Math.min(a.y + a.height, b.y + b.height);
+      const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+      const union = a.width * a.height + b.width * b.height - intersection;
+      return union > 0 ? intersection / union : 0;
+    };
+    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number }>) => {
+      const now = Date.now();
+      const used = new Set<number>();
+      const next: WebTrack[] = [];
+      const output = detections.map(detection => {
+        let bestIndex = -1, bestScore = 0;
+        webTracks.forEach((track, index) => {
+          if (used.has(index)) return;
+          const overlap = intersectionOverUnion(track, detection);
+          const dx = (track.x + track.width / 2) - (detection.x + detection.width / 2);
+          const dy = (track.y + track.height / 2) - (detection.y + detection.height / 2);
+          const distance = Math.hypot(dx, dy);
+          const score = overlap >= 0.08 ? overlap : (distance <= 0.16 ? 0.08 * (1 - distance / 0.16) : 0);
+          if (score > bestScore) { bestScore = score; bestIndex = index; }
+        });
+        const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
+        if (bestIndex >= 0) used.add(bestIndex);
+        const blend = previous ? 0.38 : 1;
+        const track: WebTrack = {
+          id: previous?.id ?? nextWebTrackId++,
+          x: previous ? previous.x * (1 - blend) + detection.x * blend : detection.x,
+          y: previous ? previous.y * (1 - blend) + detection.y * blend : detection.y,
+          width: previous ? previous.width * (1 - blend) + detection.width * blend : detection.width,
+          height: previous ? previous.height * (1 - blend) + detection.height * blend : detection.height,
+          confidence: detection.confidence,
+          lastSeenAt: now,
+          misses: 0,
+        };
+        next.push(track);
+        return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence };
+      });
+      webTracks.forEach((track, index) => {
+        if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
+      });
+      webTracks = next;
+      return output;
+    };
 
     // Keep a single request in flight and pace requests by start time, not by
     // adding a full delay after the provider response. This stays below the
@@ -102,7 +152,8 @@ function WebLiveCamera(props: NativeProps) {
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: result.bottles.length, candidates: result.bottles.map((b, i) => ({ trackId: i + 1, x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })) } });
+        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })));
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, candidates: trackedCandidates } });
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
