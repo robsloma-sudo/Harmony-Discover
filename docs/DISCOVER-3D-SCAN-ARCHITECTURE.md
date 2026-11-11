@@ -338,3 +338,10 @@ Capture matrix must cover clear, dark, tinted, opaque and wrapped bottles; clear
 Evaluation should report bottle precision/recall and false positives per shelf sweep; instance segmentation IoU; identity/SKU exact-match accuracy; duplicate-track rate; liquid-line vertical error in normalized body coordinates; volume MAE and percentage error by bottle family/fill band/liquid/lighting; abstention coverage and error among accepted estimates. A model that abstains often may be safer than one that confidently invents stock. Set operational thresholds only after a representative pilot and cost-of-error review.
 
 Raw footage is sensitive business information. Keep collection opt-in and purpose-limited, restrict access, define retention/deletion, blur faces and unrelated personal data where practical, and do not contribute scans to shared training or catalog data by default. This protocol creates no collection endpoint or storage bucket and authorizes no uploads.
+
+
+### Evidence join contract — one bottle estimate
+
+Added `src/services/bottleObservation.ts` as a conservative orchestration boundary joining three independent inputs: repeated bottle/non-bottle classifier predictions, repeated high-quality instance-mask observations, and temporally stable liquid-interface observations. It returns `not_a_bottle`, `needs_review`, or `estimated`; it never forces an estimate when a gate fails. A computed fill can be marked identity-verified only when a separately verified SKU ID is supplied. Otherwise it is explicitly unverified and must not be grouped into confirmed SKU inventory.
+
+The liquid-line input is defined in a bottom-up normalized coordinate already registered to the calibrated internal bottle profile. Image-space mask bounds alone are not a metric calibration and are not used to convert pixels to millimetres. The current service still trusts the upstream detector's registration contract; a production implementation must validate bottle-profile-to-instance registration, coordinate direction, perspective correction and calibration provenance before relying on the result. This is a typed policy join, not an implemented vision model.
