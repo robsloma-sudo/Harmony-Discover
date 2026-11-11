@@ -79,7 +79,7 @@ export function SpatialWireframe({ tracks, intrinsics, style, ...viewProps }: Pr
   }, [tracks, intrinsics]);
 
   if (Platform.OS !== 'web') return null;
-  return <View {...viewProps} pointerEvents="none" style={[{ position: 'absolute', inset: 0 }, style]}>
+  return <View {...viewProps} pointerEvents="none" style={[{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }, style]}>
     {React.createElement('canvas' as any, { ref: canvasRef, 'aria-hidden': true, style: { width: '100%', height: '100%', display: 'block' } })}
   </View>;
 }
