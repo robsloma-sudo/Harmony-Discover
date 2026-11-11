@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
