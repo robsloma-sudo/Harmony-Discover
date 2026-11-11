@@ -87,7 +87,7 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing menu' : 'Capture menu'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={flashEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, s.primaryControlCompact, flashEnabled && s.primaryControlActive]} onPress={() => setFlashEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 19 : 21} color={flashEnabled ? C.brass : C.ivory} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => router.push('/settings')}><Ionicons name="settings-outline" size={compactDock ? 15 : 17} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Boston bartender AI" style={s.utilityControl} onPress={() => router.push('/bartender')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 16 : 18} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>BOSTON AI</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Boston bartender AI" style={s.utilityControl} onPress={() => router.push('/bartender')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 16 : 18} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
     </View>
