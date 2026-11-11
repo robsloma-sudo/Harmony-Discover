@@ -14,12 +14,11 @@ const nameOf = (b: BottleRead) => [b.match?.brand || b.brand,b.product].filter(B
 const keyOf = (b: BottleRead) => nameOf(b).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 function factsOf(b: BottleRead): Array<[string,string]> {
  const d=b.details||{};
- const rows: Array<[string,string]> = [['Brand',b.match?.brand||b.brand],['Expression',b.product],['Type',CATEGORY[b.category]||''],['Producer',clean(d.producer)],['Vintage',clean(d.vintage)],['Appellation',clean(d.appellation)],['Region',clean(d.region)||b.origin||clean(d.country)],['Grapes',clean(d.grapes)],['Class',clean(d.classification)],['Age',clean(d.age_statement)],['Finish',clean(d.cask_finish)],['Flavour',clean(d.flavor)],['Strength',b.proof],['Size',b.size],['Batch',clean(d.batch)],['Certified',clean(d.certifications)]];
- return rows.filter(([,v])=>!!v).slice(0,12);
+ return [['Brand',b.match?.brand||b.brand],['Expression',b.product],['Type',CATEGORY[b.category]||''],['Producer',clean(d.producer)],['Vintage',clean(d.vintage)],['Appellation',clean(d.appellation)],['Region',clean(d.region)||b.origin||clean(d.country)],['Grapes',clean(d.grapes)],['Class',clean(d.classification)],['Age',clean(d.age_statement)],['Finish',clean(d.cask_finish)],['Flavour',clean(d.flavor)],['Strength',b.proof],['Size',b.size],['Batch',clean(d.batch)],['Certified',clean(d.certifications)]].filter(([,v])=>!!v).slice(0,12);
 }
 function makeSession() {
  try { if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID(); } catch {}
- return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?String(r):(r&3|8).toString(16));});
+ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8).toString(16));});
 }
 function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void}) {
  const sweep=useRef(new Animated.Value(0)).current;
@@ -34,7 +33,7 @@ function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
   <Animated.View pointerEvents="none" style={[s.sweep,{transform:[{translateY}]}]}/>
-  {state.bottles.map((b,i)=><View key={keyOf(b)+i} style={[s.tag,{left:(((b.box.x0+b.box.x1)/2*100)+'%') as `${number}%`,top:(Math.max(8,b.box.y0*100-2)+'%') as `${number}%`}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'Unsure':nameOf(b)||'Bottle'}</Text></View>)}
+  {state.bottles.map((b,i)=><View key={keyOf(b)+i} style={[s.tag,{left:((b.box.x0+b.box.x1)/2*100)+'%',top:Math.max(8,b.box.y0*100-2)+'%'}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'Unsure':nameOf(b)||'Bottle'}</Text></View>)}
   <View style={s.photoStatus}>{state.status==='reading'?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>READING LABELS</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
