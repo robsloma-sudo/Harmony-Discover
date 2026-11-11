@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useAuth } from '../src/auth/AuthContext';
 import { supabase } from '../src/services/supabase';
 import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../src/voice/voiceSessionCoordinator';
@@ -25,6 +25,7 @@ export default function BartenderScreen() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const isTalkingRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -43,13 +44,14 @@ export default function BartenderScreen() {
     if (text.trim()) setLines(old => [...old, { id: `${Date.now()}-${Math.random()}`, who, text: text.trim() }].slice(-60));
   }
 
-  async function closeTransport() {
+  const closeTransport = useCallback(async () => {
+    isTalkingRef.current = false;
     try { dcRef.current?.close(); } catch {}
     try { pcRef.current?.close(); } catch {}
     streamRef.current?.getTracks().forEach(track => track.stop());
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
     dcRef.current = null; pcRef.current = null; streamRef.current = null; audioRef.current = null;
-  }
+  }, []);
 
   async function connectTransport(grant: VoiceSessionGrant) {
     const stream = streamRef.current;
@@ -138,14 +140,17 @@ export default function BartenderScreen() {
 
   function beginTalk() {
     const track = streamRef.current?.getAudioTracks()[0];
-    if (!track || dcRef.current?.readyState !== 'open') return;
+    if (!track || dcRef.current?.readyState !== 'open' || isTalkingRef.current) return;
+    isTalkingRef.current = true;
     track.enabled = true; setStatus('LISTENING · RELEASE TO SEND');
   }
 
   function endTalk() {
+    if (!isTalkingRef.current) return;
+    isTalkingRef.current = false;
     const track = streamRef.current?.getAudioTracks()[0];
+    if (track) track.enabled = false;
     if (!track || dcRef.current?.readyState !== 'open') return;
-    track.enabled = false;
     dcRef.current.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     dcRef.current.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
     setStatus('MARTY IS THINKING');
@@ -160,12 +165,14 @@ export default function BartenderScreen() {
   }
 
   async function stop() {
+    isTalkingRef.current = false;
     await coordinatorRef.current?.stop();
     coordinatorRef.current = null;
     setStatus('OFFLINE');
   }
 
   async function interrupt() {
+    isTalkingRef.current = false;
     if (dcRef.current?.readyState === 'open') {
       dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
       dcRef.current.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
@@ -175,7 +182,33 @@ export default function BartenderScreen() {
     setStatus('INTERRUPTED');
   }
 
-  useEffect(() => () => { void coordinatorRef.current?.stop(); void closeTransport(); }, []);
+  useFocusEffect(useCallback(() => {
+    let focused = true;
+    const stopForBackground = () => {
+      if (document.visibilityState !== 'hidden') return;
+      void (async () => {
+        const coordinator = coordinatorRef.current;
+        coordinatorRef.current = null;
+        await coordinator?.stop();
+        if (focused) {
+          setStatus('OFFLINE');
+          setError('Voice session ended because the page was backgrounded. Start a new session when you return.');
+        }
+      })();
+    };
+
+    if (Platform.OS === 'web') document.addEventListener('visibilitychange', stopForBackground);
+    return () => {
+      focused = false;
+      if (Platform.OS === 'web') document.removeEventListener('visibilitychange', stopForBackground);
+      const coordinator = coordinatorRef.current;
+      coordinatorRef.current = null;
+      void (async () => {
+        await coordinator?.stop();
+        if (!coordinator) await closeTransport();
+      })();
+    };
+  }, [closeTransport]));
 
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content}>
