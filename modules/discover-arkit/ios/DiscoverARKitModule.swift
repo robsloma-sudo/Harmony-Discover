@@ -39,7 +39,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -74,6 +74,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onARReady = EventDispatcher()
   let onARError = EventDispatcher()
   let onVisualCandidates = EventDispatcher()
+  let onRecognitionUpdate = EventDispatcher()
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
@@ -134,6 +135,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let pixelBuffer = frame.capturedImage
+    guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     CVPixelBufferRetain(pixelBuffer)
     let rawWidth = CVPixelBufferGetWidth(pixelBuffer)
     let rawHeight = CVPixelBufferGetHeight(pixelBuffer)
@@ -142,41 +144,53 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let imageWidth = swapsDimensions ? rawHeight : rawWidth
     let imageHeight = swapsDimensions ? rawWidth : rawHeight
 
-    guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     visionQueue.async { [weak self] in
       defer {
         CVPixelBufferRelease(pixelBuffer)
         self?.visionFrameGate.signal()
       }
       guard let self else { return }
-      let request = VNDetectRectanglesRequest()
-      request.maximumObservations = 8
-      request.minimumConfidence = 0.55
-      request.minimumSize = 0.04
-      request.minimumAspectRatio = 0.12
-      request.maximumAspectRatio = 0.98
-      request.quadratureTolerance = 25
+      let textRequest = VNRecognizeTextRequest()
+      textRequest.recognitionLevel = .fast
+      textRequest.usesLanguageCorrection = false
+      textRequest.minimumTextHeight = 0.012
+
+      let barcodeRequest = VNDetectBarcodesRequest()
+      barcodeRequest.symbologies = [.ean13, .ean8, .upce, .code128, .code39, .qr]
+
+      let classifyRequest = VNClassifyImageRequest()
+      classifyRequest.imageCropAndScaleOption = .centerCrop
       do {
-        try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation).perform([request])
-        let observations = (request.results ?? []).map { observation -> [String: Double] in
-          let box = observation.boundingBox
-          return [
-            "x": Double(box.minX),
-            "y": Double(1.0 - box.maxY),
-            "width": Double(box.width),
-            "height": Double(box.height),
-            "confidence": Double(observation.confidence)
-          ]
+        try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
+          .perform([textRequest, barcodeRequest, classifyRequest])
+
+        let recognizedText = (textRequest.results ?? []).compactMap { observation -> String? in
+          guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.25 else { return nil }
+          return candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }.prefix(18)
+
+        let barcodes = (barcodeRequest.results ?? []).compactMap { observation -> [String: String]? in
+          guard let value = observation.payloadStringValue, !value.isEmpty else { return nil }
+          return ["value": value, "symbology": observation.symbology.rawValue]
+        }.prefix(8)
+
+        let classifications = (classifyRequest.results ?? []).prefix(6).map { item in
+          ["identifier": item.identifier, "confidence": String(format: "%.3f", item.confidence)]
         }
+
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          // Vision rectangle proposals include shelves, labels, screens and
-          // other non-bottle geometry. Never render them as bottle outlines.
           self.rectangleOverlay.path = nil
           self.previousCandidates.removeAll()
           self.onVisualCandidates(["count": 0, "candidates": []])
+          self.onRecognitionUpdate([
+            "text": Array(recognizedText),
+            "barcodes": Array(barcodes),
+            "classifications": classifications,
+            "frameTimestamp": now
+          ])
         }
-      } catch {
+      }      } catch {
         DispatchQueue.main.async { [weak self] in
           self?.onARError(["message": "Live visual analysis failed: \(error.localizedDescription)"])
         }
