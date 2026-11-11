@@ -28,7 +28,7 @@ export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}){
  const [tracking,setTracking]=useState<ARTrackingUpdate>({state:'paused',reason:'not_started'});
  const [error,setError]=useState('');
  const [recognitionStatus,setRecognitionStatus]=useState('Center a bottle label in the frame.');
- const [recognized,setRecognized]=useState<{text:string[];barcodes:Array<{value:string;symbology:string}>;classifications:Array<{identifier:string;confidence:string}>;bottles:BottleRead[];menu:MenuGlimpse|null;diagnostics?:{version:string;model:string;providerMs:number;bottlesReturned:number;bottlesConfident:number;bottlesMatched:number}}>({text:[],barcodes:[],classifications:[],bottles:[],menu:null});
+ const [recognized,setRecognized]=useState<{text:string[];barcodes:Array<{value:string;symbology:string}>;classifications:Array<{identifier:string;confidence:string}>;bottles:BottleRead[];menu:MenuGlimpse|null;diagnostics?:{version:string;model:string;providerMs:number;bottlesReturned:number;bottlesConfident:number;bottlesMatched:number};barcodeStatus?:'available'|'unsupported'}>({text:[],barcodes:[],classifications:[],bottles:[],menu:null});
  const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
  const pulse=useRef(new Animated.Value(.35)).current;
  const sweep=useRef(new Animated.Value(0)).current;
