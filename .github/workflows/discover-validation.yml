@@ -5,6 +5,7 @@ on:
     branches:
       - discover-source-import-2026-11-10
       - marty-boston-security-hardening-2026-11-10
+      - discover-navigation-flow-2026-11-11
   pull_request:
     branches:
       - discover-source-import-2026-11-10
