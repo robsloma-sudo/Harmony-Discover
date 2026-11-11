@@ -1,4 +1,4 @@
-import { Text, View, Pressable, Linking } from 'react-native';
+import { Text, View, Pressable } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { getMockJourney } from '../src/services/mockJourneyApi';
@@ -25,7 +25,7 @@ export default function Journey() {
         {!!proof && <Text style={styles.categoryDesc}>Proof / strength · {proof}</Text>}
         {!!size && <Text style={styles.categoryDesc}>Package size · {size}</Text>}
         <Text style={styles.evidence}>Source: user-initiated Discover scan. Extracted details are observations, not automatically verified canonical records.</Text>
-        <Pressable style={styles.primary} onPress={() => void Linking.openURL('https://harmony-journeys.netlify.app')}><Text style={styles.primaryText}>OPEN HARMONY JOURNEYS</Text></Pressable>
+        <Text style={styles.evidence}>Journeys handoff is pending. The current Journeys player requires an initialized journey context from its host, and Discover does not yet have a supported cross-app launch contract. This scan remains in Discover; nothing is sent to or published by Journeys.</Text>
       </View>}
       {isDiscoverHandoff ? <View style={{padding:15,borderWidth:1,borderColor:'#303741',borderRadius:14,gap:8}}>
         <Text style={styles.sectionTitle}>Journey research</Text>
