@@ -174,6 +174,23 @@ Deno.serve(async (req: Request) => {
     const items = (Array.isArray(mraw.items) ? mraw.items as Array<Record<string, unknown>> : []).slice(0, 40)
       .map((x) => ({ name: clean(x.name, 120), price: clean(x.price, 30), type: clean(x.type, 20) || "other" })).filter((x) => x.name);
     const menu = { visible: mraw.visible === true && items.length > 0, title: clean(mraw.title, 80), items };
+    // Privacy-safe diagnostics: never record image bytes, OCR text, labels, or user identifiers.
+    console.log(JSON.stringify({
+      evt: "bottle_frame_result",
+      version: VERSION,
+      model,
+      provider_ms: Date.now() - providerStartedAt,
+      image_base64_chars: image.length,
+      bottles_returned: bottles.length,
+      bottles_confident: bottles.filter((b) => b.state !== "unsure").length,
+      bottles_matched: bottles.filter((b) => b.state === "matched").length,
+      categories: [...new Set(bottles.map((b) => b.category))],
+      menu_visible: menu.visible,
+      menu_item_count: items.length,
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      tool_payload_present: !!input,
+    }));
     return reply({ ok: true, version: VERSION, model, bottles, menu }, 200, origin);
   }
 
