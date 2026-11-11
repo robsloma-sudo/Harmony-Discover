@@ -3,14 +3,12 @@ import { View, Text, Image, Pressable, ScrollView, ActivityIndicator, TextInput 
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
-import { useAuth } from '../src/auth/AuthContext';
 import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, confirmObservationVenue, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
 
 const reviewField = { backgroundColor: '#171B20', color: '#F2F0EA', borderWidth: 1, borderColor: '#39414A', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 } as const;
 
 export default function Preview() {
   const { pages, source, clear, removePage } = useScan();
-  const { session, loading } = useAuth();
   const [processing, setProcessing] = useState(false);
   const [noticeAccepted, setNoticeAccepted] = useState(false);
   const [items, setItems] = useState<DiscoveredMenuItem[] | null>(null);
@@ -37,7 +35,6 @@ export default function Preview() {
 
   async function readMenu() {
     if (!pages.length) { setMessage('Add at least one menu photo before reading.'); return; }
-    if (!session) { router.push({ pathname: '/sign-in', params: { next: '/preview' } }); return; }
     if (!noticeAccepted) { setMessage('Please confirm the menu-processing notice before continuing.'); return; }
     setProcessing(true); setMessage('');
     try {
@@ -96,10 +93,9 @@ export default function Preview() {
         <View style={{ width: 22, height: 22, borderRadius: 5, borderWidth: 1, borderColor: noticeAccepted ? '#AEB7C1' : '#68717D', backgroundColor: noticeAccepted ? '#AEB7C1' : 'transparent', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#111', fontWeight: '900' }}>{noticeAccepted ? '✓' : ''}</Text></View>
         <Text style={[styles.categoryDesc, { flex: 1 }]}>I agree to have these menu photos securely uploaded to Discover and processed to transcribe the printed menu. This is separate from optional research or personalization consent.</Text>
       </Pressable>
-      {!session && <Text style={styles.footnote}>You can capture photos first. A free account is required only when you choose to upload and read them.</Text>}
       {pages.length === 0 && <Text style={styles.footnote}>No photos selected. Add a page to continue.</Text>}
-      <Pressable style={[styles.primary, (!pages.length || !noticeAccepted || processing || loading) && { opacity: 0.45 }]} disabled={!pages.length || !noticeAccepted || processing || loading} onPress={readMenu}>
-        {processing ? <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}><ActivityIndicator color="#111" /><Text style={styles.primaryText}>Reading your menu…</Text></View> : <Text style={styles.primaryText}>{session ? 'Read this menu' : 'Sign in to read this menu'}</Text>}
+      <Pressable style={[styles.primary, (!pages.length || !noticeAccepted || processing) && { opacity: 0.45 }]} disabled={!pages.length || !noticeAccepted || processing} onPress={readMenu}>
+        {processing ? <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}><ActivityIndicator color="#111" /><Text style={styles.primaryText}>Reading your menu…</Text></View> : <Text style={styles.primaryText}>Read this menu</Text>}
       </Pressable>
     </>}
     {!!message && <Text style={{ color: '#E3B6A9', fontSize: 12, lineHeight: 18, marginTop: 12 }}>{message}</Text>}
