@@ -60,14 +60,14 @@ export default function LiveInventory(){
   <View pointerEvents="none" style={s.cameraShade}/>
   {active&&<Animated.View pointerEvents="none" style={[s.scanline,{transform:[{translateY:scanlineY}]}]}/>}
   <View style={s.cameraHeader}><View><Text style={s.eyebrow}>LIVE CAMERA · DEV</Text><Text style={s.cameraTitle}>Bottle detection</Text></View><View style={s.live}><Animated.View style={[s.dot,{opacity:pulse}]}/><Text style={s.liveText}>{tracking.state==='normal'?'TRACKING':active?'SCANNING':'READY'}</Text></View></View>
-  <View style={s.cameraCenter}><View style={s.target}><View style={[s.corner,s.tl]}/><View style={[s.corner,s.tr]}/><View style={[s.corner,s.bl]}/><View style={[s.corner,s.br]}/><Text style={s.targetText}>BOTTLE INSTANCE MASK REQUIRED</Text></View></View>
+  <View style={s.cameraCenter}><View style={s.target}><View style={[s.corner,s.tl]}/><View style={[s.corner,s.tr]}/><View style={[s.corner,s.bl]}/><View style={[s.corner,s.br]}/><Text style={s.targetText}>CENTER BOTTLE LABEL IN FRAME</Text></View></View>
   <View style={s.cameraFooter}>
    <Text style={s.noticeTitle}>LIVE VIDEO RECOGNITION</Text>
-   <Text style={s.noticeText}>On-device Vision is reading visible label text, detecting supported barcodes and reporting scene classifications. These are recognition signals, not yet verified bottle or SKU matches.</Text>
+   <Text style={s.noticeText}>Browser camera is active. Supported product barcodes are scanned live; a barcode is a lookup signal, not a verified bottle or SKU match.</Text>
    {!!recognized.text.length&&<Text style={s.recognitionText}>TEXT: {recognized.text.slice(0,8).join(" · ")}</Text>}
    {!!recognized.barcodes.length&&<Text style={s.recognitionText}>BARCODE: {recognized.barcodes.map(x=>x.value).join(" · ")}</Text>}
    {!!recognized.classifications.length&&<Text style={s.recognitionText}>SCENE: {recognized.classifications.slice(0,3).map(x=>x.identifier).join(" · ")}</Text>}
-   {!recognized.text.length&&!recognized.barcodes.length&&!recognized.classifications.length&&active&&<Text style={s.emptyHint}>Analyzing live frames. Hold a label or barcode steady in the camera view.</Text>}
+   {!recognized.text.length&&!recognized.barcodes.length&&!recognized.classifications.length&&active&&<Text style={s.emptyHint}>Waiting for a supported barcode. Keep the bottle barcode steady and well lit in the camera view.</Text>}
    {!!error&&<Text style={s.error}>{error}</Text>}
    <View style={s.actions}><Pressable style={s.secondary} onPress={()=>setActive(false)}><Text style={s.secondaryText}>PAUSE</Text></Pressable><Pressable style={s.primary} onPress={()=>void start()}><Text style={s.primaryText}>{active?'RESUME CAMERA':'START LIVE CAMERA'}</Text></Pressable></View>
   </View>
