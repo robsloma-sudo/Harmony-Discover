@@ -88,11 +88,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     view.session.delegate = self
     view.backgroundColor = .black
     addSubview(view)
-    rectangleOverlay.strokeColor = UIColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 0.98).cgColor
-    rectangleOverlay.fillColor = UIColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 0.07).cgColor
-    rectangleOverlay.lineWidth = 2.0
-    rectangleOverlay.lineJoin = .round
-    view.layer.addSublayer(rectangleOverlay)
+    // Generic rectangle proposals are not bottle detections. Do not draw them
+    // as object contours until a bottle-instance segmentation model is active.
     return view
   }()
 
@@ -173,9 +170,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         }
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          let tracked = self.associateCandidates(observations)
-          self.drawCandidates(tracked, imageWidth: imageWidth, imageHeight: imageHeight)
-          self.onVisualCandidates(["count": tracked.count, "candidates": tracked])
+          // Vision rectangle proposals include shelves, labels, screens and
+          // other non-bottle geometry. Never render them as bottle outlines.
+          self.rectangleOverlay.path = nil
+          self.previousCandidates.removeAll()
+          self.onVisualCandidates(["count": 0, "candidates": []])
         }
       } catch {
         DispatchQueue.main.async { [weak self] in
