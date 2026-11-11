@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createScannerCapabilityProfile, type ARKitCapabilities } from '../src/services/discoverARKit';
+import { createScannerCapabilityProfile, getFriendlyIPhoneModel, type ARKitCapabilities } from '../src/services/discoverARKit';
 
 const base: ARKitCapabilities = {
   platform: 'ios',
@@ -46,5 +46,18 @@ describe('createScannerCapabilityProfile', () => {
     const profile = createScannerCapabilityProfile({ ...base, worldTrackingSupported: false });
     expect(profile.tier).toBe('smart_scan');
     expect(profile.modes).toEqual(['smart_scan']);
+  });
+});
+
+
+describe('getFriendlyIPhoneModel', () => {
+  it('recognizes known hardware identifiers', () => {
+    expect(getFriendlyIPhoneModel('iPhone13,3')).toBe('iPhone 12 Pro');
+    expect(getFriendlyIPhoneModel('iPhone16,1')).toBe('iPhone 15 Pro');
+    expect(getFriendlyIPhoneModel('iPhone17,3')).toBe('iPhone 16');
+  });
+
+  it('preserves unknown identifiers rather than guessing a model', () => {
+    expect(getFriendlyIPhoneModel('iPhone99,9')).toBe('iPhone (iPhone99,9)');
   });
 });
