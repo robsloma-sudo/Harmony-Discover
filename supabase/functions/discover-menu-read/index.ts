@@ -159,7 +159,16 @@ Deno.serve(async (req: Request) => {
 
     const content = Array.isArray(rawProvider.content) ? rawProvider.content as Array<Record<string, unknown>> : [];
     const read = content.find(x => x.type === "tool_use" && x.name === "menu_items")?.input as Record<string, unknown> | undefined;
-    if (!read || !Array.isArray(read.items)) { failures.push({ page, error: "invalid_vision_response" }); continue; }
+    if (!read || typeof read.legible !== "boolean" || !Array.isArray(read.items)) {
+      failures.push({ page, error: "invalid_vision_response" });
+      continue;
+    }
+    // A page the model explicitly marks unreadable is not a completed page.
+    // Do not save an extraction or let another page's items make this scan eligible.
+    if (read.legible !== true) {
+      failures.push({ page, error: "page_unreadable" });
+      continue;
+    }
     const inputItems = read.items.slice(0, 150) as Array<Record<string, unknown>>;
     const items = inputItems.map((x, i) => ({
       observation_id: id, consumer_id: subject, page_index: page, position: i,
