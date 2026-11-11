@@ -60,14 +60,15 @@ export class BrowserDepthEstimator {
     const context = canvas.getContext('2d', { willReadFrequently: false });
     if (!context) { this.pending = false; return; }
     context.drawImage(video, 0, 0, width, height);
-    void canvas.convertToBlob?.({ type: 'image/jpeg', quality: .72 }).then(blob => {
-      if (this.disposed || !this.worker) { this.pending = false; return; }
-      this.worker.postMessage({ type: 'infer', blob });
-    }).catch(() => { this.pending = false; });
-    if (!canvas.convertToBlob) {
+    if (typeof canvas.toBlob !== 'function') {
       this.pending = false;
       this.onStatus('Canvas image conversion is unavailable in this browser.');
+      return;
     }
+    canvas.toBlob(blob => {
+      if (!blob || this.disposed || !this.worker) { this.pending = false; return; }
+      this.worker.postMessage({ type: 'infer', blob });
+    }, 'image/jpeg', .72);
   }
 
   dispose() {
