@@ -19,7 +19,7 @@ const GROUPS=[
  {id:'technical',title:'Technical specifications',hint:'ABV, proof, age statement, batch, certifications'},
  {id:'sources',title:'Research sources & confidence',hint:'Source links, verification, conflicts, last checked'},
 ];
-export default function LiveInventory(){
+export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}){
  const {width,height}=useWindowDimensions();
  const wide=width>=760;
  const [permission,requestPermission]=useCameraPermissions();
@@ -74,7 +74,7 @@ export default function LiveInventory(){
      </View>}
  </View>;
  return <View style={s.root}>
-  <View style={s.topbar}><Pressable onPress={()=>{setActive(false);router.back();}}><Text style={s.back}>‹ BACK</Text></Pressable><View style={s.brand}><Text style={s.brandTop}>HARMONY</Text><Text style={s.brandSub}>DISCOVER INTELLIGENCE</Text></View><Text style={s.devTag}>DEV</Text></View>
+  <View style={s.topbar}><Pressable onPress={()=>{setActive(false);if(onClose)onClose();else router.back();}}><Text style={s.back}>‹ BACK</Text></Pressable><View style={s.brand}><Text style={s.brandTop}>HARMONY</Text><Text style={s.brandSub}>DISCOVER INTELLIGENCE</Text></View><Text style={s.devTag}>DEV</Text></View>
   <View style={[s.content,wide?s.wideContent:null]}>{wide?<>{infoPanel}{camera}</>:<>{camera}{infoPanel}</>}</View>
  </View>;
 }
@@ -84,3 +84,6 @@ const s=StyleSheet.create({
  groupScroll:{flex:1},group:{borderBottomWidth:1,borderColor:'rgba(198,163,106,0.13)'},groupButton:{minHeight:54,paddingHorizontal:16,paddingVertical:9,flexDirection:'row',alignItems:'center',gap:10},groupTitle:{color:C.white,fontSize:12,fontWeight:'700'},groupHint:{color:C.muted,fontSize:9,marginTop:3},chevron:{color:C.gold,fontSize:22,fontWeight:'300',width:24,textAlign:'center'},groupBody:{paddingHorizontal:16,paddingBottom:13,paddingTop:2},emptyText:{color:C.amber,fontSize:10,fontWeight:'800'},emptyHint:{color:C.muted,fontSize:9,lineHeight:14,marginTop:4},
  cameraPane:{flex:1,minHeight:300,backgroundColor:'#030609',overflow:'hidden'},wideCamera:{flex:1,borderWidth:1,borderColor:C.line,borderRadius:14},cameraShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,7,12,.2)'},cameraHeader:{position:'absolute',top:14,left:15,right:15,flexDirection:'row',justifyContent:'space-between',alignItems:'center'},cameraTitle:{color:C.white,fontSize:17,fontWeight:'800',marginTop:4},live:{flexDirection:'row',alignItems:'center',gap:6,padding:8,borderRadius:18,backgroundColor:C.panel,borderWidth:1,borderColor:C.line},dot:{width:6,height:6,borderRadius:3,backgroundColor:C.green},liveText:{color:C.white,fontSize:8,fontWeight:'900',letterSpacing:1},cameraCenter:{position:'absolute',top:'24%',bottom:'24%',left:15,right:15,alignItems:'center',justifyContent:'center'},target:{width:'88%',height:'88%',alignItems:'center',justifyContent:'center'},corner:{position:'absolute',width:25,height:25,borderColor:C.gold},tl:{top:0,left:0,borderTopWidth:2,borderLeftWidth:2},tr:{top:0,right:0,borderTopWidth:2,borderRightWidth:2},bl:{bottom:0,left:0,borderBottomWidth:2,borderLeftWidth:2},br:{bottom:0,right:0,borderBottomWidth:2,borderRightWidth:2},targetText:{color:'rgba(240,241,242,.65)',fontSize:8,fontWeight:'900',letterSpacing:1.2},scanline:{position:'absolute',top:'12%',left:24,right:24,height:1,backgroundColor:'#4F8BFF',opacity:.7},cameraFooter:{position:'absolute',bottom:12,left:12,right:12,padding:12,borderRadius:13,backgroundColor:'rgba(7,10,15,.94)',borderWidth:1,borderColor:C.line},pauseFloat:{position:'absolute',bottom:18,right:16,paddingHorizontal:18,paddingVertical:13,borderRadius:24,backgroundColor:C.gold,alignItems:'center',justifyContent:'center',shadowColor:'#000',shadowOpacity:.35,shadowRadius:10,shadowOffset:{width:0,height:3},elevation:6},noticeTitle:{color:C.gold,fontSize:8,fontWeight:'900',letterSpacing:.8},noticeText:{color:C.muted,fontSize:9,lineHeight:14,marginTop:4},recognitionText:{color:C.green,fontSize:9,lineHeight:14,marginTop:5,fontWeight:'700'},error:{color:'#FF9A9A',fontSize:10,marginTop:7},actions:{flexDirection:'row',gap:8,marginTop:10},secondary:{flex:1,padding:12,alignItems:'center',borderRadius:9,borderWidth:1,borderColor:C.line},secondaryText:{color:C.white,fontSize:9,fontWeight:'900',letterSpacing:1},primary:{flex:2,padding:12,alignItems:'center',borderRadius:9,backgroundColor:C.gold},primaryText:{color:'#101216',fontSize:9,fontWeight:'900',letterSpacing:1},
 });
+
+
+export default function LiveInventory(){ return <LiveInventoryPanel />; }
