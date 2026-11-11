@@ -15,7 +15,7 @@ describe('requestVoiceSession', () => {
   it('does not call the network without an access token', async () => {
     const fetchImpl = vi.fn();
     const result = await requestVoiceSession({
-      supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co',
+      supabaseUrl: 'https://discover-test.supabase.co',
       accessToken: '',
       consentVersion: 'voice-consent-v1',
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -31,14 +31,14 @@ describe('requestVoiceSession', () => {
       json: async () => validGrant,
     });
     const result = await requestVoiceSession({
-      supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co',
+      supabaseUrl: 'https://discover-test.supabase.co',
       accessToken: 'user-access-token',
       consentVersion: 'voice-consent-v1',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result.ok).toBe(true);
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://lqqmwqrffelgnbngrkep.supabase.co/functions/v1/discover-voice-session',
+      'https://discover-test.supabase.co/functions/v1/discover-voice-session',
       expect.objectContaining({ method: 'POST' }),
     );
   });
