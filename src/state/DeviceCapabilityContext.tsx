@@ -15,7 +15,6 @@ type DeviceCapabilityState = {
   refresh: () => Promise<void>;
 };
 
-const fallbackProfile = createScannerCapabilityProfile(null);
 const DeviceCapabilityContext = createContext<DeviceCapabilityState | null>(null);
 
 export function DeviceCapabilityProvider({ children }: { children: ReactNode }) {
