@@ -26,7 +26,8 @@ describe('createScannerCapabilityProfile', () => {
     const profile = createScannerCapabilityProfile(base);
     expect(profile.tier).toBe('camera_3d');
     expect(profile.depthSource).toBe('camera_motion_estimate');
-    expect(profile.modes).toContain('live_3d_bottle');
+    expect(profile.modes).toEqual(['smart_scan']);
+    expect(profile.hardwareSupportsLive3D).toBe(true);
     expect(profile.calibratedMetricMeasurements).toBe(false);
   });
 
@@ -39,6 +40,8 @@ describe('createScannerCapabilityProfile', () => {
     expect(profile.tier).toBe('lidar_depth');
     expect(profile.depthSource).toBe('arkit_scene_depth');
     expect(profile.meshReconstruction).toBe(true);
+    expect(profile.hardwareSupportsLive3D).toBe(true);
+    expect(profile.modes).toEqual(['smart_scan']);
     expect(profile.calibratedMetricMeasurements).toBe(false);
   });
 
@@ -46,6 +49,7 @@ describe('createScannerCapabilityProfile', () => {
     const profile = createScannerCapabilityProfile({ ...base, worldTrackingSupported: false });
     expect(profile.tier).toBe('smart_scan');
     expect(profile.modes).toEqual(['smart_scan']);
+    expect(profile.hardwareSupportsLive3D).toBe(false);
   });
 });
 
