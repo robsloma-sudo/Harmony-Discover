@@ -95,7 +95,9 @@ function WebLiveCamera(props: NativeProps) {
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
+        const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
         const result = await readLiveFrame(jpeg);
+        const decodedBarcodes = await barcodePromise;
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
