@@ -54,13 +54,22 @@ export class BrowserDepthEstimator {
     if (now - this.lastSubmittedAt < 1600) return;
     this.lastSubmittedAt = now;
     this.pending = true;
-    const width = Math.min(518, video.videoWidth);
-    const height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth));
+    // Crop to the same object-fit:cover viewport shown to the user.
+    const displayWidth = video.clientWidth || video.videoWidth;
+    const displayHeight = video.clientHeight || video.videoHeight;
+    const displayAspect = displayWidth / displayHeight;
+    const sourceAspect = video.videoWidth / video.videoHeight;
+    let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+    if (sourceAspect > displayAspect) { sw = video.videoHeight * displayAspect; sx = (video.videoWidth - sw) / 2; }
+    else if (sourceAspect < displayAspect) { sh = video.videoWidth / displayAspect; sy = (video.videoHeight - sh) / 2; }
+    const scale = Math.min(1, 518 / Math.max(sw, sh));
+    const width = Math.max(1, Math.round(sw * scale));
+    const height = Math.max(1, Math.round(sh * scale));
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const context = canvas.getContext('2d', { willReadFrequently: false });
     if (!context) { this.pending = false; return; }
-    context.drawImage(video, 0, 0, width, height);
+    context.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
     if (typeof canvas.toBlob !== 'function') {
       this.pending = false;
       this.onStatus('Canvas image conversion is unavailable in this browser.');
