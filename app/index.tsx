@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ImageBackground, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -16,8 +16,6 @@ export default function Home() {
   const isLandscape = screenWidth > screenHeight;
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
-  const [bartenderOpen, setBartenderOpen] = useState(false);
-  const [bartenderExpanded, setBartenderExpanded] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [cameraMessage, setCameraMessage] = useState('');
@@ -80,25 +78,7 @@ export default function Home() {
         <Text style={s.centerHintText}>FIND THE DRINK WORTH TALKING ABOUT</Text>
       </View>
 
-      {bartenderOpen && (
-        <View style={[s.bartenderDock, { bottom: insets.bottom + (screenHeight < 750 ? 139 : 153) }, bartenderExpanded && s.bartenderDockExpanded]}>
-          <Pressable style={s.portraitWrap} onPress={() => setBartenderExpanded(v => !v)} accessibilityLabel="Expand bartender">
-            <ImageBackground source={require('../assets/boston-bartender-concept.png')} style={s.portrait} imageStyle={{ borderRadius: 24 }}>
-              <View style={s.portraitTint} />
-            </ImageBackground>
-            <View style={s.voiceOfflineDot} />
-          </Pressable>
-          <View style={s.bartenderCopy}>
-            <View style={s.bartenderTopline}><Text style={s.bartenderName}>BOSTON BARTENDER</Text><Text style={s.bartenderStatus}>VOICE OFFLINE</Text></View>
-            <Text style={s.bartenderLine}>“You gonna scan that menu, or just admire it?”</Text>
-            {bartenderExpanded && <Text style={s.bartenderSubline}>Open Marty to manage voice consent, start a push-to-talk session, or use typed fallback.</Text>}
-            <View style={s.voiceStatus}><View style={s.voiceStatusDot} /><Text style={s.voiceStatusText}>VOICE NOT CONNECTED</Text></View>
-          </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Open Marty voice" style={s.detailsButton} onPress={() => router.push("/bartender")}><Ionicons name="ellipsis-horizontal" size={19} color={C.ivory} /></Pressable>
-          <Pressable accessibilityLabel="Minimize bartender" style={s.dismissButton} onPress={() => setBartenderOpen(false)}><Ionicons name="chevron-down" size={17} color={C.muted} /></Pressable>
-        </View>
-      )}
-      {!bartenderOpen && <Pressable style={[s.bartenderRestore, { bottom: insets.bottom + 157 }]} onPress={() => setBartenderOpen(true)}><Ionicons name="chatbubble-ellipses-outline" size={18} color={C.ivory} /><Text style={s.restoreText}>BARTENDER</Text><Text style={s.restoreHint}>HE'S STILL HERE</Text><View style={s.voiceOfflineDotSmall} /></Pressable>}
+
 
       <View style={[s.bottomArea, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + (isLandscape ? 5 : 7), paddingTop: isLandscape ? 6 : 8, left: isLandscape ? 22 : 10, right: isLandscape ? 22 : 10 }]}>
         <View style={s.controls}>
@@ -108,7 +88,6 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing menu' : 'Capture menu'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={flashEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, flashEnabled && s.primaryControlActive]} onPress={() => setFlashEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 22 : 25} color={flashEnabled ? C.brass : C.ivory} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => router.push('/settings')}><Ionicons name="settings-outline" size={compactDock ? 15 : 17} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel={bartenderOpen ? 'Hide bartender' : 'Show bartender'} style={s.utilityControl} onPress={() => setBartenderOpen(v => !v)}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={bartenderOpen ? C.brass : C.ivory} /><Text style={[s.utilityLabel, bartenderOpen && s.activeLabel]}>BARTENDER</Text></Pressable>
         </View>
       </View>
     </View>
