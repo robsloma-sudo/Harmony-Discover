@@ -165,7 +165,7 @@ Deno.serve(async (req: Request) => {
     const found = queries.length ? await match(queries) : [];
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const hit = m?.id && (m.score ?? 0) >= 0.6 ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 } : null;
+      const hit = m?.id && m.product && m.category && (m.score ?? 0) >= 0.6 ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 } : null;
       const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
       return { ...b, match: hit, state };
     });
@@ -190,7 +190,7 @@ Deno.serve(async (req: Request) => {
     const found = await match(queries);   // matched again on the server; the browser's ids are never trusted
     const venue = clean(body.venue_name, 120) || null;
     const rows = incoming.map((b, i) => {
-      const m = found.find((f) => f.q === queries[i]); const hit = m?.id && (m.score ?? 0) >= 0.6;
+      const m = found.find((f) => f.q === queries[i]); const hit = m?.id && m.product && m.category && (m.score ?? 0) >= 0.6;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: b.details, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
