@@ -14,6 +14,7 @@ const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
 const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
+const MIN_LABEL_CONFIDENCE = 0.65;
 const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "other"];
 // Everything else a label can carry. Each is copied only when printed; which ones matter depends on the bottle:
 // wine (producer, vintage, appellation, grapes, classification), spirits (age, cask finish, batch, flavour), any (certifications).
@@ -165,7 +166,7 @@ Deno.serve(async (req: Request) => {
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
       const hit = m?.id && (m.score ?? 0) >= 0.6 ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 } : null;
-      const state = !b.brand || b.confidence < 0.5 ? "unsure" : hit ? "matched" : "reported";
+      const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
       return { ...b, match: hit, state };
     });
     const mraw = (input?.menu && typeof input.menu === "object" ? input.menu : {}) as Record<string, unknown>;
@@ -183,7 +184,7 @@ Deno.serve(async (req: Request) => {
     const incoming = (Array.isArray(body.bottles) ? body.bottles as Array<Record<string, unknown>> : []).slice(0, MAX_SAVE)
       .map((b) => ({ brand: clean(b.brand, 80), product: clean(b.product, 80), category: CATEGORIES.includes(String(b.category)) ? String(b.category) : "other",
         proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b) }))
-      .filter((b) => b.brand);
+      .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
     const queries = incoming.map((b) => clean(`${b.brand} ${b.product}`, 120));
     const found = await match(queries);   // matched again on the server; the browser's ids are never trusted
@@ -192,7 +193,7 @@ Deno.serve(async (req: Request) => {
       const m = found.find((f) => f.q === queries[i]); const hit = m?.id && (m.score ?? 0) >= 0.6;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
-        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: b.details, read_confidence: b.confidence, method: "vision_frame", evidence_state: "user_confirmed",
+        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: b.details, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
     const { error } = await db.from("bottle_sightings").insert(rows);
