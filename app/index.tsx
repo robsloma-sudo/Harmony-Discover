@@ -78,6 +78,7 @@ export default function Home() {
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
         <View style={s.topActions}><View style={s.livePill}><View style={s.liveDot}/><Text style={s.liveText}>VIEWFINDER</Text></View><Pressable style={s.profileButton} onPress={() => router.push('/collection')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
       </View>
+      <Pressable accessibilityRole="button" onPress={() => router.push('/live-inventory')} style={{ position: 'absolute', zIndex: 6, top: Math.max(insets.top, 24) + 122, alignSelf: 'center', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 18, backgroundColor: 'rgba(8,10,13,0.88)', borderWidth: 1, borderColor: 'rgba(198,163,106,0.65)' }}><Text style={{ color: '#C6A36A', fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }}>OPEN LIVE INVENTORY SCANNER  ›</Text></Pressable>
       <View style={[s.modeSwitch, { top: Math.max(insets.top, 24) + 76 }]}>
         <Pressable accessibilityRole="button" accessibilityState={{ selected: scanMode === 'smart' }} onPress={() => setScanMode('smart')} style={[s.modeOption, scanMode === 'smart' && s.modeOptionActive]}>
           <Ionicons name="scan-outline" size={13} color={scanMode === 'smart' ? '#111' : C.ivory} />
