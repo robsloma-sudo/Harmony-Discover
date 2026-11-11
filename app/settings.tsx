@@ -1,8 +1,12 @@
 import { Text, Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
+import { getFriendlyIPhoneModel } from '../src/services/discoverARKit';
+import { useDeviceCapabilities } from '../src/state/DeviceCapabilityContext';
 
 export default function Settings() {
+  const { loading, capabilities, profile, error, refresh } = useDeviceCapabilities();
+  const deviceName = capabilities ? getFriendlyIPhoneModel(capabilities.machineIdentifier) : 'Device profile unavailable';
   return (
     <Screen>
       <Text style={styles.back} onPress={() => router.back()}>‹  Back to camera</Text>
@@ -15,6 +19,16 @@ export default function Settings() {
           <Text style={styles.categoryDesc}>Automatic — portrait and landscape supported</Text>
         </View>
         <Text style={styles.price}>AUTO</Text>
+      </View>
+      <View style={[styles.item, { flexDirection: 'column', alignItems: 'stretch' }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={styles.itemTitle}>Device optimization</Text>
+          <Text style={styles.price}>{loading ? 'CHECKING' : profile.tier.replace('_', ' ').toUpperCase()}</Text>
+        </View>
+        <Text style={styles.categoryDesc}>{loading ? 'Detecting hardware and ARKit support…' : deviceName}</Text>
+        <Text style={styles.categoryDesc}>{loading ? ' ' : profile.reason}</Text>
+        {!!error && <Text style={styles.categoryDesc}>{error}</Text>}
+        <Pressable onPress={() => void refresh()}><Text style={styles.price}>REFRESH DEVICE PROFILE</Text></Pressable>
       </View>
       <Pressable style={styles.item} onPress={() => router.push('/arkit-diagnostics')}>
         <View style={{ flex: 1 }}>
