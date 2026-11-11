@@ -16,12 +16,11 @@ export default function LiveInventory(){
  useEffect(()=>{const a=Animated.loop(Animated.sequence([Animated.timing(pulse,{toValue:1,duration:950,useNativeDriver:true}),Animated.timing(pulse,{toValue:.35,duration:950,useNativeDriver:true})]));a.start();return()=>a.stop();},[pulse]);
  useEffect(()=>{if(!active)return;const a=Animated.loop(Animated.timing(sweep,{toValue:1,duration:2600,useNativeDriver:true}));a.start();return()=>a.stop();},[active,sweep]);
  const start=async()=>{setError('');if(!permission?.granted){const p=await requestPermission();if(!p.granted){setError('Camera permission is required.');return;}}setActive(true);};
- const status=tracking.state==='normal'?'TRACKING STABLE':tracking.state==='limited'?'TRACKING LIMITED':tracking.state==='interrupted'?'CAMERA INTERRUPTED':active?'STARTING CAMERA':'SCANNER PAUSED';
  const scanlineY=sweep.interpolate({inputRange:[0,1],outputRange:[0,440]});
  return <View style={s.root}>
   <DiscoverARSurface style={StyleSheet.absoluteFill} active={active} onTrackingUpdate={e=>setTracking(e.nativeEvent)} onVisualCandidates={e=>setCandidates(e.nativeEvent.candidates)} onARError={e=>{setError(e.nativeEvent.message||'AR session error');setActive(false);}} />
   <View pointerEvents="none" style={s.shade}/>
-  <View style={s.header}><Pressable onPress={()=>{setActive(false);router.back();}}><Text style={s.back}>‹ BACK</Text></Pressable><View style={s.brand}><Text style={s.brandTop}>HARMONY</Text><Text style={s.brandSub}>LIVE INVENTORY</Text></View><View style={s.live}><Animated.View style={[s.dot,{opacity:pulse}]}/><Text style={s.liveText}>{active?'LIVE':'READY'}</Text></View></View>
+  <View style={s.header}><Pressable onPress={()=>{setActive(false);router.back();}}><Text style={s.back}>‹ BACK</Text></Pressable><View style={s.brand}><Text style={s.brandTop}>HARMONY</Text><Text style={s.brandSub}>LIVE INVENTORY</Text></View><View style={s.live}><Animated.View style={[s.dot,{opacity:pulse}]}/><Text style={s.liveText}>{tracking.state==='normal'?'TRACKING':active?'SCANNING':'READY'}</Text></View></View>
   <View style={s.topPanel}><Text style={s.eyebrow}>BOTTLE SCANNER · DEV</Text><Text style={s.heading}>Sweep the back bar</Text><Text style={s.sub}>Move slowly across the shelf. Keep bottle labels visible and avoid fast camera movement.</Text></View>
   {active&&<><Animated.View pointerEvents="none" style={[s.scanline,{transform:[{translateY:scanlineY}]}]}/><View pointerEvents="none" style={s.reticle}><View style={[s.corner,s.tl]}/><View style={[s.corner,s.tr]}/><View style={[s.corner,s.bl]}/><View style={[s.corner,s.br]}/></View></>}
   <View style={s.bottom}>
