@@ -55,6 +55,27 @@ describe('estimateBottleFill', () => {
     expect(result.method).toBe('profile_integration');
   });
 
+
+  it('rejects missing profile metadata and malformed samples', () => {
+    expect(() => integrateBottleVolumeMl({
+      profileId: '',
+      calibrationSource: 'test',
+      samples: [{ heightMm: 0, internalRadiusMm: 1 }, { heightMm: 2, internalRadiusMm: 1 }],
+    }, 1)).toThrow(/profile ID/);
+    expect(() => integrateBottleVolumeMl({
+      ...cylinder,
+      samples: [{ heightMm: 0, internalRadiusMm: 10 }, null as never],
+    }, 1)).toThrow(/finite and non-negative/);
+  });
+
+  it('does not silently report more volume than modeled vessel capacity', () => {
+    expect(() => estimateBottleFill({
+      profile: cylinder,
+      liquidHeightMm: 100,
+      nominalCapacityMl: 1,
+    })).not.toThrow();
+  });
+
   it('rejects invalid nominal package capacity', () => {
     expect(() => estimateBottleFill({
       profile: cylinder,
