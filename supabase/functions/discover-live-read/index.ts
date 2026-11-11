@@ -144,6 +144,7 @@ Deno.serve(async (req: Request) => {
     const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
 
+    const providerStartedAt = Date.now();
     let model = MODEL, r = await readFrame(anthropicKey, model, image);
     if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { model = FALLBACK; r = await readFrame(anthropicKey, model, image); }
     const usage = r.j?.usage || {};
