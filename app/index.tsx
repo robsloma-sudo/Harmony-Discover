@@ -9,6 +9,7 @@ import LiveScanner from '../src/live/LiveScanner';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
 import { LiveInventoryPanel } from './live-inventory';
+import { PreviewPanel } from './preview';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -16,6 +17,7 @@ export default function Home() {
   const camera = useRef<CameraView>(null);
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { addPages, appendPages, pages } = useScan();
   const isLandscape = screenWidth > screenHeight;
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
@@ -25,7 +27,26 @@ export default function Home() {
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|null>(null);
+  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|null>(null);
+
+  const startMenuScan = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: Math.max(1, 12 - pages.length), quality: 0.85 });
+      if (result.canceled || !result.assets.length) return;
+      addPages(result.assets.slice(0, 12).map(a => a.uri), 'gallery');
+      setSettingsOpen(false);
+      setActivePanel('menu');
+    } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
+  };
+
+  const addMenuPages = async () => {
+    const remaining = Math.max(0, 12 - pages.length);
+    if (!remaining) { setCameraMessage('This menu scan has reached the 12-page limit.'); return; }
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: Math.min(10, remaining), quality: 0.85 });
+      if (!result.canceled && result.assets.length) appendPages(result.assets.slice(0, remaining).map(a => a.uri), 'gallery');
+    } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
+  };
 
   const capture = async () => {
     if (capturing) return;
@@ -93,8 +114,9 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
+      {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
       {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
-      {activePanel && activePanel !== 'inventory' && <>
+      {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:31,left:12,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:'72%',padding:16,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
           <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
@@ -118,6 +140,7 @@ export default function Home() {
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('privacy');}}><Ionicons name="shield-checkmark-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Measure & contribution permissions</Text><Text style={s.menuDesc}>Optional research and measurement sharing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <View style={{height:1,backgroundColor:C.line,marginVertical:8}}/>
           <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.4,marginBottom:4}}>ADVANCED SCANNERS</Text>
+          <Pressable style={s.menuRow} onPress={startMenuScan}><Ionicons name="document-text-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Read a menu</Text><Text style={s.menuDesc}>Capture menu pages, review extracted items and corrections</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('lidar');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
         </View>
