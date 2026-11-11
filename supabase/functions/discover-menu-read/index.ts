@@ -132,9 +132,9 @@ Deno.serve(async (req: Request) => {
   for (const [page, asset] of assets.entries()) {
     if (asset.byte_size > 15 * 1024 * 1024) { failures.push({ page, error: "image_too_large" }); continue; }
     if (!["image/jpeg", "image/png", "image/webp"].includes(asset.mime_type)) { failures.push({ page, error: "unsupported_image_type" }); continue; }
-    const { data: prior } = await db.from("observation_extractions")
-      .select("id,extraction_status").eq("asset_id", asset.id).maybeSingle();
-    if (prior?.extraction_status === "extracted") { skipped++; pages++; continue; }
+    // Re-read every page rather than trusting a prior extraction marker alone.
+    // The marker can outlive a partial item write; skipping on it could certify
+    // a page whose structured items are missing or stale.
     const { data: signed, error: signError } = await db.storage.from("observation-assets").createSignedUrl(asset.object_path, 600);
     if (signError || !signed?.signedUrl) { failures.push({ page, error: "image_sign_failed" }); continue; }
 
@@ -200,7 +200,9 @@ Deno.serve(async (req: Request) => {
     };
     const { error: saveError } = await db.from("observation_extractions").upsert(extraction, { onConflict: "asset_id" });
     if (saveError) { failures.push({ page, error: "extraction_save_failed" }); continue; }
-    await db.from("observation_assets").update({ processing_status: "processed" }).eq("id", asset.id).eq("consumer_id", subject);
+    const { error: assetUpdateError } = await db.from("observation_assets")
+      .update({ processing_status: "processed" }).eq("id", asset.id).eq("consumer_id", subject);
+    if (assetUpdateError) { failures.push({ page, error: "asset_status_save_failed" }); continue; }
     pages++; itemsSaved += items.length;
   }
 
