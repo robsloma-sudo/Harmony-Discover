@@ -57,4 +57,4 @@ jobs:
         run: npm install --global netlify-cli
 
       - name: Publish scanner branch as an isolated Netlify deploy preview
-        run: netlify deploy --alias=discover-scanner-dev --dir=dist --no-build --message "Harmony Discover scanner preview ${GITHUB_SHA}"
+        run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias=discover-scanner-dev --dir=dist --no-build --message "Harmony Discover scanner preview ${GITHUB_SHA}"
