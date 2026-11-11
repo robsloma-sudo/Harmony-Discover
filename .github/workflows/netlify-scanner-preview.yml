@@ -1,0 +1,60 @@
+name: Deploy Harmony Discover scanner branch to Netlify preview
+
+on:
+  push:
+    branches:
+      - discover-scanner-experience-integration-2026-11-11
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harmony-discover-scanner-preview
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NETLIFY_SITE_ID: 3c50b789-a7f5-4ed4-806e-e5e455924646
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://lqqmwqrffelgnbngrkep.supabase.co
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - name: Check out scanner development branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify deployment configuration
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error::Missing GitHub Actions secret NETLIFY_AUTH_TOKEN."
+            exit 1
+          fi
+          if [ -z "$EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "::error::Missing GitHub Actions secret EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY."
+            exit 1
+          fi
+          node -e "const u=process.env.EXPO_PUBLIC_SUPABASE_URL; if (!u || !/^https?:\\/\\//.test(u)) process.exit(1); new URL(u); console.log('Discover DEV Supabase URL is valid; publishable key is present.');"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build Expo web app
+        run: npm run build:web
+
+      - name: Verify web build output
+        run: test -s dist/index.html
+
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli
+
+      - name: Publish scanner branch as an isolated Netlify deploy preview
+        run: netlify deploy --alias=discover-scanner-dev --dir=dist --no-build --message "Harmony Discover scanner preview ${GITHUB_SHA}"
