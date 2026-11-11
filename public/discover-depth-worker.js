@@ -32,7 +32,7 @@ self.onmessage = event => {
   queue = queue.then(async () => {
     const started = performance.now();
     try {
-      self.postMessage({ type: 'status', status: 'loading' });
+      if (!estimator) self.postMessage({ type: 'status', status: 'loading' });
       const model = await load();
       const result = await model(message.blob);
       const tensor = result.predicted_depth;
