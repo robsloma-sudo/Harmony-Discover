@@ -13,7 +13,7 @@ export default function Journey() {
       <Text style={styles.back} onPress={() => router.back()}>‹  Menu</Text>
       <Text style={styles.eyebrow}>YOUR JOURNEY</Text>
       <Text style={styles.title}>{displayTitle}</Text>
-      <Text style={styles.sub}>{isDiscoverHandoff ? 'A discovery captured and reviewed in Harmony Discover. Explore the evidence here, then continue into the wider Harmony learning experience.' : journey.intro}</Text>
+      <Text style={styles.sub}>{isDiscoverHandoff ? 'A discovery captured in Harmony Discover. Review the extracted evidence here, then continue into the wider Harmony learning experience.' : journey.intro}</Text>
       {isDiscoverHandoff && <View style={{marginTop:8,padding:15,borderWidth:1,borderColor:'#C6A36A55',borderRadius:14,gap:8,backgroundColor:'#111820'}}>
         <Text style={styles.eyebrow}>DISCOVER SCAN · {String(entityType || 'BEVERAGE').replace('_',' ').toUpperCase()}</Text>
         {!!brand && <Text style={styles.itemTitle}>{brand}</Text>}
