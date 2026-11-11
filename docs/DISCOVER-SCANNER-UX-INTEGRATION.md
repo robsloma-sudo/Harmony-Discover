@@ -37,10 +37,13 @@ Harmony Journeys is a separate front-end experience on the Core production proje
 The current Discover-side handoff:
 - carries scan context into a local Discover Journey screen;
 - clearly labels the context as a Discover observation;
-- opens the known Harmony Journeys home URL;
+- displays the captured entity context in a local Discover handoff screen;
+- does not attempt to open the Journeys player until a supported cross-app initialization contract exists;
 - does not claim that the Journeys site has received the scanned entity.
 
-**Item-level deep linking is not yet implemented.** Before adding URL parameters or a destination route, define and implement a supported contract on the Journeys side. A proposed future contract is a stable canonical entity identifier (not raw OCR text or private image URLs), e.g. product/producer/venue ID plus a source attribution of Discover. This requires a separate Journeys implementation and explicit approval; this branch does not modify it.
+**Why the launch is pending:** the current `journeys.html` player initializes from a host `postMessage` carrying `phgJ: 'init'` and `journey.journey_id`. It rejects messages unless the sender origin equals the Journeys page origin and the sender is its parent. A direct Discover-to-Journeys cross-origin launch therefore cannot initialize the player. Do not fake this with guessed query parameters.
+
+**Required future contract:** Journeys must expose a supported, secure handoff accepting a stable canonical journey/entity identifier (not raw OCR text or private image URLs), plus Discover source attribution. The receiving side should validate the identifier and access rights, then initialize the existing player through its own trusted host. This requires a separate Journeys implementation and explicit approval; this branch does not modify it.
 
 ## UI delivery sequence
 
