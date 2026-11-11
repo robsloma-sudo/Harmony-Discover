@@ -46,6 +46,10 @@ const IPHONE_MODEL_NAMES: Record<string, string> = {
   'iPhone18,3': 'iPhone 17',
   'iPhone18,4': 'iPhone Air',
   'iPhone18,5': 'iPhone 17e',
+  'iPhone19,2': 'iPhone 18 Pro',
+  'iPhone19,3': 'iPhone 18 Pro Max',
+  'iPhone19,7': 'iPhone 18 Pro Max',
+  'iPhone19,4': 'iPhone Duo',
 };
 
 export function getFriendlyIPhoneModel(identifier: string): string {
