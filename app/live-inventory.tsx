@@ -62,7 +62,7 @@ export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}){
   {active&&<Animated.View pointerEvents="none" style={[s.scanline,{transform:[{translateY:scanlineY}]}]}/>}
   <View style={s.cameraHeader}><View><Text style={s.eyebrow}>LIVE CAMERA · DEV</Text><Text style={s.cameraTitle}>Bottle detection</Text></View><View style={s.live}><Animated.View style={[s.dot,{opacity:pulse}]}/><Text style={s.liveText}>{tracking.state==='normal'?'TRACKING':active?'SCANNING':'READY'}</Text></View></View>
   <View style={s.cameraCenter}><View style={s.target}><View style={[s.corner,s.tl]}/><View style={[s.corner,s.tr]}/><View style={[s.corner,s.bl]}/><View style={[s.corner,s.br]}/><Text style={s.targetText}>CENTER BOTTLE LABEL IN FRAME</Text></View></View>
-  {recognized.bottles.map((b,i)=><View key={b.brand+'-'+b.product+'-'+i} pointerEvents="none" style={[s.detectedBox,{left:(b.box.x0*100)+'%',top:(b.box.y0*100)+'%',width:((b.box.x1-b.box.x0)*100)+'%',height:((b.box.y1-b.box.y0)*100)+'%'}]}><Text numberOfLines={1} style={s.detectedLabel}>{b.match?.brand||b.brand||'UNSURE'} {b.product}</Text></View>)}
+  {recognized.bottles.map((b,i)=><View key={b.brand+'-'+b.product+'-'+i} pointerEvents="none" style={[s.detectedBox,{left:`${b.box.x0*100}%` as `${number}%`,top:`${b.box.y0*100}%` as `${number}%`,width:`${(b.box.x1-b.box.x0)*100}%` as `${number}%`,height:`${(b.box.y1-b.box.y0)*100}%` as `${number}%`}]}><Text numberOfLines={1} style={s.detectedLabel}>{b.match?.brand||b.brand||'UNSURE'} {b.product}</Text></View>)}
   {active
    ? <Pressable accessibilityRole="button" accessibilityLabel="Pause live camera" style={s.pauseFloat} onPress={()=>setActive(false)}><Text style={s.primaryText}>Ⅱ  PAUSE CAMERA</Text></Pressable>
    : <View style={s.cameraFooter}>
