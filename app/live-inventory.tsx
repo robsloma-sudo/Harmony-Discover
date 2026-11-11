@@ -74,7 +74,8 @@ export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}){
       {!!recognized.barcodes.length&&<Text style={s.recognitionText}>BARCODE: {recognized.barcodes.map(x=>x.value).join(" · ")}</Text>}
       {!!recognized.classifications.length&&<Text style={s.recognitionText}>CATEGORY: {recognized.classifications.slice(0,3).map(x=>x.identifier).join(" · ")}</Text>}
       {!!recognized.menu?.visible&&<Text style={s.recognitionText}>MENU: {recognized.menu.items.length} items detected</Text>}
-      {!!recognized.bottles.length&&<Text style={s.recognitionText}>BOTTLES: {recognized.bottles.length} · {recognized.bottles.filter(x=>x.state==='matched').length} catalog matches</Text>}\n      {!!recognized.diagnostics&&<Text style={s.recognitionText}>MODEL: {recognized.diagnostics.model} · {recognized.diagnostics.version} · {recognized.diagnostics.providerMs} ms</Text>}
+      {!!recognized.bottles.length&&<Text style={s.recognitionText}>BOTTLES: {recognized.bottles.length} · {recognized.bottles.filter(x=>x.state==='matched').length} catalog matches</Text>}
+      {!!recognized.diagnostics&&<Text style={s.recognitionText}>MODEL: {recognized.diagnostics.model} · {recognized.diagnostics.version} · {recognized.diagnostics.providerMs} ms</Text>}\n      {!!recognized.diagnostics&&<Text style={s.recognitionText}>MODEL: {recognized.diagnostics.model} · {recognized.diagnostics.version} · {recognized.diagnostics.providerMs} ms</Text>}
       {!!error&&<Text style={s.error}>{error}</Text>}
       <Pressable accessibilityRole="button" style={s.primary} onPress={()=>void start()}><Text style={s.primaryText}>RESUME CAMERA</Text></Pressable>
      </View>}
