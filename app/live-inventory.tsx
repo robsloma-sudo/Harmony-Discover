@@ -26,6 +26,7 @@ export default function LiveInventory(){
  const [active,setActive]=useState(false);
  const [tracking,setTracking]=useState<ARTrackingUpdate>({state:'paused',reason:'not_started'});
  const [error,setError]=useState('');
+ const [recognized,setRecognized]=useState<{text:string[];barcodes:Array<{value:string;symbology:string}>;classifications:Array<{identifier:string;confidence:string}>}>({text:[],barcodes:[],classifications:[]});
  const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
  const pulse=useRef(new Animated.Value(.35)).current;
  const sweep=useRef(new Animated.Value(0)).current;
