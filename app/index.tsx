@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -74,7 +74,6 @@ export default function Home() {
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
   };
 
-  if (scanPhotos) return <LiveScanner photos={scanPhotos} source={scanSource} onClose={() => setScanPhotos(null)} />;
   if (!permission) return <View style={s.loading}><Text style={s.loadingText}>DISCOVER</Text></View>;
 
   return (
@@ -114,6 +113,7 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
+      {scanPhotos && <View style={{position:'absolute',zIndex:50,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
       {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
       {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
       {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
@@ -128,12 +128,14 @@ export default function Home() {
         </View>
       </>}
       {settingsOpen && <>
+        <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
         <Pressable accessibilityRole="button" accessibilityLabel="Close settings" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:20,backgroundColor:'rgba(0,0,0,0.42)'}} />
-        <View style={{position:'absolute',zIndex:21,left:12,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
+        <View style={{position:'absolute',zIndex:61,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,width:Math.min(340,screenWidth-24),maxHeight:screenHeight*0.72,padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.99)',borderWidth:1,borderColor:'rgba(198,163,106,0.65)',shadowColor:'#000',shadowOpacity:0.45,shadowRadius:18,shadowOffset:{width:0,height:8},elevation:24}}>
           <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
             <Text style={{color:C.ivory,fontSize:12,fontWeight:'900',letterSpacing:1.5}}>DISCOVER SETTINGS</Text>
             <Pressable onPress={()=>setSettingsOpen(false)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Screen orientation is automatic. Rotate your device to change the layout.')}><Ionicons name="phone-portrait-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Screen orientation</Text><Text style={s.menuDesc}>Automatic · portrait and landscape</Text></View><Text style={s.menuValue}>AUTO</Text></Pressable>
           <Pressable style={s.menuRow} onPress={async()=>{const p=permission?.granted?permission:await requestPermission();setCameraMessage(p.granted?'Camera access is enabled.':'Camera access was not granted. Check iOS Settings.');}}><Ionicons name="camera-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Camera access</Text><Text style={s.menuDesc}>Manage camera permission</Text></View><Text style={s.menuValue}>{permission.granted?'ON':'CHECK'}</Text></Pressable>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Photos are processed only after you select or capture them.')}><Ionicons name="images-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Photo processing</Text><Text style={s.menuDesc}>Review selected photos before processing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
@@ -143,6 +145,7 @@ export default function Home() {
           <Pressable style={s.menuRow} onPress={startMenuScan}><Ionicons name="document-text-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Read a menu</Text><Text style={s.menuDesc}>Capture menu pages, review extracted items and corrections</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('lidar');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          </ScrollView>
         </View>
       </>}
     </View>
