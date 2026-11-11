@@ -120,7 +120,3 @@ grant execute on function public.discover_bottle_scan_allow(uuid, integer, integ
 grant execute on function public.discover_bottle_scan_tokens(uuid, bigint, bigint) to service_role;
 grant execute on function public.discover_match_products(text[]) to service_role;
 
--- Label facts beyond brand and product: producer, vintage, region, appellation, grapes, class, age,
--- cask finish, flavour, batch, importer and certification marks. Only what is printed on the label.
-alter table public.bottle_sightings add column if not exists read_vintage integer;
-alter table public.bottle_sightings add column if not exists label_details jsonb not null default '{}'::jsonb;
