@@ -50,6 +50,7 @@ export default function Home() {
 
   const capture = async () => {
     if (capturing) return;
+    setSettingsOpen(false);
     if (!permission?.granted) {
       const result = await requestPermission();
       if (!result.granted) setCameraMessage('Camera access is needed to capture a menu.');
@@ -66,6 +67,7 @@ export default function Home() {
   };
 
   const openGallery = async () => {
+    setSettingsOpen(false);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 6, quality: 0.85 });
       if (result.canceled || !result.assets.length) return;
