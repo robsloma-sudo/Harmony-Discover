@@ -77,7 +77,6 @@ export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}){
       {!!recognized.bottles.length&&<Text style={s.recognitionText}>BOTTLES: {recognized.bottles.length} · {recognized.bottles.filter(x=>x.state==='matched').length} catalog matches</Text>}
       {!!recognized.diagnostics&&<Text style={s.recognitionText}>MODEL: {recognized.diagnostics.model} · {recognized.diagnostics.version} · {recognized.diagnostics.providerMs} ms</Text>}
       {recognized.barcodeStatus==='unsupported'&&<Text style={s.recognitionText}>BARCODE: Native browser decoding is unavailable here; label recognition remains active.</Text>}
-      {!!recognized.diagnostics&&<Text style={s.recognitionText}>MODEL: {recognized.diagnostics.model} · {recognized.diagnostics.version} · {recognized.diagnostics.providerMs} ms</Text>}
       {!!error&&<Text style={s.error}>{error}</Text>}
       <Pressable accessibilityRole="button" style={s.primary} onPress={()=>void start()}><Text style={s.primaryText}>RESUME CAMERA</Text></Pressable>
      </View>}
