@@ -79,6 +79,36 @@ export default function BartenderScreen() {
     dcRef.current = null; pcRef.current = null; streamRef.current = null; audioRef.current = null;
   }, []);
 
+  function runMartyNavigationTool(name: string, rawArguments: string): string {
+    let args: any;
+    try { args = JSON.parse(rawArguments || "{}"); } catch { return "I couldn't understand that navigation request."; }
+    const screens: Record<string, string> = { discover: "/", nearby: "/nearby", library: "/collection", taste: "/taste", settings: "/settings" };
+    const radius = [1, 5, 10, 15, 20].includes(Number(args.radius_miles)) ? String(args.radius_miles) : undefined;
+    const categories = ["all", "bar", "cocktail_bar", "restaurant", "brewery", "winery", "distillery"];
+    const category = categories.includes(String(args.category)) ? String(args.category) : undefined;
+    const search = typeof args.search === "string" ? args.search.trim().slice(0, 100) : undefined;
+    if (name === "navigate_discover") {
+      const path = screens[String(args.screen)];
+      if (!path) return "That screen is not available in Harmony Discover.";
+      if (args.screen === "nearby") {
+        router.push({ pathname: "/nearby", params: { ...(radius ? { radius } : {}), ...(category && category !== "all" ? { category } : {}), ...(search ? { search } : {}) } });
+        return "Opening the Nearby Atlas.";
+      }
+      router.push(path as never);
+      return "Opening " + String(args.screen) + ".";
+    }
+    if (name === "control_nearby_atlas") {
+      const action = String(args.action);
+      if (action === "set_radius" && radius) router.push({ pathname: "/nearby", params: { radius } });
+      else if (action === "set_category" && category) router.push({ pathname: "/nearby", params: { category: category === "all" ? "" : category } });
+      else if (action === "search" && search) router.push({ pathname: "/nearby", params: { search } });
+      else if (action === "recenter") router.push({ pathname: "/nearby", params: { recenter: String(Date.now()) } });
+      else return "I need a valid radius, category, or search phrase to do that.";
+      return action === "recenter" ? "Recentering the Atlas on your location." : "Updating the Nearby Atlas.";
+    }
+    return "That navigation action is not supported.";
+  }
+
   async function connectTransport(grant: VoiceSessionGrant) {
     transportClosingRef.current = false;
     sessionStartedRef.current = false;
@@ -100,6 +130,12 @@ export default function BartenderScreen() {
           sessionStartedResolveRef.current = null;
         }
         if (data.type === 'conversation.item.input_audio_transcription.completed' && data.transcript) addLine('you', data.transcript);
+        if (data.type === 'response.function_call_arguments.done' && typeof data.name === 'string' && typeof data.call_id === 'string') {
+          const result = runMartyNavigationTool(data.name, data.arguments || "{}");
+          addLine('system', result);
+          dc.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: data.call_id, output: result } }));
+          dc.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
+        }
         if (data.type === 'response.output_audio_transcript.done' && data.transcript) addLine('marty', data.transcript);
         if (data.type === 'response.output_audio_transcript.delta' && data.delta) setStatus('MARTY IS SPEAKING');
         if (data.type === 'response.done') setStatus('CONNECTED · HOLD TO TALK');
