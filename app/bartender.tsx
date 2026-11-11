@@ -50,6 +50,9 @@ export default function BartenderScreen() {
 
   const closeTransport = useCallback(async () => {
     isTalkingRef.current = false;
+    // Stop capture immediately; graceful server finalization must never keep the mic live.
+    streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
+    if (audioRef.current) audioRef.current.pause();
     sessionStartedRejectRef.current?.(new Error('Voice session closed before it was ready.'));
     sessionStartedRejectRef.current = null;
     sessionStartedResolveRef.current = null;
