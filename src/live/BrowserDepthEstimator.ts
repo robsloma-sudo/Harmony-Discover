@@ -17,6 +17,7 @@ export class BrowserDepthEstimator {
   private worker: Worker | null = null;
   private pending = false;
   private disposed = false;
+  private failed = false;
   private lastSubmittedAt = 0;
   private onDepth: (depth: RelativeDepthMap) => void;
   private onStatus: (status: string) => void;
@@ -33,14 +34,14 @@ export class BrowserDepthEstimator {
       this.worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
         const message = event.data;
         if (message.type === 'status') { this.onStatus('Loading on-device depth model…'); return; }
-        if (message.type === 'error') { this.pending = false; this.onStatus('Depth model error: ' + message.message); return; }
+        if (message.type === 'error') { this.pending = false; this.failed = true; this.onStatus('Depth model unavailable: ' + message.message); return; }
         if (message.type === 'depth') {
           this.pending = false;
           this.onDepth({ width: message.width, height: message.height, values: new Float32Array(message.values), relative: true, inferenceMs: message.inferenceMs, model: message.model });
           this.onStatus('Relative depth active · ' + message.inferenceMs + ' ms');
         }
       };
-      this.worker.onerror = () => { this.pending = false; this.onStatus('Depth worker failed to load.'); };
+      this.worker.onerror = () => { this.pending = false; this.failed = true; this.onStatus('Depth worker failed to load.'); };
       this.onStatus('Depth worker ready; model loads on first frame.');
     } catch {
       this.onStatus('This browser cannot start the depth worker.');
@@ -48,7 +49,7 @@ export class BrowserDepthEstimator {
   }
 
   submit(video: HTMLVideoElement) {
-    if (this.disposed || !this.worker || this.pending || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (this.disposed || this.failed || !this.worker || this.pending || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     const now = Date.now();
     if (now - this.lastSubmittedAt < 1600) return;
     this.lastSubmittedAt = now;
