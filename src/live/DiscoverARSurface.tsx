@@ -37,10 +37,12 @@ if (Platform.OS === 'ios') {
 function WebLiveCamera(props: NativeProps) {
   const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError };
 
   useEffect(() => {
     if (!active) {
-      onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'camera_paused' } });
+      callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'camera_paused' } });
       return;
     }
 
@@ -51,8 +53,8 @@ function WebLiveCamera(props: NativeProps) {
     const fail = (error: unknown) => {
       if (disposed) return;
       const message = error instanceof Error ? error.message : String(error || 'Camera could not start');
-      onARError?.({ nativeEvent: { message } });
-      onTrackingUpdate?.({ nativeEvent: { state: 'not_available', reason: message } });
+      callbacksRef.current.onARError?.({ nativeEvent: { message } });
+      callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'not_available', reason: message } });
     };
 
     const start = async () => {
@@ -64,7 +66,7 @@ function WebLiveCamera(props: NativeProps) {
           throw new Error('This browser does not provide camera access. Update Chrome or open the site in Safari.');
         }
 
-        onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'requesting_browser_camera' } });
+        callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'requesting_browser_camera' } });
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -91,8 +93,8 @@ function WebLiveCamera(props: NativeProps) {
           if (disposed) return;
           const current = videoRef.current;
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
-            onTrackingUpdate?.({ nativeEvent: { state: 'normal', reason: 'browser_video_frames_verified' } });
-            props.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
+            callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'normal', reason: 'browser_video_frames_verified' } });
+            callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
@@ -115,7 +117,7 @@ function WebLiveCamera(props: NativeProps) {
         video.srcObject = null;
       }
     };
-  }, [active, onTrackingUpdate, onARError]);
+  }, [active]);
 
   return (
     <View style={style}>
