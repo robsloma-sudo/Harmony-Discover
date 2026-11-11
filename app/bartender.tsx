@@ -135,6 +135,7 @@ export default function BartenderScreen() {
       const ready = () => { window.clearTimeout(timeout); resolve(); };
       dc.onopen = ready;
       dc.onerror = () => { window.clearTimeout(timeout); reject(new Error('Realtime data channel failed.')); };
+      dc.onclose = () => { window.clearTimeout(timeout); reject(new Error('Realtime data channel closed before it was ready.')); };
       if (dc.readyState === 'open') ready();
     });
     await new Promise<void>((resolve, reject) => {
