@@ -1,4 +1,4 @@
-# Main integration audit — 11 November 2026
+# Harmony Discover main integration audit — 11 November 2026
 
 ## Scope and safety
 - Repository: `robsloma-sudo/Harmony-Discover`
@@ -8,44 +8,31 @@
 - Original Harmony production Supabase project `lqjtwabzmgjcufftuqvu` remains read-only and untouched.
 - No Netlify production publish was performed.
 
-## Source import
-The integration branch was created directly from main commit `3501cc26997171aa053e2bb984ec8adb7ab5a643` and imports the complete source snapshot from `marty-boston-security-hardening-2026-11-10` at `188c28ef9ca022b3f6e5d8e8e13e83a7a0c0da01`.
+## Source import and CI
+- Imported application tree contains 157 files; PR #6 currently reports 157 changed files.
+- Includes Expo app, service/auth/voice modules, Discover API, Supabase functions and migrations, tests, build scripts, and deployment documentation.
+- Workflow correction: PR validation now runs when targeting `main`; pushes to the integration branch also trigger validation.
+- Latest validated head: `4e04f417a537f03fa1bf8866167e30c35d631a3d`.
+- GitHub Actions run `43043761818` completed successfully. Dependency install, TypeScript, Edge API bundle build, Deno function checks, Deno permission test, full Vitest suite, Expo web export, and artifact packaging all passed.
+- Pull-request-triggered validation also completed successfully.
+- Artifact: `harmony-discover-web-preview`, 662,448 bytes, SHA-256 `970350a65fdb473f6618188178579dc87bec50f7f1d1bc683368b072233f72c9`, expires 18 November 2026.
+- This is a CI build artifact, not a Netlify deployment or runtime test.
 
-The imported tree contains 157 files, including:
-- Expo Router application under `app/`
-- service/auth/voice modules under `src/`
-- Discover API implementation under `apps/`
-- Supabase Edge Functions and migrations
-- tests, CI workflow, build scripts, deployment runbook and architecture docs
-
-PR #6 reports 156 changed files, 23,749 additions, zero deletions after integration corrections. The branch is one commit ahead of main in ancestry after the source snapshot import (additional commits on the branch hold workflow and migration-name corrections). Main itself has not been changed.
-
-## CI trigger correction
-The imported GitHub Actions workflow originally ran pull-request validation only when the target branch was `discover-source-import-2026-11-10`. This meant PR #6 targeting `main` received no validation run.
-
-The workflow was corrected on the integration branch to:
-- run on pushes to the integration branch;
-- run on pull requests targeting either `discover-source-import-2026-11-10` or `main`;
-- preserve the existing validation steps: npm ci, TypeScript, Edge Function bundle build, Deno checks, unit tests, Expo web export, and artifact packaging.
-
-Workflow correction commit: `e53687386808d99a120673bbd2803db323f647ae`.
+## Feature-branch reconciliation
+The repository contains older feature branches for Atlas location flow, dock alignment, navigation, and venue Atlas foundation. Key-file comparison found:
+- `app/nearby.tsx` on integration is byte-identical to the Atlas location-flow branch and Marty source branch.
+- `app/bartender.tsx` on integration is byte-identical to the Marty source branch and newer than the older dock/navigation/venue branch snapshots.
+- `src/services/supabase.ts` on integration contains a later DEV-only fallback bootstrap than the older feature-branch snapshots.
+- The imported tree therefore contains the later versions for these checked files. This was a targeted comparison, not a complete proof that every feature-branch change is represented.
+- PRs #2–#5 are closed as merged into the development lineage. PR #1 remains open/draft. PR #6 is the clean import into `main`.
 
 ## Migration filename reconciliation
-The DEV migration ledger confirms the least-privilege migration is applied as version `20261111042025`, name `discover_venue_least_privilege_grants`.
-
-The imported source initially named this file `20261111042100_discover_venue_least_privilege_grants.sql`. This was corrected on the integration branch to the exact ledger-aligned filename:
+The DEV migration ledger confirms the least-privilege migration as version `20261111042025`, name `discover_venue_least_privilege_grants`. The source file is present under the ledger-aligned filename:
 `supabase/migrations/20261111042025_discover_venue_least_privilege_grants.sql`.
+No migration was re-applied during this audit.
 
-The old filename was removed. No migration was re-applied. The DEV ledger remains authoritative.
-
-## CI status at time of writing
-- The main-integration validation workflow was successfully triggered after correcting the workflow's PR target filter.
-- A second run for the updated integration head was queued.
-- Do not mark CI green until the latest head's full run completes, including Expo web export and artifact packaging.
-- Earlier source branch CI green runs do not substitute for validation of the integration branch head.
-
-## Known migration reproducibility gap
-The repository still does not contain authoritative SQL sources for historical migrations already present in the DEV ledger:
+## Reproducibility gap: missing migration source files
+The repository does not contain authoritative SQL sources for several migrations recorded as applied in Discover DEV. Previously identified missing sources include:
 - `0004_learning_consent_integrity`
 - `0005_observation_notice_and_retention`
 - `0006_advisor_fixes`
@@ -55,23 +42,33 @@ The repository still does not contain authoritative SQL sources for historical m
 - `0011_pg_net_out_of_public`
 - `0012_menu_reading`
 
-Do not invent historical migrations or rename unrelated SQL to fill these gaps. A fresh Supabase environment cannot yet be bootstrapped reproducibly from the checked-in migration directory alone. Required follow-up:
-1. recover exact original migration SQL from a trusted source/backup; or
-2. create a separately labeled catalog-derived baseline snapshot from DEV and document its provenance and limitations.
+A further gap identified in this audit: the DEV migration ledger includes `discover_venue_atlas_directory`, but its corresponding migration SQL is not in the imported source tree. The repository does contain `src/services/discoverVenueApi.ts` and Nearby UI code that depend on the venue directory. The venue least-privilege migration is not a substitute for the missing directory schema migration.
 
-The migration ledger includes these historical versions, but ledger presence is not equivalent to source-file recovery.
+Do not invent or replay replacement historical migrations against the existing DEV database. Recover the original SQL from trusted source/history if possible. Otherwise create a catalog-derived, clearly labeled baseline/recovery script after inspecting actual DEV tables, columns, indexes, grants, RLS policies, functions, and dependencies. Validate it on a brand-new isolated scratch project before calling the setup reproducible.
+
+## Runtime and deployment blockers
+- CI success proves source validation and test/build stages passed; it does not prove live API configuration or successful menu scanning.
+- Discover DEV Edge Functions have not been redeployed with the latest API/menu-reader source.
+- Menu-reader source is reconstructed from deployed v3 and must be compared against the deployed artifact before replacement.
+- Required server-side function secret names and exact browser origin still need verification in Discover DEV. Never paste secret values into chat.
+- Supabase's built-in environment-variable reference list is not proof that custom secrets have been saved. Verify actual entries under Custom secrets.
+- Netlify's `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are client build variables; they are distinct from server-side Edge Function secrets.
+- Do not deploy frontend before backend functions are ready and verified.
+- No end-to-end anonymous scan, authenticated observation read, menu extraction, or Boston voice audition has been completed.
 
 ## Release posture
 - PR #6 remains draft and unmerged.
-- PR #1 remains open and draft; it was not merged or closed.
-- Supabase DEV functions already deployed in the isolated DEV project are not redeployed by this GitHub import.
-- No production database writes, migrations, function deployments, Netlify publishing, or production credential retrieval occurred.
-- The Discover frontend still requires a verified deploy preview and successful end-to-end scan before it can be considered operational.
+- PR #1 remains open and draft.
+- No production database writes, migrations, Edge Function deployments, Netlify publishing, or production credential retrieval occurred.
+- Original Harmony production remains read-only.
+- No real observation or contribution data has been created in DEV.
 
 ## Next acceptance gates
-1. Latest PR #6 CI run fully green.
-2. Review branch/PR changed files and resolve migration source gap plan.
-3. Verify the actual Netlify deploy preview corresponds to the integration branch head and contains the compiled DEV Supabase configuration.
-4. Exercise anonymous sign-in, authenticated API health/observation routes, synthetic image upload, menu-reader extraction, and failure handling.
-5. Complete browser voice consent/session/audio testing separately.
-6. Keep original Harmony production read-only.
+1. Recover the missing historical migration sources or prepare and validate a catalog-derived scratch baseline.
+2. Verify actual DEV custom secret presence and exact approved browser origin.
+3. Review reconstructed menu-reader source against the deployed artifact.
+4. Deploy the reviewed backend functions to Discover DEV only.
+5. Verify health, unauthenticated 401, invalid-origin 403, anonymous session, synthetic upload, menu extraction, and failure paths.
+6. Publish a Discover-only Netlify preview only after backend readiness; confirm compiled DEV configuration.
+7. Complete browser Marty voice consent/session/audio testing separately.
+8. Obtain separate approval before merging PR #6 or changing original Harmony production.
