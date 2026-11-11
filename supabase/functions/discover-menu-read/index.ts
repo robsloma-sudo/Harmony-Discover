@@ -162,7 +162,11 @@ Deno.serve(async (req: Request) => {
       });
       rawProvider = await response.json();
     } catch { failures.push({ page, error: "vision_network_failed" }); continue; }
-    if (!response.ok) { failures.push({ page, error: "vision_provider_error", status: response.status }); continue; }
+    if (!response.ok) {
+      failures.push({ page, error: "vision_provider_error", status: response.status });
+      console.log(JSON.stringify({ evt: "menu_read_provider_error", page, status: response.status, message: clean((rawProvider as { error?: { message?: string } })?.error?.message, 200) }));
+      continue;
+    }
 
     const content = Array.isArray(rawProvider.content) ? rawProvider.content as Array<Record<string, unknown>> : [];
     const read = content.find(x => x.type === "tool_use" && x.name === "menu_items")?.input as Record<string, unknown> | undefined;
@@ -224,6 +228,10 @@ Deno.serve(async (req: Request) => {
     failures.push({ error: "observation_status_save_failed" });
     complete = false;
   }
+  // Record why a read did not complete, so stuck scans can be diagnosed from the function logs.
+  if (!complete) console.log(JSON.stringify({ evt: "menu_read_incomplete", model: MODEL, pages: assets.length, pages_read: pages, items_saved: itemsSaved,
+    failures: failures.map((f) => ({ page: f.page ?? null, error: f.error, status: f.status ?? null })),
+    mime_types: assets.map((a) => a.mime_type), bytes: assets.map((a) => a.byte_size) }));
   return reply({ ok: complete, observation_id: id, pages_read: pages, items_saved: itemsSaved,
     failures }, complete ? 200 : 207, origin);
 });
