@@ -223,6 +223,13 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let signature = state + ":" + reason
     guard signature != lastTrackingState else { return }
     lastTrackingState = signature
+    if state != "normal" {
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        self.rectangleOverlay.path = nil
+        self.onVisualCandidates(["count": 0, "candidates": []])
+      }
+    }
     onTrackingUpdate(["state": state, "reason": reason])
   }
 
