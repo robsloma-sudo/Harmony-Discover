@@ -8,6 +8,7 @@ import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
+import { LiveInventoryPanel } from './live-inventory';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -57,7 +58,7 @@ export default function Home() {
 
   return (
     <View style={s.root}>
-      {permission.granted ? (
+      {permission.granted && activePanel !== 'inventory' ? (
         <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="back" flash={flashEnabled ? "on" : "off"} />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.permissionFallback]}>
@@ -92,7 +93,8 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
-      {activePanel && <>
+      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
+      {activePanel && activePanel !== 'inventory' && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:31,left:12,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:'72%',padding:16,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
           <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
@@ -116,7 +118,7 @@ export default function Home() {
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('privacy');}}><Ionicons name="shield-checkmark-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Measure & contribution permissions</Text><Text style={s.menuDesc}>Optional research and measurement sharing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <View style={{height:1,backgroundColor:C.line,marginVertical:8}}/>
           <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.4,marginBottom:4}}>ADVANCED SCANNERS</Text>
-          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live visual regions · bottle recognition not active</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('lidar');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
         </View>
       </>}
