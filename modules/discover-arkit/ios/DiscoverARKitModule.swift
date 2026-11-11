@@ -67,7 +67,6 @@ public class DiscoverARKitModule: Module {
 /// bottle detection or draw fabricated object contours. Those require a
 /// separately validated vision/geometry pipeline.
 public final class DiscoverARView: ExpoView, ARSessionDelegate {
-  private let sceneView = ARSCNView(frame: .zero)
   private var isActive = false
   private var lastTrackingState = ""
 
