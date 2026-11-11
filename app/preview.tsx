@@ -123,7 +123,7 @@ export default function Preview() {
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable style={[styles.secondary, { flex: 1 }]} onPress={() => setEditingId(item.id)}><Text style={styles.secondaryText}>Edit transcription</Text></Pressable>
-            <Pressable style={[styles.secondary, { flex: 1 }]} onPress={() => router.push({ pathname: '/journey', params: { itemId: item.id } })}><Text style={styles.secondaryText}>Explore item</Text></Pressable>
+            <Pressable style={[styles.secondary, { flex: 1 }]} onPress={() => router.push({ pathname: '/journey', params: { itemId: item.id, source: 'discover', entityType: 'menu_item', title: item.name, category: item.category, section: item.section || '', description: item.description || '', price: item.price || '' } })}><Text style={styles.secondaryText}>Explore item</Text></Pressable>
           </View>
         </>}
       </View>)}
@@ -144,7 +144,7 @@ export default function Preview() {
       <View style={{ marginTop: 18, padding: 14, borderWidth: 1, borderColor: '#66563D', borderRadius: 12, gap: 10 }}>
         <Text style={styles.eyebrow}>OPTIONAL · SEPARATE PERMISSION</Text>
         <Text style={styles.itemTitle}>Contribute this menu to Harmony research?</Text>
-        <Text style={styles.categoryDesc}>Only the extracted menu details shown above (item names, descriptions, prices, your confirmed venue name and scan date) may be sent to a private review queue for possible inclusion in Harmony's beverage knowledge base. A person must review them. This does not publish the menu automatically.</Text>
+        <Text style={styles.categoryDesc}>Only the extracted menu details shown above (item names, descriptions, prices, your confirmed venue name and scan date) may be sent to a private Harmony review queue. A person must review them before any approved information can become canonical Harmony knowledge or appear in Harmony Journeys. This does not publish the menu or update either application automatically.</Text>
         <Text style={styles.categoryDesc}>Your menu photos, personal conversations, private memories and account details are not included in this contribution. The scan's venue identity, menu sections, item categories, printed details, and corrections you saved may be included. This choice is separate from permission to process the photos for your scan.</Text>
         {contributionGranted ? <>
           <Text style={{ color: '#B9D6C0', fontSize: 13, fontWeight: '700' }}>Contribution permission is active for this scan.</Text>
