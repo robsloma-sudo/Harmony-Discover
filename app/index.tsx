@@ -80,7 +80,7 @@ export default function Home() {
 
   return (
     <View style={s.root}>
-      {permission.granted && activePanel !== 'inventory' ? (
+      {permission.granted ? (
         <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="back" flash={flashEnabled ? "on" : "off"} />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.permissionFallback]}>
