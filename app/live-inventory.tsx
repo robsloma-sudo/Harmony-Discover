@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { router } from 'expo-router';
 import { useCameraPermissions } from 'expo-camera';
 import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
@@ -93,7 +92,7 @@ export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}){
      </View>}
  </View>;
  return <View style={s.root}>
-  <View style={s.topbar}><Pressable onPress={()=>{setActive(false);if(onClose)onClose();else router.back();}}><Text style={s.back}>‹ BACK</Text></Pressable><View style={s.brand}><Text style={s.brandTop}>HARMONY</Text><Text style={s.brandSub}>DISCOVER INTELLIGENCE</Text></View><Text style={s.devTag}>DEV</Text></View>
+  <View style={s.topbar}><Pressable onPress={()=>{setActive(false);onClose?.();}}><Text style={s.back}>‹ BACK</Text></Pressable><View style={s.brand}><Text style={s.brandTop}>HARMONY</Text><Text style={s.brandSub}>DISCOVER INTELLIGENCE</Text></View><Text style={s.devTag}>DEV</Text></View>
   <View style={[s.content,wide?s.wideContent:null]}>{wide?<>{infoPanel}{camera}</>:<>{camera}{infoPanel}</>}</View>
  </View>;
 }
