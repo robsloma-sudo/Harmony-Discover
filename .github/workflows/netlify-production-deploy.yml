@@ -1,0 +1,44 @@
+name: Deploy Harmony Discover to production Netlify site
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harmony-discover-netlify-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NETLIFY_SITE_ID: 3c50b789-a7f5-4ed4-806e-e5e455924646
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+    steps:
+      - name: Check out production source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify Netlify deployment credential
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error::Missing GitHub Actions secret NETLIFY_AUTH_TOKEN. Add the Netlify personal access token in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli
+
+      - name: Build and deploy to the explicitly selected Netlify site
+        run: netlify deploy --build --prod --dir=dist --message "Harmony Discover main ${GITHUB_SHA}"
