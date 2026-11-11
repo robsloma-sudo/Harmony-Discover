@@ -97,7 +97,7 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
  function openJourney(b:BottleRead){router.push({pathname:'/journey',params:{source:'discover',entityType:'product',title:nameOf(b),brand:b.match?.brand||b.brand,expression:b.product,category:CATEGORY[b.category]||b.category,proof:b.proof,size:b.size}});}
  async function save(){
   if(!tally.length||saving)return;setSaving(true);setNote('');
-  try{const result=await saveBottleSightings(session,venue.trim(),tally);setNote('Saved '+result.saved+' bottle'+(result.saved===1?'':'s')+' privately to Discover. Not published to Harmony.');setReview(false);setRemoved(old=>({...old,...Object.fromEntries(tally.map(b=>[keyOf(b),true]))}));}
+  try{const result=await saveBottleSightings(session,venue.trim(),tally);setNote('Saved '+result.saved+' bottle'+(result.saved===1?'':'s')+' privately to Discover · '+result.matched+' catalog link'+(result.matched===1?'':'s')+'. Not published to Harmony.');setReview(false);setRemoved(old=>({...old,...Object.fromEntries(tally.map(b=>[keyOf(b),true]))}));}
   catch(error){setNote(bottleErrorMessage(error));}finally{setSaving(false);}
  }
  function keepMenu(){if(!menuPages.length)return;addPages(uris,source);router.push('/preview');}
@@ -119,7 +119,7 @@ export default function LiveScanner({photos,onClose,source='camera'}:{photos:str
   </>}
   {!!note&&<Text style={s.note}>{note}</Text>}
   <View style={s.footer}><Text style={s.tally}>{tally.length+' BOTTLES · '+all.filter(b=>b.state==='unsure').length+' UNSURE · '+menuItems+' MENU ITEMS'}</Text>
-   <View style={s.actions}>{menuPages.length>0&&<Pressable onPress={keepMenu} style={s.textAction}><Text style={s.actionText}>KEEP MENU</Text></Pressable>}{reviewList.length>0&&<Pressable onPress={()=>setReview(true)} style={s.saveButton}><Text style={s.saveText}>REVIEW {reviewList.length} BOTTLES</Text></Pressable>}</View>
+   <View style={s.actions}>{menuPages.length>0&&<Pressable onPress={keepMenu} style={s.textAction}><Text style={s.actionText}>REVIEW MENU PAGES</Text></Pressable>}{reviewList.length>0&&<Pressable onPress={()=>setReview(true)} style={s.saveButton}><Text style={s.saveText}>REVIEW {reviewList.length} BOTTLES</Text></Pressable>}</View>
   </View>
   {review&&<View style={s.reviewOverlay}><View style={s.reviewHeader}><Text style={s.reviewTitle}>BOTTLES READ</Text><Pressable onPress={()=>setReview(false)}><Text style={s.back}>BACK</Text></Pressable></View>
    <Text style={s.reviewNotice}>These sightings are private to your Discover account. They are not published to Harmony Core or Harmony Journeys.</Text>
