@@ -29,6 +29,23 @@ export default function BartenderScreen() {
   const sessionStartedRef = useRef(false);
   const sessionStartedResolveRef = useRef<(() => void) | null>(null);
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
+  const transportClosingRef = useRef(false);
+
+  const failTransport = useCallback((dc: RTCDataChannel, pc: RTCPeerConnection, message: string) => {
+    if (dcRef.current !== dc || pcRef.current !== pc || transportClosingRef.current) return;
+    transportClosingRef.current = true;
+    isTalkingRef.current = false;
+    streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
+    setStatus('OFFLINE');
+    setError(message);
+    const coordinator = coordinatorRef.current;
+    coordinatorRef.current = null;
+    void (async () => {
+      if (coordinator) await coordinator.stop();
+      else await closeTransport();
+    })();
+  }, [closeTransport]);
 
   useEffect(() => {
     let alive = true;
@@ -48,6 +65,7 @@ export default function BartenderScreen() {
   }
 
   const closeTransport = useCallback(async () => {
+    transportClosingRef.current = true;
     isTalkingRef.current = false;
     // Stop capture immediately, then close the WebRTC transport.
     streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
@@ -62,6 +80,7 @@ export default function BartenderScreen() {
   }, []);
 
   async function connectTransport(grant: VoiceSessionGrant) {
+    transportClosingRef.current = false;
     sessionStartedRef.current = false;
     const stream = streamRef.current;
     if (!stream) throw new Error('Microphone permission is missing.');
@@ -87,7 +106,7 @@ export default function BartenderScreen() {
         if (data.type === 'error') {
           sessionStartedRejectRef.current?.(new Error('Realtime session reported an error.'));
           sessionStartedRejectRef.current = null;
-          setError('Realtime session reported an error.');
+          failTransport(dc, pc, 'Marty’s voice connection encountered an error. Start a new session.');
         }
       } catch { /* Ignore non-JSON data-channel messages. */ }
     };
@@ -108,12 +127,22 @@ export default function BartenderScreen() {
     if (!response.ok) throw new Error('Realtime connection could not be established.');
     await pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
     await new Promise<void>((resolve, reject) => {
+      let opened = dc.readyState === 'open';
       const timeout = window.setTimeout(() => reject(new Error('Realtime data channel timed out.')), 12000);
-      const ready = () => { window.clearTimeout(timeout); resolve(); };
+      const ready = () => { opened = true; window.clearTimeout(timeout); resolve(); };
       dc.onopen = ready;
-      dc.onerror = () => { window.clearTimeout(timeout); reject(new Error('Realtime data channel failed.')); };
-      dc.onclose = () => { window.clearTimeout(timeout); reject(new Error('Realtime data channel closed before it was ready.')); };
+      dc.onerror = () => {
+        window.clearTimeout(timeout);
+        if (opened) failTransport(dc, pc, 'Marty’s voice connection was interrupted. Start a new session.');
+        else reject(new Error('Realtime data channel failed.'));
+      };
+      dc.onclose = () => {
+        window.clearTimeout(timeout);
+        if (opened) failTransport(dc, pc, 'Marty’s voice connection closed. Start a new session.');
+        else reject(new Error('Realtime data channel closed before it was ready.'));
+      };
       if (dc.readyState === 'open') ready();
+      else if (dc.readyState === 'closed') { window.clearTimeout(timeout); reject(new Error('Realtime data channel closed before it was ready.')); }
     });
     await new Promise<void>((resolve, reject) => {
       if (sessionStartedRef.current) { resolve(); return; }
@@ -134,6 +163,11 @@ export default function BartenderScreen() {
       };
       if (sessionStartedRef.current) sessionStartedResolveRef.current();
     });
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        failTransport(dc, pc, 'Marty’s network connection failed. Start a new session.');
+      }
+    };
     addLine('system', 'Marty is at the bar. Hold the button when you want to speak.');
   }
 
