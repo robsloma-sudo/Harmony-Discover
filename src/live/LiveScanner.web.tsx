@@ -126,7 +126,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
   );
 }
 
-export default function LiveScanner({ photos, onClose }: { photos: string[]; onClose: () => void }) {
+export default function LiveScanner({ photos, onClose, source = 'camera' }: { photos: string[]; onClose: () => void; source?: 'camera' | 'gallery' }) {
   const uris = useMemo(() => photos.slice(0, MAX_PHOTOS), [photos]);
   const many = uris.length > 1;
   const { addPages } = useScan();
@@ -171,7 +171,7 @@ export default function LiveScanner({ photos, onClose }: { photos: string[]; onC
   const left = facts.filter((_, i) => i % 2 === 0), right = facts.filter((_, i) => i % 2 === 1);
 
   /** Hands the menu photos to the existing menu flow: review, corrections and consent all happen there. */
-  function keepMenu() { if (!menuPages.length) return; addPages(menuPages, 'camera'); router.push('/preview'); }
+  function keepMenu() { if (!menuPages.length) return; addPages(menuPages, source); router.push('/preview'); }
 
   async function save() {
     if (!tally.length || saving) return;
