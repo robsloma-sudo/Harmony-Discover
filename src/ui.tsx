@@ -1,11 +1,41 @@
-import { View, ScrollView, StyleSheet } from 'react-native';
+import { View, ScrollView, StyleSheet, Text, Pressable } from 'react-native';
 import type { ReactNode } from 'react';
+import { router, usePathname } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export const colors = { bg:'#0D1117', panel:'#171E27', border:'#2A3542', text:'#F4F1E9', muted:'#A6B0BA', accent:'#D7B77A' };
+const tabs = [
+  { path:'/', label:'Discover', icon:'camera-outline' as const, activeIcon:'camera' as const },
+  { path:'/nearby', label:'Nearby', icon:'compass-outline' as const, activeIcon:'compass' as const },
+  { path:'/collection', label:'Library', icon:'bookmark-outline' as const, activeIcon:'bookmark' as const },
+  { path:'/taste', label:'My taste', icon:'wine-outline' as const, activeIcon:'wine' as const },
+  { path:'/settings', label:'Settings', icon:'settings-outline' as const, activeIcon:'settings' as const },
+];
 export function Screen({ children }: { children: ReactNode }) {
-  return <View style={styles.screen}><ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></View>;
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={styles.screen}>
+      <ScrollView style={styles.pageScroll} contentContainerStyle={[styles.content, { paddingBottom: 112 + Math.max(insets.bottom, 8) }]} keyboardShouldPersistTaps="handled">
+        {children}
+      </ScrollView>
+      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) + 5 }]}>
+        {tabs.map(tab => {
+          const active = tab.path === '/' ? pathname === '/' : pathname === tab.path || pathname.startsWith(tab.path + '/');
+          return <Pressable key={tab.path} accessibilityRole="button" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => { if (!active) router.replace(tab.path as never); }} style={styles.tab}>
+            <Ionicons name={active ? tab.activeIcon : tab.icon} size={19} color={active ? colors.accent : colors.muted} />
+            <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{tab.label}</Text>
+          </Pressable>;
+        })}
+      </View>
+    </View>
+  );
 }
 export const styles = StyleSheet.create({
-  screen:{flex:1,backgroundColor:colors.bg}, content:{padding:24,paddingTop:64,paddingBottom:40},
+  screen:{flex:1,backgroundColor:colors.bg}, pageScroll:{flex:1}, content:{padding:24,paddingTop:64,paddingBottom:112},
+  tabBar:{position:'absolute',left:12,right:12,bottom:0,minHeight:66,flexDirection:'row',alignItems:'center',justifyContent:'space-around',paddingTop:10,paddingHorizontal:5,backgroundColor:'#111820',borderWidth:1,borderColor:'#34404C',borderRadius:18,shadowColor:'#000',shadowOpacity:0.3,shadowRadius:14,shadowOffset:{width:0,height:-3},elevation:14},
+  tab:{flex:1,minWidth:0,alignItems:'center',justifyContent:'center',gap:4,paddingVertical:3}, tabLabel:{color:colors.muted,fontSize:9,fontWeight:'700',letterSpacing:0.2}, tabLabelActive:{color:colors.accent},
   brand:{color:colors.text,fontSize:28,fontWeight:'800',letterSpacing:5}, eyebrow:{color:colors.accent,fontSize:11,fontWeight:'700',letterSpacing:2,marginTop:8},
   hero:{color:colors.text,fontSize:40,fontWeight:'700',lineHeight:46,marginTop:22}, title:{color:colors.text,fontSize:32,fontWeight:'700',marginTop:18},
   sub:{color:colors.muted,fontSize:15,lineHeight:23,marginTop:10,marginBottom:24}, primary:{backgroundColor:colors.accent,padding:20,borderRadius:18,marginTop:12},
