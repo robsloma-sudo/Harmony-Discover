@@ -1,8 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+// DEV-only bootstrap fallback for the isolated Harmony Discover preview.
+// Netlify Deploy Preview builds have repeatedly emitted an empty Expo public
+// environment despite the variables being configured in the Deploy Preview
+// context. Keep these values strictly scoped to the Discover DEV project;
+// production Harmony credentials and project refs must never be substituted.
+const url =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ||
+  'https://lqqmwqrffelgnbngrkep.supabase.co';
+const publishableKey =
+  process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  'sb_publishable_2BiTdk6-B7tdajwY9rd89w_ZI0FacHn';
 
 export const supabaseConfigured = Boolean(url && publishableKey);
 export const DISCOVER_API_URL = url ? `${url}/functions/v1/discover-api` : '';
