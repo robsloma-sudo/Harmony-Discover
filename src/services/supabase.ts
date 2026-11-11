@@ -70,3 +70,29 @@ export const supabase = createClient(
     },
   }
 );
+
+
+/**
+ * Public Discover scans use a Supabase anonymous user behind the scenes.
+ * This gives each visitor a private auth.uid() for RLS and upload ownership,
+ * without asking them to create an account or sign in.
+ */
+export async function ensureDiscoverSession() {
+  if (!supabaseConfigured) {
+    throw new Error('Discover is not configured. The Supabase URL and publishable key are missing.');
+  }
+
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  if (data.session) return data.session;
+  if (sessionError) throw new Error('Could not initialize a private Discover session. Please try again.');
+
+  const { data: anonymous, error } = await supabase.auth.signInAnonymously();
+  if (error) {
+    if (/anonymous.*disabled|anonymous sign.?ins.*disabled/i.test(error.message)) {
+      throw new Error('Public scanning is not enabled yet. Anonymous sign-ins must be enabled in the Discover Supabase project.');
+    }
+    throw new Error(`Could not start a private Discover session: ${error.message}`);
+  }
+  if (!anonymous.session) throw new Error('Discover could not establish a private session. Please try again.');
+  return anonymous.session;
+}
