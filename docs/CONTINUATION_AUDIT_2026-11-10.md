@@ -113,3 +113,27 @@ Both the grant RPC and staging routine now call the same helper. The staging evi
 ### Remaining acceptance test limitation
 
 No authenticated synthetic observation fixture was inserted. The next test should create disposable test identities and observations in a rollback-only transaction or isolated DEV fixture, exercise grant → stage → withdrawal → replay, then verify every created row is removed or the isolated fixture is reset. Do not use real user data as a test fixture.
+
+
+## Rollback-only synthetic integration test — passed
+
+A disposable fixture was created inside a single database transaction and rolled back:
+- synthetic Auth user;
+- ready-for-review menu observation with processing consent and 0.97 OCR confidence;
+- one menu item;
+- observation-specific contribution grant;
+- staged candidate and blocked sync ledger;
+- idempotent second staging call returned zero;
+- withdrawal changed the unpromoted candidate to `withdrawn`, kept the ledger `blocked`, and prevented restaging.
+
+The SQL test raised an exception on any unexpected result and completed without error. A subsequent live count check confirmed zero observations, grants, grant events, staged candidates, review events or ledger rows. No real user data was used.
+
+## Marty audio lifecycle hardening — source branch
+
+Commit `a672a40c207c6572629f96f46530ec352c4c8eb7` updates `app/bartender.tsx`:
+- screen blur/unmount closes the coordinator and all audio resources;
+- browser `visibilitychange` to hidden stops the active voice session and requires a fresh start on return;
+- hold-to-talk tracks whether a press actually began, preventing a stray release event from committing an empty audio turn;
+- stop, interrupt and transport cleanup reset the press state.
+
+This is source-only; the Netlify preview has not been published. CI is running for this commit. Previous full validation at `59cc0ebb132d4cde6dd1bb6921897a35941cd97a` passed TypeScript validation, Edge Function checks, all unit tests, and web export.
