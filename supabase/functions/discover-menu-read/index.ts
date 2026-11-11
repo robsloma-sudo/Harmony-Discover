@@ -127,7 +127,7 @@ Deno.serve(async (req: Request) => {
     return reply({ error: "page_limit_exceeded", max_pages: 12 }, 413, origin);
   }
 
-  let pages = 0, itemsSaved = 0, skipped = 0;
+  let pages = 0, itemsSaved = 0;
   const failures: Array<Record<string, unknown>> = [];
   for (const [page, asset] of assets.entries()) {
     if (asset.byte_size > 15 * 1024 * 1024) { failures.push({ page, error: "image_too_large" }); continue; }
@@ -225,5 +225,5 @@ Deno.serve(async (req: Request) => {
     complete = false;
   }
   return reply({ ok: complete, observation_id: id, pages_read: pages, items_saved: itemsSaved,
-    pages_skipped_as_already_read: skipped, failures }, complete ? 200 : 207, origin);
+    failures }, complete ? 200 : 207, origin);
 });
