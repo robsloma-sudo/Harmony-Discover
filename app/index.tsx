@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
+import NearbyPanel from '../src/home-panels/NearbyPanel';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -99,7 +100,7 @@ export default function Home() {
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
           <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='nearby'?'Discover places around you':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='inventory'?'Live bottle and inventory recognition':'Depth and spatial scanning'}</Text>
-          {activePanel==='privacy' ? <PrivacyPanel/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='nearby'?'Nearby Atlas is being brought into this camera panel. Location is requested only when you choose to use nearby discovery.':activePanel==='marty'?'Marty’s live voice controls are being integrated into this panel. Voice remains opt-in and requires your consent.':activePanel==='inventory'?'The live camera scanner is available in DEV, but its recognition pipeline is still under development. Camera preview alone does not identify bottles or SKUs.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='nearby'?'Nearby Atlas is being brought into this camera panel. Location is requested only when you choose to use nearby discovery.':activePanel==='marty'?'Marty’s live voice controls are being integrated into this panel. Voice remains opt-in and requires your consent.':activePanel==='inventory'?'The live camera scanner is available in DEV, but its recognition pipeline is still under development. Camera preview alone does not identify bottles or SKUs.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
         </View>
       </>}
       {settingsOpen && <>
