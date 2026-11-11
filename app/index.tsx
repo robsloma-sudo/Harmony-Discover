@@ -22,6 +22,8 @@ export default function Home() {
   const [cameraMessage, setCameraMessage] = useState('');
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
+  const [scanMode, setScanMode] = useState<'smart'|'menu'>('smart');
+  const { addPages } = useScan();
 
   const capture = async () => {
     if (capturing) return;
@@ -34,18 +36,22 @@ export default function Home() {
       setCapturing(true);
       setCameraMessage('');
       const photo = await camera.current?.takePictureAsync({ quality: 0.85 });
-      if (photo?.uri) { setScanSource('camera'); setScanPhotos([photo.uri]); }
-      else setCameraMessage('The camera did not return an image. Try again.');
+      if (photo?.uri) {
+        if (scanMode === 'menu') { addPages([photo.uri], 'camera'); router.push('/preview'); }
+        else { setScanSource('camera'); setScanPhotos([photo.uri]); }
+      } else setCameraMessage('The camera did not return an image. Try again.');
     } catch { setCameraMessage('Could not capture this image. Please try again.'); }
     finally { setCapturing(false); }
   };
 
   const openGallery = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 6, quality: 0.85 });
+      const limit = scanMode === 'menu' ? 12 : 6;
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: limit, quality: 0.85 });
       if (result.canceled || !result.assets.length) return;
-      setScanSource('gallery');
-      setScanPhotos(result.assets.slice(0,6).map(a=>a.uri));
+      const uris = result.assets.slice(0, limit).map(a => a.uri);
+      if (scanMode === 'menu') { addPages(uris, 'gallery'); router.push('/preview'); }
+      else { setScanSource('gallery'); setScanPhotos(uris); }
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
   };
 
@@ -72,9 +78,19 @@ export default function Home() {
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
         <View style={s.topActions}><View style={s.livePill}><View style={s.liveDot}/><Text style={s.liveText}>VIEWFINDER</Text></View><Pressable style={s.profileButton} onPress={() => router.push('/collection')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
       </View>
-      <View style={[s.centerHint, { top: Math.max(insets.top, 24) + 112, bottom: Math.max(insets.bottom, 12) + (screenHeight < 750 ? 218 : 238) }]} pointerEvents="none">
+      <View style={[s.modeSwitch, { top: Math.max(insets.top, 24) + 76 }]}>
+        <Pressable accessibilityRole="button" accessibilityState={{ selected: scanMode === 'smart' }} onPress={() => setScanMode('smart')} style={[s.modeOption, scanMode === 'smart' && s.modeOptionActive]}>
+          <Ionicons name="scan-outline" size={13} color={scanMode === 'smart' ? '#111' : C.ivory} />
+          <Text style={[s.modeLabel, scanMode === 'smart' && s.modeLabelActive]}>SMART SCAN</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityState={{ selected: scanMode === 'menu' }} onPress={() => setScanMode('menu')} style={[s.modeOption, scanMode === 'menu' && s.modeOptionActive]}>
+          <Ionicons name="book-outline" size={13} color={scanMode === 'menu' ? '#111' : C.ivory} />
+          <Text style={[s.modeLabel, scanMode === 'menu' && s.modeLabelActive]}>MENU PAGES</Text>
+        </Pressable>
+      </View>
+      <View style={[s.centerHint, { top: Math.max(insets.top, 24) + 132, bottom: Math.max(insets.bottom, 12) + (screenHeight < 750 ? 218 : 238) }]} pointerEvents="none">
         <View style={[s.corner, s.tl]} /><View style={[s.corner, s.tr]} /><View style={[s.corner, s.bl]} /><View style={[s.corner, s.br]} />
-        <Text style={s.centerHintText}>FIND THE DRINK WORTH TALKING ABOUT</Text>
+        <Text style={s.centerHintText}>{scanMode === 'menu' ? 'CAPTURE EVERY MENU PAGE · UP TO 12' : 'BOTTLES, MENUS & BEVERAGE LABELS'}</Text>
       </View>
       <View style={[s.bottomArea, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + (isLandscape ? 5 : 7), paddingTop: isLandscape ? 6 : 8, left: isLandscape ? 22 : 10, right: isLandscape ? 22 : 10 }]}>
         <View style={s.controls}>
@@ -93,7 +109,7 @@ export default function Home() {
   );
 }
 const s = StyleSheet.create({
- root:{flex:1,backgroundColor:C.bg},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
+ root:{flex:1,backgroundColor:C.bg},modeSwitch:{position:'absolute',zIndex:5,left:26,right:26,alignSelf:'center',maxWidth:330,flexDirection:'row',gap:5,padding:4,borderRadius:24,backgroundColor:'rgba(8,10,13,0.84)',borderWidth:1,borderColor:C.line},modeOption:{flex:1,minHeight:36,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:7,borderRadius:20,paddingHorizontal:8},modeOptionActive:{backgroundColor:C.brass},modeLabel:{color:C.ivory,fontSize:9,fontWeight:'900',letterSpacing:1},modeLabelActive:{color:'#111'},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
  permissionFallback:{backgroundColor:'#090B0F',alignItems:'center',justifyContent:'center'},permissionCard:{position:'absolute',left:28,right:28,top:'35%',padding:22,borderRadius:18,backgroundColor:'rgba(9,11,14,0.92)',borderWidth:1,borderColor:C.line},permissionTitle:{color:C.ivory,fontSize:23,fontWeight:'700',marginTop:12},permissionBody:{color:C.muted,fontSize:13,lineHeight:20,marginTop:7},permissionButton:{backgroundColor:C.brass,padding:14,borderRadius:10,alignItems:'center',marginTop:18},permissionButtonText:{color:'#111',fontSize:11,fontWeight:'900',letterSpacing:1.5},
  viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
  centerHint:{position:'absolute',left:26,right:26,justifyContent:'center',alignItems:'center'},centerHintText:{color:'rgba(240,241,242,0.68)',fontSize:9,letterSpacing:2.4,fontWeight:'700'},corner:{position:'absolute',width:25,height:25,borderColor:'rgba(198,163,106,0.8)'},tl:{top:0,left:0,borderTopWidth:1,borderLeftWidth:1},tr:{top:0,right:0,borderTopWidth:1,borderRightWidth:1},bl:{bottom:0,left:0,borderBottomWidth:1,borderLeftWidth:1},br:{bottom:0,right:0,borderBottomWidth:1,borderRightWidth:1},
