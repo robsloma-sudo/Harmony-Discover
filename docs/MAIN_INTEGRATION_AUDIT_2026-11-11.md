@@ -72,3 +72,24 @@ Do not invent or replay replacement historical migrations against the existing D
 6. Publish a Discover-only Netlify preview only after backend readiness; confirm compiled DEV configuration.
 7. Complete browser Marty voice consent/session/audio testing separately.
 8. Obtain separate approval before merging PR #6 or changing original Harmony production.
+
+## Netlify publish-path audit (follow-up)
+- The repository `netlify.toml` defines build command `npm ci --no-audit --no-fund && npm run build:web` and publish directory `dist`, with SPA fallback redirect to `/index.html`.
+- The GitHub Actions workflow `.github/workflows/discover-validation.yml` runs typecheck, Edge Function validation, unit tests, and `npm run build:web`; it uploads `dist/` as the `harmony-discover-web-preview` artifact for **manual Netlify deployment**.
+- There is no Netlify CLI/API publish command, Netlify deploy action, or other publish step in that workflow.
+- Latest integration head `45cd918680aeb3a956113d25a7edb761022a2722` has successful GitHub validation run #428 (run ID `43044161414`) and run #427 (run ID `43044152979`). Artifact SHA-256: `7ee9a2daa5d0ccb3c12f58b11f04072c7ef40dcb5ef9a84d3f8526f1b3b79340`.
+- GitHub commit combined status currently has no status entries; it does not expose a successful Netlify deploy for this SHA. This is not proof that no manual deploy exists, only that no matching GitHub status was returned.
+- The Netlify site URL could not be inspected through the available authenticated Netlify connection in this session. Do not infer its deployed commit, branch, build context, or environment variables.
+- The source's `src/services/supabase.ts` has a DEV-only fallback URL and publishable key. This code is on the unmerged integration branch. It must not be deployed into the original Harmony production site. It is intended only for the isolated Discover DEV site.
+- The error `Discover API is not configured.` is thrown when the built frontend has an empty `DISCOVER_API_URL`. In the current integration source, `DISCOVER_API_URL` is derived from the Supabase URL fallback, so a live app still showing this error is likely not serving this exact source snapshot, or is serving a different bundle/configuration. This is a strong diagnostic lead, not a confirmed root cause.
+
+### Netlify verification checklist
+1. In the Netlify project for `cosmic-choux-065ee2`, open Deploys and inspect the currently published deploy's commit SHA, branch, deploy context, created/published timestamps, and deploy log.
+2. Compare its SHA with `45cd918680aeb3a956113d25a7edb761022a2722` (integration branch head). If it differs, the current live site is not built from the validated integration snapshot.
+3. Confirm the linked repository is `robsloma-sudo/Harmony-Discover`, the intended branch is `harmony-discover-main-integration-2026-11-11` for a test deploy, and the build command/publish directory match `netlify.toml`.
+4. Confirm Deploy Preview/branch deploy environment values are Discover DEV URL and publishable key only. Never add production Harmony credentials.
+5. Trigger a **non-production** Deploy Preview/branch deploy from the validated integration branch or manually deploy the CI artifact `dist/` to the isolated Discover site. Do not publish to the original Harmony site.
+6. Inspect the deployed HTML/JS bundle or browser network request and verify it calls `https://lqqmwqrffelgnbngrkep.supabase.co/functions/v1/discover-api`.
+7. Re-test the original error. If it persists, capture the browser console and Network response for the first failing request; do not change backend secrets until the request proves the problem is server-side.
+
+Netlify's deploy overview documents separate production, Deploy Preview, and branch-deploy contexts and context-specific environment variables: https://docs.netlify.com/deploy/deploy-overview/. The Deploys page retains historical deploys and identifies the source branch/commit: https://docs.netlify.com/deploy/manage-deploys/manage-deploys-overview/.
