@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
@@ -164,9 +164,15 @@ Deno.serve(async (req: Request) => {
     }).filter((b) => b.box.x1 > b.box.x0 && b.box.y1 > b.box.y0);
     const queries = list.map((b) => clean(`${b.brand} ${b.product}`, 120) || b.words.slice(0, 3).join(" "));
     const found = queries.length ? await match(queries) : [];
+    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const hit = m?.id && m.product && m.category && (m.score ?? 0) >= 0.6 ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 } : null;
+      // A fuzzy result is not an identity proof. Require the returned catalogue brand
+      // to agree with the printed brand and require a real product/SKU row.
+      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
+      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
+        ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
+        : null;
       const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
       return { ...b, match: hit, state };
     });
