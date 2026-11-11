@@ -13,9 +13,11 @@ public class DiscoverARKitModule: Module {
       var smoothedSceneDepth = false
       var meshReconstruction = false
 
-      if #available(iOS 13.4, *) {
+      if #available(iOS 14.0, *) {
         sceneDepth = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
         smoothedSceneDepth = ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth)
+      }
+      if #available(iOS 13.4, *) {
         meshReconstruction = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
       }
 
@@ -111,7 +113,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
     let configuration = ARWorldTrackingConfiguration()
     configuration.worldAlignment = .gravity
-    if #available(iOS 13.4, *) {
+    if #available(iOS 14.0, *) {
       if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
         configuration.frameSemantics.insert(.sceneDepth)
       }
