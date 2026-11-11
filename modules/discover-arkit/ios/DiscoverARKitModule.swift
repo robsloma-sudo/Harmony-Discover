@@ -71,21 +71,19 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onARReady = EventDispatcher()
   let onARError = EventDispatcher()
 
-  required init(appContext: AppContext? = nil) {
-    super.init(appContext: appContext)
-    clipsToBounds = true
-    sceneView.translatesAutoresizingMaskIntoConstraints = false
-    sceneView.automaticallyUpdatesLighting = true
-    sceneView.delegate = self
-    sceneView.session.delegate = self
-    addSubview(sceneView)
-    NSLayoutConstraint.activate([
-      sceneView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      sceneView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      sceneView.topAnchor.constraint(equalTo: topAnchor),
-      sceneView.bottomAnchor.constraint(equalTo: bottomAnchor)
-    ])
-    sceneView.backgroundColor = .black
+  private lazy var sceneView: ARSCNView = {
+    let view = ARSCNView(frame: .zero)
+    view.automaticallyUpdatesLighting = true
+    view.delegate = self
+    view.session.delegate = self
+    view.backgroundColor = .black
+    addSubview(view)
+    return view
+  }()
+
+  public override func layoutSubviews() {
+    super.layoutSubviews()
+    sceneView.frame = bounds
   }
 
   public override func didMoveToWindow() {
