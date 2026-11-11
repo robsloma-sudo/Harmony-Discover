@@ -1,5 +1,4 @@
-import { DISCOVER_API_URL } from './supabase';
-import { supabase } from './supabase';
+import { DISCOVER_API_URL, ensureDiscoverSession } from './supabase';
 import * as ImageManipulator from 'expo-image-manipulator';
 
 export type DiscoveredMenuItem = {
@@ -13,10 +12,10 @@ export type ObservationResult = {
 };
 
 async function authHeaders() {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('Sign in to process this menu.');
-  return { authorization: `Bearer ${token}`, apikey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '' };
+  // A private anonymous Supabase session is created silently when the visitor
+  // first uploads. No login screen or personal information is required.
+  const session = await ensureDiscoverSession();
+  return { authorization: `Bearer ${session.access_token}`, apikey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '' };
 }
 class DiscoverRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
