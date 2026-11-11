@@ -315,3 +315,26 @@ This is only the geometry-to-volume calculation foundation. It does not detect b
 The branch now contains `src/services/liquidInterface.ts`, which defines the future liquid-line observation contract and a conservative temporal-consensus gate. It requires multiple distinct frames, filters invalid normalized coordinates and confidence values, rejects occluded/low-confidence evidence, and marks unstable line positions ambiguous. A visible result includes the median normalized line position, mean detector confidence and source frame IDs. This module does not inspect pixels or detect a liquid line; it only evaluates observations from a future vision detector. Unit coverage is in `tests/liquid-interface.test.ts`.
 
 The volume integrator was also tightened: it validates malformed profile metadata/samples and analytically integrates the square of the linearly interpolated radius over each segment. Nominal package capacity remains distinct from modeled internal capacity; percentages are not silently clamped to 100% because a profile/package mismatch must remain visible for calibration review. These are code-level foundations, not validated camera estimates.
+
+### Implementation note — container classification evidence gate
+
+Added `src/services/containerEvidence.ts` and `tests/container-evidence.test.ts`. The gate consumes predictions from a future on-device classifier and only confirms a bottle after repeated, distinct-frame, high-confidence agreement. It can also reject a non-bottle; disagreements and insufficient evidence remain unresolved. Duplicate predictions from one frame cannot inflate evidence. This is a temporal decision contract, not an image classifier. Liquid-interface consensus now validates its thresholds and uses the conventional midpoint median for even-sized samples.
+
+### Training and validation data protocol for the live bar sweep
+
+Before selecting or training a visual model, collect an opt-in, consented validation set with ground-truth labels. Keep test data separate from training data and split by physical bottle/container identity and capture session, not by adjacent video frames, to prevent leakage.
+
+Each sample should be annotated with:
+- Physical container instance ID within the clip; frame timestamp; camera/device tier; view angle; distance; focus/motion quality; lighting/backlight; occlusion and glare.
+- Container class: bottle, glass, can, shaker, decanter, jar, carafe, bar tool, display prop, other, unknown. Include empty bottles and non-bottle lookalikes.
+- Bottle instance mask/polygon and visible body/neck/shoulder/base landmarks where visible; never annotate a generic rectangle as a bottle mask.
+- Product identity and exact package SKU/capacity only when independently verified from label, barcode or reliable reference; otherwise mark unknown.
+- Liquid interface as visible, occluded, ambiguous or not applicable. If visible, annotate a line/curve within the bottle's visible liquid window and its confidence; distinguish the true meniscus from label art, seams, glare and reflections.
+- Ground-truth remaining volume from a controlled weighing or calibrated dispensing procedure, with liquid density/temperature and tare/container identity recorded where mass is used to derive volume.
+- Bottle-family internal profile/calibration source and nominal package capacity as separate fields.
+
+Capture matrix must cover clear, dark, tinted, opaque and wrapped bottles; clear and dark liquids; 720 mL, 750 mL, 1 L and 1.5 L capacities; differing shoulder/neck profiles; low/high fill; empty bottles; glasses and other negatives; shelf crowding; adjacent identical SKUs; reflections, condensation, hands and label occlusion. Include multiple bars and camera/device tiers. Do not use a model-generated label as ground truth.
+
+Evaluation should report bottle precision/recall and false positives per shelf sweep; instance segmentation IoU; identity/SKU exact-match accuracy; duplicate-track rate; liquid-line vertical error in normalized body coordinates; volume MAE and percentage error by bottle family/fill band/liquid/lighting; abstention coverage and error among accepted estimates. A model that abstains often may be safer than one that confidently invents stock. Set operational thresholds only after a representative pilot and cost-of-error review.
+
+Raw footage is sensitive business information. Keep collection opt-in and purpose-limited, restrict access, define retention/deletion, blur faces and unrelated personal data where practical, and do not contribute scans to shared training or catalog data by default. This protocol creates no collection endpoint or storage bucket and authorizes no uploads.
