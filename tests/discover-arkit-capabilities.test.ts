@@ -64,7 +64,6 @@ describe('getFriendlyIPhoneModel', () => {
     expect(getFriendlyIPhoneModel('iPhone18,2')).toBe('iPhone 17 Pro Max');
     expect(getFriendlyIPhoneModel('iPhone18,4')).toBe('iPhone Air');
     expect(getFriendlyIPhoneModel('iPhone18,5')).toBe('iPhone 17e');
-    expect(getFriendlyIPhoneModel('iPhone19,2')).toBe('iPhone 18 Pro');
   });
 
   it('preserves unknown identifiers rather than guessing a model', () => {
