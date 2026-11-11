@@ -3,6 +3,7 @@ import { View, Text, Image, Pressable, ScrollView, ActivityIndicator, TextInput 
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
+import { getMockJourney } from '../src/services/mockJourneyApi';
 import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, confirmObservationVenue, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
 
 const reviewField = { backgroundColor: '#171B20', color: '#F2F0EA', borderWidth: 1, borderColor: '#39414A', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 } as const;
@@ -10,6 +11,7 @@ const reviewField = { backgroundColor: '#171B20', color: '#F2F0EA', borderWidth:
 export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () => void; onAddPages?: () => void; onExplore?: (itemId: string) => void }) {
   const { pages, source, clear, removePage } = useScan();
   const [processing, setProcessing] = useState(false);
+  const [journeyItemId, setJourneyItemId] = useState<string | null>(null);
   const [noticeAccepted, setNoticeAccepted] = useState(false);
   const [items, setItems] = useState<DiscoveredMenuItem[] | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -69,8 +71,18 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
     finally { setSavingId(null); }
   }
 
+  const journey = journeyItemId ? getMockJourney(journeyItemId) : null;
+
   return <Screen hideTabs={!!onClose}>
     <Text style={styles.back} onPress={() => onClose ? onClose() : router.back()}>‹  Back</Text>
+    {journey ? <>
+      <Text style={styles.back} onPress={() => setJourneyItemId(null)}>‹  Menu review</Text>
+      <Text style={styles.eyebrow}>YOUR JOURNEY · PREVIEW</Text>
+      <Text style={styles.title}>{journey.title}</Text>
+      <Text style={styles.sub}>{journey.intro}</Text>
+      {journey.sections.map((section: {heading:string;body:string;evidence:string}) => <View key={section.heading} style={styles.journeySection}><Text style={styles.sectionTitle}>{section.heading}</Text><Text style={styles.body}>{section.body}</Text><Text style={styles.evidence}>{section.evidence}</Text></View>)}
+      <Text style={styles.footnote}>This is currently demonstration content, not verified product research.</Text>
+    </> : <>
     <Text style={styles.eyebrow}>MENU SCAN</Text>
     <Text style={styles.title}>{items ? 'Review the menu.' : 'Ready to read.'}</Text>
     <Text style={styles.sub}>{items ? 'These are the words our reader found in your photos. Check names and prices before using them.' : 'Your photos stay on this device until you choose to process them.'}</Text>
@@ -123,7 +135,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable style={[styles.secondary, { flex: 1 }]} onPress={() => setEditingId(item.id)}><Text style={styles.secondaryText}>Edit transcription</Text></Pressable>
-            <Pressable style={[styles.secondary, { flex: 1 }]} onPress={() => onExplore ? onExplore(item.id) : router.push({ pathname: '/journey', params: { itemId: item.id } })}><Text style={styles.secondaryText}>Explore item</Text></Pressable>
+            <Pressable style={[styles.secondary, { flex: 1 }]} onPress={() => onExplore ? onExplore(item.id) : setJourneyItemId(item.id)}><Text style={styles.secondaryText}>Explore item</Text></Pressable>
           </View>
         </>}
       </View>)}
@@ -167,6 +179,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
         </>}
       </View>
       <Pressable style={styles.secondary} onPress={() => { clear(); if (onClose) onClose(); else router.replace('/'); }}><Text style={styles.secondaryText}>Finish scan</Text></Pressable>
+    </>}
     </>}
   </Screen>;
 }
