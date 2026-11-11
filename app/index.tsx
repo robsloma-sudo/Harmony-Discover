@@ -30,22 +30,28 @@ export default function Home() {
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|null>(null);
 
   const startMenuScan = async () => {
+    setSettingsOpen(false);
+    if (!permission?.granted) {
+      const p = await requestPermission();
+      if (!p.granted) { setCameraMessage('Camera access is needed to read a menu.'); return; }
+    }
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: Math.max(1, 12 - pages.length), quality: 0.85 });
-      if (result.canceled || !result.assets.length) return;
-      addPages(result.assets.slice(0, 12).map(a => a.uri), 'gallery');
-      setSettingsOpen(false);
-      setActivePanel('menu');
-    } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
+      const photo = await camera.current?.takePictureAsync({ quality: 0.88 });
+      if (!photo?.uri) { setCameraMessage('The viewfinder could not capture this menu page.'); return; }
+      addPages([photo.uri], 'camera');
+      setScanSource('camera');
+      setScanPhotos([photo.uri]);
+    } catch { setCameraMessage('Could not capture this menu page. Please try again.'); }
   };
 
   const addMenuPages = async () => {
     const remaining = Math.max(0, 12 - pages.length);
     if (!remaining) { setCameraMessage('This menu scan has reached the 12-page limit.'); return; }
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: Math.min(10, remaining), quality: 0.85 });
-      if (!result.canceled && result.assets.length) appendPages(result.assets.slice(0, remaining).map(a => a.uri), 'gallery');
-    } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
+      const photo = await camera.current?.takePictureAsync({ quality: 0.88 });
+      if (photo?.uri) appendPages([photo.uri], 'camera');
+      else setCameraMessage('The viewfinder could not capture another menu page.');
+    } catch { setCameraMessage('Could not capture another menu page. Please try again.'); }
   };
 
   const capture = async () => {
@@ -115,12 +121,12 @@ export default function Home() {
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
-      {scanPhotos && <View style={{position:'absolute',zIndex:50,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
-      {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
-      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:0,right:0,top:0,bottom:0,backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
+      {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
+      {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
+      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
       {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:'rgba(0,0,0,0.42)'}} />
-        <View style={{position:'absolute',zIndex:31,left:12,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:'72%',padding:16,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
+        <View style={{position:'absolute',zIndex:31,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:'78%',padding:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
           <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
             <Text style={{color:C.ivory,fontSize:12,fontWeight:'900',letterSpacing:1.5}}>{({favorites:'FAVORITES',nearby:'NEARBY ATLAS',marty:'MARTY SULLIVAN',privacy:'PRIVACY & CONTRIBUTIONS',inventory:'LIVE INVENTORY SCANNER',lidar:'LIVE 3D / LIDAR SCANNER'} as const)[activePanel]}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
@@ -131,7 +137,7 @@ export default function Home() {
       </>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
-        <View style={{position:'absolute',zIndex:61,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,width:Math.min(340,screenWidth-24),maxHeight:screenHeight*0.72,padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.99)',borderWidth:1,borderColor:'rgba(198,163,106,0.65)',shadowColor:'#000',shadowOpacity:0.45,shadowRadius:18,shadowOffset:{width:0,height:8},elevation:24}}>
+        <View style={{position:'absolute',zIndex:61,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:screenHeight*0.78,padding:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.99)',borderWidth:1,borderColor:'rgba(198,163,106,0.65)',shadowColor:'#000',shadowOpacity:0.45,shadowRadius:18,shadowOffset:{width:0,height:8},elevation:24}}>
           <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
             <Text style={{color:C.ivory,fontSize:12,fontWeight:'900',letterSpacing:1.5}}>DISCOVER SETTINGS</Text>
             <Pressable onPress={()=>setSettingsOpen(false)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
