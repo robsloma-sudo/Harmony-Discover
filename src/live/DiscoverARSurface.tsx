@@ -52,23 +52,44 @@ function WebLiveCamera(props: NativeProps) {
     let frameCheck = 0;
     let recognitionTimer = 0;
     let recognitionBusy = false;
+    let lastRecognitionStartedAt = 0;
+    const recognitionIntervalMs = 2500;
 
-    const scheduleRecognition = () => {
-      if (!disposed) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, 2200);
+    // Keep a single request in flight and pace requests by start time, not by
+    // adding a full delay after the provider response. This stays below the
+    // server's 30/minute limit even when inference is fast.
+    const scheduleRecognition = (delay = recognitionIntervalMs) => {
+      if (!disposed) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
     };
     const recognizeFrame = async () => {
       if (disposed || recognitionBusy) return;
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
+      lastRecognitionStartedAt = Date.now();
       try {
         const canvas = document.createElement('canvas');
-        const scale = Math.min(1, 960 / video.videoWidth);
-        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+        // Match the crop the user actually sees (object-fit: cover). On a
+        // portrait phone the camera stream may be landscape; sending the full
+        // uncropped frame makes the label much smaller than it appears on-screen.
+        const displayWidth = video.clientWidth || video.videoWidth;
+        const displayHeight = video.clientHeight || video.videoHeight;
+        const displayAspect = displayWidth / displayHeight;
+        const sourceAspect = video.videoWidth / video.videoHeight;
+        let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+        if (sourceAspect > displayAspect) {
+          sw = video.videoHeight * displayAspect;
+          sx = (video.videoWidth - sw) / 2;
+        } else if (sourceAspect < displayAspect) {
+          sh = video.videoWidth / displayAspect;
+          sy = (video.videoHeight - sh) / 2;
+        }
+        const scale = Math.min(1, 960 / Math.max(sw, sh));
+        canvas.width = Math.max(1, Math.round(sw * scale));
+        canvas.height = Math.max(1, Math.round(sh * scale));
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
         const result = await readLiveFrame(jpeg);
         if (disposed) return;
@@ -80,7 +101,8 @@ function WebLiveCamera(props: NativeProps) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
         recognitionBusy = false;
-        scheduleRecognition();
+        const elapsed = Date.now() - lastRecognitionStartedAt;
+        scheduleRecognition(Math.max(0, recognitionIntervalMs - elapsed));
       }
     };
 
