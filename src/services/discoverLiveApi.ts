@@ -32,13 +32,13 @@ async function call(body: Record<string, unknown>) {
 }
 
 export type MenuGlimpse = { visible: boolean; title: string; items: Array<{ name: string; price: string; type: string }> };
-export type LiveRead = { bottles: BottleRead[]; menu: MenuGlimpse };
+export type LiveRead = { bottles: BottleRead[]; menu: MenuGlimpse; diagnostics: { version: string; model: string; providerMs: number; bottlesReturned: number; bottlesConfident: number; bottlesMatched: number } };
 
 /** One camera frame (JPEG, base64) in; every readable bottle label and any menu in view out. Nothing is stored. */
 export async function readLiveFrame(jpegBase64: string): Promise<LiveRead> {
   const result = await call({ action: 'frame', image: jpegBase64 });
   const menu = result.menu && typeof result.menu === 'object' ? result.menu as MenuGlimpse : { visible: false, title: '', items: [] };
-  return { bottles: Array.isArray(result.bottles) ? result.bottles as BottleRead[] : [], menu: { visible: !!menu.visible, title: menu.title || '', items: Array.isArray(menu.items) ? menu.items : [] } };
+  const bottles = Array.isArray(result.bottles) ? result.bottles as BottleRead[] : [];\n  const d = result.diagnostics && typeof result.diagnostics === 'object' ? result.diagnostics : {};\n  return { bottles, menu: { visible: !!menu.visible, title: menu.title || '', items: Array.isArray(menu.items) ? menu.items : [] }, diagnostics: { version: String(d.version || result.version || 'unknown'), model: String(d.model || result.model || 'unknown'), providerMs: Number(d.provider_ms) || 0, bottlesReturned: Number(d.bottles_returned) || bottles.length, bottlesConfident: Number(d.bottles_confident) || 0, bottlesMatched: Number(d.bottles_matched) || 0 } };
 }
 
 /** Saves the bottles the person kept as sightings. */
