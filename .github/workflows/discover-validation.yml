@@ -1,0 +1,60 @@
+name: Discover development validation
+
+on:
+  push:
+    branches:
+      - discover-source-import-2026-11-10
+      - marty-boston-security-hardening-2026-11-10
+      - discover-navigation-flow-2026-11-11
+  pull_request:
+    branches:
+      - discover-source-import-2026-11-10
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discover-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out development branch
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: TypeScript validation
+        run: npm run typecheck
+      - name: Build self-contained Discover API Edge Function
+        run: npm run build:edge
+      - name: Validate Discover DEV Edge Functions
+        run: |
+          deno check --node-modules-dir=auto supabase/functions/discover-voice-session/index.ts
+          deno check --node-modules-dir=auto supabase/functions/discover-menu-read/index.ts
+          deno check --node-modules-dir=auto apps/edge/discover-api.ts
+          deno check --node-modules-dir=auto supabase/functions/discover-api/index.ts
+          deno test --node-modules-dir=auto apps/api/tests/observation-contribution-permission.deno.ts
+      - name: Run all unit tests
+        run: npm run test:all
+      - name: Export web preview
+        run: npm run build:web
+      - name: Package web preview for manual Netlify deploy
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmony-discover-web-preview
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,7 @@
+# Function gateway settings for the Harmony Discover DEV project.
+# The endpoint verifies the user's bearer token itself with Supabase Auth.
+[functions.discover-voice-session]
+verify_jwt = false
+
+[functions.discover-api]
+verify_jwt = false

@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Harmony Discover",
+    "slug": "harmony-discover",
+    "scheme": "harmonydiscover",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "plugins": [
+      [
+        "expo-router"
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Harmony Discover uses your camera to scan beverage menus."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Harmony Discover uses selected photos to understand beverage menus."
+        }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Harmony Discover uses your camera to scan beverage menus.",
+          "microphonePermission": "Harmony Discover uses your microphone only when you activate Boston Bartender."
+        }
+      ],
+      "expo-asset",
+      "expo-font"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.harmony.discover"
+    },
+    "android": {
+      "package": "com.harmony.discover",
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}
