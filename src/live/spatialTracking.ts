@@ -46,6 +46,7 @@ export type SpatialTrack = {
 };
 
 const finitePositive = (v: number) => Number.isFinite(v) && v > 0;
+const canonicalZero = (v: number) => Object.is(v, -0) ? 0 : v;
 
 function median(values: number[]): number | null {
   if (!values.length) return null;
@@ -81,8 +82,9 @@ export function unprojectDetection(box: ImageBox, depth: MetricDepthMap, intrins
   const v = ((box.y0 + box.y1) / 2) * depth.height;
   const z = sampled.metres;
   return {
-    x: ((u - intrinsics.cx) / intrinsics.fx) * z,
-    y: -((v - intrinsics.cy) / intrinsics.fy) * z,
+    // Normalize signed zero so exact optical-axis alignment is represented consistently.
+    x: canonicalZero(((u - intrinsics.cx) / intrinsics.fx) * z),
+    y: canonicalZero(-((v - intrinsics.cy) / intrinsics.fy) * z),
     z,
     depthMetres: z,
     sampleCount: sampled.sampleCount,
