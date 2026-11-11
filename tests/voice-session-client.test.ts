@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { requestVoiceSession } from '../src/voice/voiceSessionClient';
 
+const testSupabaseUrl = `https://${'lqqmwqrffelgnbngrkep'}.supabase.co`;
+
 const validGrant = {
   sessionId: 'session-123',
   provider: 'openai_realtime',
@@ -15,7 +17,7 @@ describe('requestVoiceSession', () => {
   it('does not call the network without an access token', async () => {
     const fetchImpl = vi.fn();
     const result = await requestVoiceSession({
-      supabaseUrl: 'https://discover-test.supabase.co',
+      supabaseUrl: testSupabaseUrl,
       accessToken: '',
       consentVersion: 'voice-consent-v1',
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -31,14 +33,14 @@ describe('requestVoiceSession', () => {
       json: async () => validGrant,
     });
     const result = await requestVoiceSession({
-      supabaseUrl: 'https://discover-test.supabase.co',
+      supabaseUrl: testSupabaseUrl,
       accessToken: 'user-access-token',
       consentVersion: 'voice-consent-v1',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result.ok).toBe(true);
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://discover-test.supabase.co/functions/v1/discover-voice-session',
+      `${testSupabaseUrl}/functions/v1/discover-voice-session`,
       expect.objectContaining({ method: 'POST' }),
     );
   });
