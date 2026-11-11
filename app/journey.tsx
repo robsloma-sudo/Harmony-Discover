@@ -27,7 +27,11 @@ export default function Journey() {
         <Text style={styles.evidence}>Source: user-initiated Discover scan. Extracted details are observations, not automatically verified canonical records.</Text>
         <Pressable style={styles.primary} onPress={() => void Linking.openURL('https://harmony-journeys.netlify.app')}><Text style={styles.primaryText}>OPEN HARMONY JOURNEYS</Text></Pressable>
       </View>}
-      {journey.sections.map((section: { heading: string; body: string; evidence: string }) => (
+      {isDiscoverHandoff ? <View style={{padding:15,borderWidth:1,borderColor:'#303741',borderRadius:14,gap:8}}>
+        <Text style={styles.sectionTitle}>Journey research</Text>
+        <Text style={styles.body}>The scanned item is carried into this Discover handoff as source context. Product-specific stories, maps, producer research and chapters will appear here when Harmony Journeys exposes a supported item-level link. No unverified story is generated from the scan alone.</Text>
+        <Text style={styles.evidence}>Current connection: opens the Harmony Journeys home experience. Item-level deep linking is not yet implemented.</Text>
+      </View> : journey.sections.map((section: { heading: string; body: string; evidence: string }) => (
         <View key={section.heading} style={styles.journeySection}>
           <Text style={styles.sectionTitle}>{section.heading}</Text>
           <Text style={styles.body}>{section.body}</Text>
