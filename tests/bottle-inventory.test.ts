@@ -3,8 +3,8 @@ import {
   estimateBottleFill,
   integrateBottleVolumeMl,
   ML_PER_US_FL_OZ,
-  type BottleVolumeProfile,
 } from '../src/services/bottleInventory';
+import type { BottleVolumeProfile } from '../src/services/bottleInventory';
 
 const cylinder: BottleVolumeProfile = {
   profileId: 'test-cylinder',
@@ -18,7 +18,7 @@ const cylinder: BottleVolumeProfile = {
 
 describe('integrateBottleVolumeMl', () => {
   it('integrates a cylindrical internal profile', () => {
-    expect(integrateBottleVolumeMl(cylinder, 100)).toBeCloseTo(Math.PI * 100 * 10 / 1000, 6);
+    expect(integrateBottleVolumeMl(cylinder, 100)).toBeCloseTo(Math.PI * 10 ** 2 * 100 / 1000, 6);
   });
 
   it('returns zero at an empty liquid height', () => {
@@ -26,7 +26,7 @@ describe('integrateBottleVolumeMl', () => {
   });
 
   it('interpolates the profile at a liquid height between samples', () => {
-    expect(integrateBottleVolumeMl(cylinder, 25)).toBeCloseTo(Math.PI * 100 * 25 / 1000, 6);
+    expect(integrateBottleVolumeMl(cylinder, 25)).toBeCloseTo(Math.PI * 10 ** 2 * 25 / 1000, 6);
   });
 
   it('rejects non-monotonic or invalid profiles', () => {
@@ -46,15 +46,14 @@ describe('estimateBottleFill', () => {
       liquidHeightMm: 50,
       nominalCapacityMl: 750,
     });
-    expect(result.remainingMl).toBeCloseTo(Math.PI * 100 * 50 / 1000, 6);
+    expect(result.remainingMl).toBeCloseTo(Math.PI * 10 ** 2 * 50 / 1000, 6);
     expect(result.remainingUsFluidOunces).toBeCloseTo(result.remainingMl / ML_PER_US_FL_OZ, 8);
     expect(result.remainingPercent).toBeCloseTo((result.remainingMl / 750) * 100, 8);
     expect(result.nominalCapacityMl).toBe(750);
-    expect(result.modeledInternalCapacityMl).toBeCloseTo(Math.PI * 100 * 100 / 1000, 6);
+    expect(result.modeledInternalCapacityMl).toBeCloseTo(Math.PI * 10 ** 2 * 100 / 1000, 6);
     expect(result.status).toBe('estimated');
     expect(result.method).toBe('profile_integration');
   });
-
 
   it('rejects missing profile metadata and malformed samples', () => {
     expect(() => integrateBottleVolumeMl({
