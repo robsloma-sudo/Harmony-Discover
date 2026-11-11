@@ -102,3 +102,30 @@ A read-only DEV security-advisor check reported 13 existing RLS-enabled tables w
 6. Verify missing/invalid consent is rejected, rate limit works, no permanent key reaches the client, and the ephemeral grant expires.
 7. Run the web voice audition on HTTPS and real iPhone Safari/native after the native adapter exists. Evaluate actual voice audio before selecting a final voice.
 8. Only after these checks, request approval for a preview deployment. Production remains read-only and undeployed.
+
+
+## Current status correction — 11 November 2026
+
+This section supersedes the historical source-only statements above where they conflict.
+
+- The current development branch is `marty-boston-security-hardening-2026-11-10`, not the earlier `discover-source-import-2026-11-10` branch.
+- Discover DEV migration `20261110215901_marty_bartender` and `20261110215936_marty_private_table_grants` are applied.
+- `discover-voice-session` is ACTIVE version 4 in Discover DEV, with gateway JWT verification disabled because the handler validates the bearer token itself.
+- The deployed v4 bundle was fetched and inspected. It enforces the Discover DEV project/environment guard, bearer-token verification, current voice consent, four grants per user per minute, 60-second client-secret expiry, strict request validation, origin allow-listing and no-store credential responses. Provider errors do not return provider response bodies or secrets.
+- The live server-side `DISCOVER_ALLOWED_ORIGINS` value and presence/validity of `OPENAI_API_KEY` were not independently verified. No voice credential was minted.
+- The selected `ash` voice remains an audition baseline only. No Boston accent or vocal texture has been approved by listening.
+- The current UI supports web-only push-to-talk. Native iOS remains blocked pending a native transport adapter and device testing.
+- Voice session cleanup now runs on screen blur/unmount and browser backgrounding. A release event without a matching press no longer commits an empty audio turn. This source change is on the development branch and awaits the latest CI run; it has not been published to Netlify.
+- CI at commit `59cc0ebb132d4cde6dd1bb6921897a35941cd97a` passed TypeScript validation, self-contained API Edge Function build, Deno validation for voice/menu/API Edge Functions, the observation-contribution Deno test, all unit tests and web export.
+- A later change at `a672a40c207c6572629f96f46530ec352c4c8eb7` adds the screen-blur/background cleanup and press-state guard. Latest validation is running for the documentation-updated PR head.
+- Original Harmony production remains read-only and untouched. No Netlify publish has been performed.
+
+### Next Marty acceptance gates
+
+1. Confirm the latest CI result for the blur/background cleanup.
+2. Verify the exact DEV browser-origin allow-list and required secret presence without displaying values. No secret-listing tool is available in this connection.
+3. Complete an authenticated HTTPS browser audition using an authorized signed-in Discover account.
+4. Verify voice-consent denial and withdrawal, rate limiting, short-lived credential issuance, audio start/stop/interruption, and background cleanup against DEV.
+5. Evaluate real audio for character and intelligibility; do not infer a Boston accent from prompt text or the `ash` voice label.
+6. Keep native iOS disabled until a native transport adapter is implemented and device-tested.
+7. Request separate approval before any Netlify preview publication or production integration.
