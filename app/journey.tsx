@@ -10,8 +10,8 @@ export default function Journey() {
   const displayTitle = typeof title === 'string' && title.trim() ? title : journey.title;
   return (
     <Screen>
-      <Text style={styles.back} onPress={() => router.back()}>‹  Menu</Text>
-      <Text style={styles.eyebrow}>YOUR JOURNEY</Text>
+      <Text style={styles.back} onPress={() => router.back()}>‹  {isDiscoverHandoff ? 'Back to scan' : 'Menu'}</Text>
+      <Text style={styles.eyebrow}>{isDiscoverHandoff ? 'DISCOVERED ITEM' : 'YOUR JOURNEY'}</Text>
       <Text style={styles.title}>{displayTitle}</Text>
       <Text style={styles.sub}>{isDiscoverHandoff ? 'A discovery captured in Harmony Discover. Review the extracted evidence here, then continue into the wider Harmony learning experience.' : journey.intro}</Text>
       {isDiscoverHandoff && <View style={{marginTop:8,padding:15,borderWidth:1,borderColor:'#C6A36A55',borderRadius:14,gap:8,backgroundColor:'#111820'}}>
