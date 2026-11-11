@@ -302,3 +302,9 @@ F. Integrate product/SKU package size through the separate catalog contract, the
 G. Add session persistence and export only after privacy, retention, owner isolation, deletion, review and audit rules are approved.
 
 **Immediate next engineering gate:** do not add a speculative liquid-line detector to the current generic rectangle stream. First define and annotate the bottle/liquid validation dataset and implement a container-instance segmentation interface. This prevents a brittle heuristic from being mistaken for reliable inventory intelligence.
+
+### Implementation note — volume math foundation (not visual detection)
+
+The Discover branch now contains `src/services/bottleInventory.ts`, a pure calculation layer that accepts a calibrated internal-radius profile and a separately detected liquid height. It numerically integrates cross-sectional area (πr²) over height, returns estimated mL and US fl oz, and computes percent against the nominal package capacity while preserving profile/calibration provenance. Invalid profiles, non-finite dimensions and out-of-profile liquid heights are rejected. Synthetic-cylinder unit tests were added in `tests/bottle-inventory.test.ts`.
+
+This is only the geometry-to-volume calculation foundation. It does not detect bottle instances, recognize package sizes, find liquid interfaces, calibrate a real bottle, or establish inventory accuracy. Test execution and TypeScript validation have not yet been observed in this environment; the tests must run in CI/development before this is treated as verified.
