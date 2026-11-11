@@ -98,6 +98,13 @@ Deno.serve(async (req: Request) => {
     .select("id,consumer_id,status").eq("id", id).eq("consumer_id", subject).maybeSingle();
   if (!observation) return reply({ error: "observation_not_found" }, 404, origin);
 
+  // Clear any previous completion marker before retrying. A prior successful scan must
+  // not remain eligible while a re-read is in progress or after a failed re-read.
+  const { error: resetError } = await db.from("menu_observations").update({
+    all_pages_complete: false, structured_menu_saved: false, status: "processing",
+  }).eq("id", id).eq("consumer_id", subject);
+  if (resetError) return reply({ error: "observation_status_reset_failed" }, 503, origin);
+
   // Independent server-side limiter: this function is directly addressable, so the
   // outer discover-api observation limiter is not sufficient protection by itself.
   // The database function is SECURITY DEFINER and service-role-only.
