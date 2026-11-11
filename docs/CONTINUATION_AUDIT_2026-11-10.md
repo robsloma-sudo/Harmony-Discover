@@ -188,3 +188,28 @@ At audit time, counts were zero for:
 4. Run one authenticated positive browser WebRTC audition, then verify microphone release, interrupt, stop, background cleanup, token expiry, and no transcript-to-memory writes.
 5. Validate on a real iPhone only after a native adapter exists; current voice path is web-only.
 6. Keep all deployments scoped to Discover DEV and obtain separate approval before any deploy. Production Harmony remains untouched.
+
+
+## Transport resilience update — 11 November 2026
+
+Current Marty source commit: `d6970b19c428152dc24e01ad21c0562e0839f0e6`.
+
+The web Realtime client now handles unexpected transport failures after a session has become ready:
+- Data-channel errors and unexpected closes are treated as session failures, not merely ignored after the startup promise has settled.
+- A failed peer-connection state ends the session.
+- The failure handler disables and stops microphone tracks immediately, pauses remote audio, clears the active coordinator, and returns the UI to OFFLINE with a retry instruction.
+- Intentional cleanup is guarded so normal stop/background teardown does not report a spurious transport failure.
+
+Validation for this exact commit completed successfully in GitHub Actions run 42929516134:
+- locked dependency install;
+- TypeScript validation;
+- self-contained API Edge Function build;
+- Deno validation of Discover DEV Edge Functions;
+- all unit tests;
+- web preview export.
+
+This is source/CI validation only. No new Supabase function deployment, Netlify deployment, PR merge, or production action occurred.
+
+### Remaining live acceptance limitations
+
+The live DEV database remains empty for Marty consent, saved memory, rate-limit and comedy-evaluation rows. No authenticated voice grant or real audio session has been exercised. The exact deployed `DISCOVER_ALLOWED_ORIGINS` configuration and presence of `OPENAI_API_KEY` remain unverified because this connection does not expose Edge Function secret listing. A consent withdrawal on the account settings page causes navigation cleanup to stop the local session; immediate remote revocation of a session already active on a different device has not been implemented or tested. These remain explicit acceptance gates before broader use.
