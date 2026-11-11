@@ -191,7 +191,7 @@ Deno.serve(async (req: Request) => {
       output_tokens: usage.output_tokens || 0,
       tool_payload_present: !!input,
     }));
-    return reply({ ok: true, version: VERSION, model, bottles, menu }, 200, origin);
+    return reply({ ok: true, version: VERSION, model, bottles, menu, diagnostics: { version: VERSION, model, provider_ms: Date.now() - providerStartedAt, bottles_returned: bottles.length, bottles_confident: bottles.filter((b) => b.state !== 'unsure').length, bottles_matched: bottles.filter((b) => b.state === 'matched').length } }, 200, origin);
   }
 
   if (action === "save") {
