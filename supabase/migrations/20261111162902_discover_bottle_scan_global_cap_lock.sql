@@ -1,17 +1,15 @@
--- Discover DEV only. Serialize the project-wide daily frame cap so concurrent scans cannot exceed it.
--- The per-user upsert remains atomic; this transaction-scoped lock protects the global SUM + increment.
+-- Harmony Discover DEV: serialize the daily project-wide bottle scan cap.
+-- This migration is already applied in Discover DEV; this file restores the source-of-truth migration to Git.
 create or replace function public.discover_bottle_scan_allow(p_subject uuid, p_user_max integer, p_global_max integer)
-returns boolean
-language plpgsql
-security definer
-set search_path = ''
-as $function$
+returns boolean language plpgsql security definer set search_path = ''
+as $$
 declare
   v_day date := (now() at time zone 'utc')::date;
   v_user integer;
   v_all bigint;
 begin
   if p_subject is null or p_user_max < 1 or p_global_max < 1 then return false; end if;
+  -- Serialize project-wide cap accounting for this UTC day.
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('discover-bottle-global:' || v_day::text, 0)
   );
@@ -30,6 +28,4 @@ begin
   end if;
   return true;
 end
-$function$;
-revoke all on function public.discover_bottle_scan_allow(uuid, integer, integer) from public, anon, authenticated;
-grant execute on function public.discover_bottle_scan_allow(uuid, integer, integer) to service_role;
+$$;
