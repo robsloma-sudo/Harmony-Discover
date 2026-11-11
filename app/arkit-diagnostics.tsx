@@ -62,6 +62,7 @@ export default function ARKitDiagnostics() {
         </View>
         <View style={styles.item}><View style={{ flex: 1 }}><Text style={styles.itemTitle}>AR session</Text><Text style={styles.categoryDesc}>Not started by this diagnostic</Text></View><Text style={styles.price}>IDLE</Text></View>
       </> : null}
+      {data?.worldTrackingSupported ? <Pressable style={styles.primary} onPress={() => router.push('/arkit-live-test')}><Text style={styles.primaryText}>Open live AR tracking test</Text></Pressable> : null}
       <Pressable style={styles.primary} onPress={() => void refresh()}><Text style={styles.primaryText}>Run capability check again</Text></Pressable>
     </Screen>
   );
