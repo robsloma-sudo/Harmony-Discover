@@ -50,3 +50,10 @@ jobs:
         run: npm run test:all
       - name: Export web preview
         run: npm run build:web
+      - name: Package web preview for manual Netlify deploy
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmony-discover-web-preview
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
