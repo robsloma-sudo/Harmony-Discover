@@ -137,3 +137,54 @@ Commit `a672a40c207c6572629f96f46530ec352c4c8eb7` updates `app/bartender.tsx`:
 - stop, interrupt and transport cleanup reset the press state.
 
 This is source-only; the Netlify preview has not been published. CI is running for this commit. Previous full validation at `59cc0ebb132d4cde6dd1bb6921897a35941cd97a` passed TypeScript validation, Edge Function checks, all unit tests, and web export.
+
+
+## Marty DEV runtime and security verification — 11 November 2026
+
+**Project checked:** `harmony-discover-dev` / `lqqmwqrffelgnbngrkep` (ACTIVE_HEALTHY, Postgres 17.11).
+
+### Deployment boundary
+
+Live Edge Function inventory remains:
+- `discover-api`: ACTIVE v6
+- `discover-menu-read`: ACTIVE v3
+- `discover-retention`: ACTIVE v1
+- `discover-voice-session`: ACTIVE v4
+
+The latest Marty source branch is `50a22f4c992363e166825b862214f8c13b2ca933`; both latest GitHub Actions runs (42928433061 and 42928426353) completed successfully. This is source/CI validation only. No Edge Function redeployment, Netlify deployment, PR merge, or production action was performed.
+
+### Voice runtime findings
+
+- The deployed `discover-voice-session` source has an exact-origin allow-list using `DISCOVER_ALLOWED_ORIGINS`, manual bearer-token validation, DEV project/environment guards, current voice-consent enforcement, a 4-per-minute user limiter, and a 60-second Realtime client secret.
+- The deployed function calls `/v1/realtime/client_secrets` with model `gpt-realtime-2.1` and input transcription model `gpt-live-transcribe`.
+- The Supabase MCP surface does not expose a secret-listing action. Therefore the presence of `OPENAI_API_KEY` and the exact configured `DISCOVER_ALLOWED_ORIGINS` value remain unverified. Do not claim these are configured until verified in the DEV dashboard or through a permitted secret-presence check that never reveals values.
+- The last 30 days of targeted Edge Function logs returned no invocation entries for `discover-voice-session` (zero observed invocations in the queried logs).
+- DEV has zero `bartender_voice_consents` rows, zero active voice consents, zero active memory consents, zero stored bartender memory rows, and zero voice rate-limit rows. No authenticated voice session or audio audition has occurred.
+- The Realtime client now waits for `session.created`, not the separate Live API's `session.started`; cleanup stops microphone tracks immediately and closes the WebRTC transport directly.
+
+### Database and RLS verification
+
+Marty consent and memory tables have RLS enabled and owner-scoped policies. Consent reads/inserts/updates require the authenticated user's own `user_id`. Memory read/insert/update require owner match and active memory consent; owner DELETE remains available after consent withdrawal so users can erase their memories.
+
+The following internal tables have RLS enabled, no anon/authenticated table grants, and service-role-only access: `marty_voice_rate_limits`, contribution grant/event tables, and the Harmony sync staging/review/ledger tables. The relevant RPCs are `SECURITY INVOKER` and EXECUTE is restricted to `service_role`.
+
+Security advisor reports 20 RLS-enabled tables without policies (including private/internal tables). For the inspected internal tables, anon/authenticated privileges are absent; this is expected deny-by-default, not evidence of public exposure. The advisor also reports leaked-password protection disabled; this remains a project-level hardening recommendation and has not been changed.
+
+Performance advisor reports unused indexes while the DEV data tables are empty. Do not remove indexes solely on this zero-traffic evidence.
+
+### Empty-data verification
+
+At audit time, counts were zero for:
+- menu observations;
+- observation contribution grants and grant events;
+- Harmony staged candidates and sync ledger rows;
+- Marty voice consent rows, active voice consent, active memory consent, stored memory rows, and rate-limit rows.
+
+### Next acceptance gates
+
+1. Verify secret presence and allowed browser origin in the Discover DEV dashboard without exposing secret values.
+2. Enable voice consent explicitly for a designated test account.
+3. Run authenticated negative tests (missing token, stale token, missing consent, wrong consent version, disallowed origin, and rate-limit exhaustion).
+4. Run one authenticated positive browser WebRTC audition, then verify microphone release, interrupt, stop, background cleanup, token expiry, and no transcript-to-memory writes.
+5. Validate on a real iPhone only after a native adapter exists; current voice path is web-only.
+6. Keep all deployments scoped to Discover DEV and obtain separate approval before any deploy. Production Harmony remains untouched.
