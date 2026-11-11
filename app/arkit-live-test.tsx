@@ -10,7 +10,7 @@ export default function ARKitLiveTest() {
   const [active, setActive] = useState(false);
   const [tracking, setTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'not_started' });
   const [error, setError] = useState('');
-  const [candidateCount, setCandidateCount] = useState(0);
+  const [candidates, setCandidates] = useState<Array<{ trackId: number; confidence: number }>>([]);
 
   const start = async () => {
     setError('');
@@ -36,7 +36,7 @@ export default function ARKitLiveTest() {
           style={{ flex: 1 }}
           active={active}
           onTrackingUpdate={event => setTracking(event.nativeEvent)}
-          onVisualCandidates={event => setCandidateCount(event.nativeEvent.count)}
+          onVisualCandidates={event => setCandidates(event.nativeEvent.candidates)}
           onARError={event => { setError(event.nativeEvent.message || 'ARKit session failed.'); setActive(false); }}
           onARReady={() => setError('')}
         />
@@ -51,8 +51,9 @@ export default function ARKitLiveTest() {
       </View>
       <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}>
         <Text style={styles.itemTitle}>Live geometry candidates</Text>
-        <Text style={styles.price}>{active ? candidateCount + ' CANDIDATES' : 'INACTIVE'}</Text>
-        <Text style={styles.categoryDesc}>Blue rectangles are Vision-detected rectangular regions, not confirmed bottles or measured bottle contours. They are refreshed from camera frames while the AR session is active.</Text>
+        <Text style={styles.price}>{active ? candidates.length + ' TRACKED CANDIDATES' : 'INACTIVE'}</Text>
+        <Text style={styles.categoryDesc}>Blue rectangles are generic Vision regions, not confirmed bottles. IDs persist while frame overlap remains sufficient. Confidence is rectangle-detection confidence, not bottle identity confidence.</Text>
+        {candidates.slice(0, 4).map(candidate => <Text key={candidate.trackId} style={styles.categoryDesc}>Track #{candidate.trackId} · {Math.round(candidate.confidence * 100)}% rectangle confidence</Text>)}
       </View>
       {!!error && <Text style={styles.categoryDesc}>{error}</Text>}
       {!permission && <ActivityIndicator />}
