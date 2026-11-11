@@ -40,6 +40,12 @@ const IPHONE_MODEL_NAMES: Record<string, string> = {
   'iPhone17,2': 'iPhone 16 Pro Max',
   'iPhone17,3': 'iPhone 16',
   'iPhone17,4': 'iPhone 16 Plus',
+  'iPhone17,5': 'iPhone 16e',
+  'iPhone18,1': 'iPhone 17 Pro',
+  'iPhone18,2': 'iPhone 17 Pro Max',
+  'iPhone18,3': 'iPhone 17',
+  'iPhone18,4': 'iPhone Air',
+  'iPhone18,5': 'iPhone 17e',
 };
 
 export function getFriendlyIPhoneModel(identifier: string): string {
@@ -49,7 +55,8 @@ export function getFriendlyIPhoneModel(identifier: string): string {
 export type ScannerCapabilityProfile = {
   hardwareIdentifier: string;
   tier: 'lidar_depth' | 'camera_3d' | 'smart_scan';
-  modes: Array<'smart_scan' | 'live_3d_bottle' | 'digital_twin'>;
+  modes: Array<'smart_scan'>;
+  hardwareSupportsLive3D: boolean;
   depthSource: 'arkit_scene_depth' | 'camera_motion_estimate' | 'none';
   meshReconstruction: boolean;
   calibratedMetricMeasurements: boolean;
@@ -92,6 +99,7 @@ export function createScannerCapabilityProfile(
       hardwareIdentifier: capabilities?.machineIdentifier ?? 'unknown',
       tier: 'smart_scan',
       modes: ['smart_scan'],
+      hardwareSupportsLive3D: false,
       depthSource: 'none',
       meshReconstruction: false,
       calibratedMetricMeasurements: false,
@@ -104,7 +112,10 @@ export function createScannerCapabilityProfile(
   return {
     hardwareIdentifier: capabilities.machineIdentifier,
     tier: hasDepth ? 'lidar_depth' : 'camera_3d',
-    modes: ['smart_scan', 'live_3d_bottle', 'digital_twin'],
+    // Live 3D and twin capture are not advertised as usable modes until the
+    // native AR session and persistent-twin pipeline have been implemented.
+    modes: ['smart_scan'],
+    hardwareSupportsLive3D: true,
     depthSource: hasDepth ? 'arkit_scene_depth' : 'camera_motion_estimate',
     meshReconstruction: hasMesh,
     calibratedMetricMeasurements: false,
