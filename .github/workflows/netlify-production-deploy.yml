@@ -58,5 +58,5 @@ jobs:
       - name: Install Netlify CLI
         run: npm install --global netlify-cli
 
-      - name: Deploy prebuilt output to the explicitly selected Netlify site
-        run: netlify deploy --prod --dir=dist --message "Harmony Discover main ${GITHUB_SHA}"
+      - name: Deploy prebuilt output without running Netlify build
+        run: netlify deploy --prod --dir=dist --no-build --message "Harmony Discover main ${GITHUB_SHA}"
