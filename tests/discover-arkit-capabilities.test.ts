@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createScannerCapabilityProfile, getFriendlyIPhoneModel, type ARKitCapabilities } from '../src/services/discoverARKit';
+import { createScannerCapabilityProfile, getFriendlyIPhoneModel } from '../src/services/discoverARKit';
+import type { ARKitCapabilities } from '../src/services/discoverARKit';
 
 const base: ARKitCapabilities = {
   platform: 'ios',
@@ -49,7 +50,6 @@ describe('createScannerCapabilityProfile', () => {
     expect(profile.modes).toEqual(['smart_scan']);
   });
 });
-
 
 describe('getFriendlyIPhoneModel', () => {
   it('recognizes known hardware identifiers', () => {
