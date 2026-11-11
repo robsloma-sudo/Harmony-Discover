@@ -19,7 +19,7 @@ function factsOf(b: BottleRead): Array<[string,string]> {
 }
 function makeSession() {
  try { if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID(); } catch {}
- return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:String(r&3|8).toString(16));});
+ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?String(r):(r&3|8).toString(16));});
 }
 function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void}) {
  const sweep=useRef(new Animated.Value(0)).current;
