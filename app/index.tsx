@@ -6,6 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
+import LiveScanner from '../src/live/LiveScanner';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -19,11 +20,12 @@ export default function Home() {
   const [capturing, setCapturing] = useState(false);
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [cameraMessage, setCameraMessage] = useState('');
+  const [liveScan, setLiveScan] = useState(false);
   const { addPages } = useScan();
 
   const capture = async () => {
-    // One scan button for everything: on the web build it opens the live scanner (bottles and menus).
-    if (Platform.OS === 'web') { router.push('/live' as never); return; }
+    // One scan button for everything: on the web build the live scan (bottles and menus) starts right here, with no page change.
+    if (Platform.OS === 'web') { setLiveScan(true); return; }
     if (capturing) return;
     if (!permission?.granted) {
       const result = await requestPermission();
@@ -48,6 +50,8 @@ export default function Home() {
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
   };
 
+  // The live scan replaces the viewfinder in place (and takes over the camera) until it is closed.
+  if (liveScan && Platform.OS === 'web') return <LiveScanner onClose={() => setLiveScan(false)} />;
   if (!permission) return <View style={s.loading}><Text style={s.loadingText}>DISCOVER</Text></View>;
 
   return (

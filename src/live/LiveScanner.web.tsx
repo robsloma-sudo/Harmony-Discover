@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { router } from 'expo-router';
-import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type MenuGlimpse } from '../src/services/discoverLiveApi';
-import { useScan } from '../src/state/ScanContext';
+import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type MenuGlimpse } from '../services/discoverLiveApi';
+import { useScan } from '../state/ScanContext';
 
 // One live scanner for everything: bottles (beer, wine, spirits) and menus. Browser tier.
+// It is not a page: the home screen swaps it in when the shutter is tapped, so the scan starts at once.
 // Two things run at once:
 //   1. On the phone, many times a second: every edge in the live picture (bottle curve, cork, label, lettering)
 //      is found and drawn as a glowing line. It is redrawn from the camera each time, so it stays on the
@@ -39,7 +40,7 @@ function factsOf(b: BottleRead): Array<[string, string]> {
   return rows.filter(([, v]) => { const k = v.toLowerCase(); if (!v || seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
 }
 
-export default function Live() {
+export default function LiveScanner({ onClose }: { onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const edgeRef = useRef<HTMLCanvasElement | null>(null);
   const lineRef = useRef<HTMLDivElement | null>(null);
@@ -208,7 +209,7 @@ export default function Live() {
         );
       })}
 
-      <div style={{ position: 'absolute', left: 16, top: 'max(14px, env(safe-area-inset-top))', ...word, fontSize: 16, cursor: 'pointer', padding: '8px 4px' }} role="button" aria-label="Back" onClick={() => (router.canGoBack() ? router.back() : router.replace('/'))}>‹ Back</div>
+      <div style={{ position: 'absolute', left: 16, top: 'max(14px, env(safe-area-inset-top))', ...word, fontSize: 16, cursor: 'pointer', padding: '8px 4px' }} role="button" aria-label="Stop scanning" onClick={onClose}>‹ Done</div>
       <div style={{ position: 'absolute', left: 0, right: 0, top: 'max(22px, calc(env(safe-area-inset-top) + 8px))', textAlign: 'center', pointerEvents: 'none' }}>
         <div style={{ ...dim, fontSize: 13, animation: reading ? 'hdPulse 1s ease-in-out infinite' : undefined }}>
           {status === 'starting' ? 'Starting the camera…' : status === 'scanning' ? 'Harmony is reading' : ''}
