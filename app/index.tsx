@@ -3,7 +3,6 @@ import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions } from
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
@@ -23,6 +22,7 @@ export default function Home() {
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|null>(null);
 
   const capture = async () => {
     if (capturing) return;
@@ -71,7 +71,7 @@ export default function Home() {
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
-        <View style={s.topActions}><View style={s.livePill}><View style={s.liveDot}/><Text style={s.liveText}>VIEWFINDER</Text></View><Pressable style={s.profileButton} onPress={() => router.push('/collection')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
+        <View style={s.topActions}><View style={s.livePill}><View style={s.liveDot}/><Text style={s.liveText}>VIEWFINDER</Text></View><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
       </View>
       <View style={[s.centerHint, { top: Math.max(insets.top, 24) + 112, bottom: Math.max(insets.bottom, 12) + (screenHeight < 750 ? 218 : 238) }]} pointerEvents="none">
         <View style={[s.corner, s.tl]} /><View style={[s.corner, s.tr]} /><View style={[s.corner, s.bl]} /><View style={[s.corner, s.br]} />
@@ -79,17 +79,28 @@ export default function Home() {
       </View>
       <View style={[s.bottomArea, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + (isLandscape ? 5 : 7), paddingTop: isLandscape ? 6 : 8, left: isLandscape ? 22 : 10, right: isLandscape ? 22 : 10 }]}>
         <View style={s.controls}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Favorites" style={s.utilityControl} onPress={() => router.push('/collection')}><Ionicons name="heart-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>FAVORITES</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Nearby discoveries" style={s.utilityControl} onPress={() => router.push('/nearby')}><Ionicons name="compass-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>NEARBY</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Favorites" style={s.utilityControl} onPress={() => setActivePanel('favorites')}><Ionicons name="heart-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>FAVORITES</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Nearby discoveries" style={s.utilityControl} onPress={() => setActivePanel('nearby')}><Ionicons name="compass-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>NEARBY</Text></Pressable>
           <View style={s.centerControls}>
             <Pressable accessibilityRole="button" accessibilityLabel="Choose photos from gallery" style={[s.primaryControl, s.primaryControlHalf]} onPress={openGallery}><Ionicons name="images-outline" size={compactDock ? 11 : 12} color={C.ivory} /></Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing menu' : 'Capture menu'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel={flashEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, s.primaryControlHalf, flashEnabled && s.primaryControlActive]} onPress={() => setFlashEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 11 : 12} color={flashEnabled ? C.brass : C.ivory} /></Pressable>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => setSettingsOpen(v => !v)}><Ionicons name="settings-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => router.push('/bartender')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
+      {activePanel && <>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:'rgba(0,0,0,0.42)'}} />
+        <View style={{position:'absolute',zIndex:31,left:12,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:'72%',padding:16,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
+          <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+            <Text style={{color:C.ivory,fontSize:12,fontWeight:'900',letterSpacing:1.5}}>{({favorites:'FAVORITES',nearby:'NEARBY ATLAS',marty:'MARTY SULLIVAN',privacy:'PRIVACY & CONTRIBUTIONS',inventory:'LIVE INVENTORY SCANNER',lidar:'LIVE 3D / LIDAR SCANNER'} as const)[activePanel]}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
+          </View>
+          <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='nearby'?'Discover places around you':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='inventory'?'Live bottle and inventory recognition':'Depth and spatial scanning'}</Text>
+          <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='nearby'?'Nearby Atlas is being brought into this camera panel. Location is requested only when you choose to use nearby discovery.':activePanel==='marty'?'Marty’s live voice controls are being integrated into this panel. Voice remains opt-in and requires your consent.':activePanel==='privacy'?'Contribution and measurement permissions are optional. No sharing is enabled by this notice.':activePanel==='inventory'?'The live camera scanner is available in DEV, but its recognition pipeline is still under development. Camera preview alone does not identify bottles or SKUs.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>
+        </View>
+      </>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close settings" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:20,backgroundColor:'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:21,left:12,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
@@ -100,11 +111,11 @@ export default function Home() {
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Screen orientation is automatic. Rotate your device to change the layout.')}><Ionicons name="phone-portrait-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Screen orientation</Text><Text style={s.menuDesc}>Automatic · portrait and landscape</Text></View><Text style={s.menuValue}>AUTO</Text></Pressable>
           <Pressable style={s.menuRow} onPress={async()=>{const p=permission?.granted?permission:await requestPermission();setCameraMessage(p.granted?'Camera access is enabled.':'Camera access was not granted. Check iOS Settings.');}}><Ionicons name="camera-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Camera access</Text><Text style={s.menuDesc}>Manage camera permission</Text></View><Text style={s.menuValue}>{permission.granted?'ON':'CHECK'}</Text></Pressable>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Photos are processed only after you select or capture them.')}><Ionicons name="images-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Photo processing</Text><Text style={s.menuDesc}>Review selected photos before processing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
-          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);router.push('/contributions');}}><Ionicons name="shield-checkmark-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Measure & contribution permissions</Text><Text style={s.menuDesc}>Optional research and measurement sharing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('privacy');}}><Ionicons name="shield-checkmark-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Measure & contribution permissions</Text><Text style={s.menuDesc}>Optional research and measurement sharing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <View style={{height:1,backgroundColor:C.line,marginVertical:8}}/>
           <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.4,marginBottom:4}}>ADVANCED SCANNERS</Text>
-          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);router.push('/live-inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live visual regions · bottle recognition not active</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
-          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);router.push('/arkit-live-test');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live visual regions · bottle recognition not active</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('lidar');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
         </View>
       </>}
     </View>
