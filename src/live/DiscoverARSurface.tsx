@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView, type BarcodeScanningResult } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
+import { readLiveFrame } from '../services/discoverLiveApi';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -16,7 +17,7 @@ type NativeProps = ViewProps & {
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }> } }) => void;
-  onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number } }) => void;
+  onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu'] } }) => void;
 };
 
 let NativeARView: React.ComponentType<NativeProps> | null = null;
@@ -37,8 +38,8 @@ if (Platform.OS === 'ios') {
 function WebLiveCamera(props: NativeProps) {
   const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates };
 
   useEffect(() => {
     if (!active) {
@@ -49,6 +50,39 @@ function WebLiveCamera(props: NativeProps) {
     let disposed = false;
     let stream: MediaStream | null = null;
     let frameCheck = 0;
+    let recognitionTimer = 0;
+    let recognitionBusy = false;
+
+    const scheduleRecognition = () => {
+      if (!disposed) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, 2200);
+    };
+    const recognizeFrame = async () => {
+      if (disposed || recognitionBusy) return;
+      const video = videoRef.current;
+      if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
+      recognitionBusy = true;
+      try {
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, 960 / video.videoWidth);
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Frame capture is unavailable in this browser.');
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const jpeg = canvas.toDataURL('image/jpeg', 0.62);
+        const result = await readLiveFrame(jpeg);
+        if (disposed) return;
+        const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
+        const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: result.bottles.length, candidates: result.bottles.map((b, i) => ({ trackId: i + 1, x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })) } });
+      } catch (error) {
+        if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
+      } finally {
+        recognitionBusy = false;
+        scheduleRecognition();
+      }
+    };
 
     const fail = (error: unknown) => {
       if (disposed) return;
@@ -95,6 +129,7 @@ function WebLiveCamera(props: NativeProps) {
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
             callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'normal', reason: 'browser_video_frames_verified' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
+            scheduleRecognition();
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
@@ -110,6 +145,7 @@ function WebLiveCamera(props: NativeProps) {
     return () => {
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
+      if (recognitionTimer) window.clearTimeout(recognitionTimer);
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
