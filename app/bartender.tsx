@@ -31,7 +31,7 @@ export default function BartenderScreen() {
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
   const transportClosingRef = useRef(false);
 
-  const failTransport = useCallback((dc: RTCDataChannel, pc: RTCPeerConnection, message: string) => {
+  function failTransport(dc: RTCDataChannel, pc: RTCPeerConnection, message: string) {
     if (dcRef.current !== dc || pcRef.current !== pc || transportClosingRef.current) return;
     transportClosingRef.current = true;
     isTalkingRef.current = false;
@@ -45,7 +45,7 @@ export default function BartenderScreen() {
       if (coordinator) await coordinator.stop();
       else await closeTransport();
     })();
-  }, [closeTransport]);
+  }
 
   useEffect(() => {
     let alive = true;
