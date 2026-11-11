@@ -129,3 +129,19 @@ This section supersedes the historical source-only statements above where they c
 5. Evaluate real audio for character and intelligibility; do not infer a Boston accent from prompt text or the `ash` voice label.
 6. Keep native iOS disabled until a native transport adapter is implemented and device-tested.
 7. Request separate approval before any Netlify preview publication or production integration.
+
+
+## Realtime protocol correction — 11 November 2026
+
+A source review against the current official OpenAI API documentation caught an important distinction: this implementation calls `/v1/realtime/client_secrets` and `/v1/realtime/calls` with `session.type = realtime`. It is using the Realtime API, not the separate GPT-Live API.
+
+The Realtime API emits `session.created` when the session is initialized. The prior draft incorrectly waited for `session.started` and attempted to send `session.close` / wait for `session.closed`, which belong to the separate Live API lifecycle. Those assumptions have been removed.
+
+Current source commit `69356a5b1b301cafcfe15a522cfe320102835dc9`:
+- waits for Realtime `session.created` before reporting Marty ready;
+- fails the connection if the session never initializes or emits a Realtime error;
+- immediately disables/stops local microphone tracks on cleanup;
+- closes the WebRTC data channel and peer connection directly, without sending unsupported Live API close events;
+- preserves blur/unmount and browser-background cleanup.
+
+This correction is based on the official Realtime session lifecycle documentation and the distinct Live API event reference. CI for this latest commit is pending. No live authenticated voice audition has been performed yet.
