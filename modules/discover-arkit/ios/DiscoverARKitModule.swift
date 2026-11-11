@@ -125,14 +125,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       return
     }
 
-    let configuration = ARWorldTrackingConfiguration()
-    configuration.worldAlignment = .gravity
-    if #available(iOS 14.0, *) {
-      if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-        configuration.frameSemantics.insert(.sceneDepth)
-      }
-    }
-    sceneView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+    sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     onARReady(["state": "starting"])
   }
 
@@ -142,8 +135,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let pixelBuffer = frame.capturedImage
-    let imageWidth = CVPixelBufferGetWidth(pixelBuffer)
-    let imageHeight = CVPixelBufferGetHeight(pixelBuffer)
+    let rawWidth = CVPixelBufferGetWidth(pixelBuffer)
+    let rawHeight = CVPixelBufferGetHeight(pixelBuffer)
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    let swapsDimensions = orientation == .right || orientation == .left
+    let imageWidth = swapsDimensions ? rawHeight : rawWidth
+    let imageHeight = swapsDimensions ? rawWidth : rawHeight
 
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     visionQueue.async { [weak self] in
@@ -157,7 +154,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       request.maximumAspectRatio = 0.98
       request.quadratureTolerance = 25
       do {
-        try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform([request])
+        try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation).perform([request])
         let observations = (request.results ?? []).map { observation -> [String: Double] in
           let box = observation.boundingBox
           return [
@@ -234,13 +231,33 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     onARError(["message": error.localizedDescription])
   }
 
+  private static func makeConfiguration() -> ARWorldTrackingConfiguration {
+    let configuration = ARWorldTrackingConfiguration()
+    configuration.worldAlignment = .gravity
+    if #available(iOS 14.0, *),
+       ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+      configuration.frameSemantics.insert(.sceneDepth)
+    }
+    return configuration
+  }
+
+  private static func imageOrientation(for orientation: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+    switch orientation {
+    case .portrait: return .right
+    case .portraitUpsideDown: return .left
+    case .landscapeLeft: return .up
+    case .landscapeRight: return .down
+    default: return .right
+    }
+  }
+
   public func sessionWasInterrupted(_ session: ARSession) {
     onTrackingUpdate(["state": "interrupted", "reason": "system_interruption"])
   }
 
   public func sessionInterruptionEnded(_ session: ARSession) {
     if isActive {
-      sceneView.session.run(ARWorldTrackingConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+      sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     }
   }
 }
