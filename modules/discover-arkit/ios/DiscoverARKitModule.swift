@@ -76,6 +76,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onARError = EventDispatcher()
   let onVisualCandidates = EventDispatcher()
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
+  private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
   private let rectangleOverlay = CAShapeLayer()
 
@@ -144,7 +145,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let imageWidth = CVPixelBufferGetWidth(pixelBuffer)
     let imageHeight = CVPixelBufferGetHeight(pixelBuffer)
 
+    guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     visionQueue.async { [weak self] in
+      defer { self?.visionFrameGate.signal() }
       guard let self else { return }
       let request = VNDetectRectanglesRequest()
       request.maximumObservations = 8
