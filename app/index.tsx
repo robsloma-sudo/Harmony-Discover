@@ -129,7 +129,6 @@ export default function Home() {
       </>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Close settings" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:20,backgroundColor:'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:61,right:12,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,width:Math.min(340,screenWidth-24),maxHeight:screenHeight*0.72,padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.99)',borderWidth:1,borderColor:'rgba(198,163,106,0.65)',shadowColor:'#000',shadowOpacity:0.45,shadowRadius:18,shadowOffset:{width:0,height:8},elevation:24}}>
           <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
             <Text style={{color:C.ivory,fontSize:12,fontWeight:'900',letterSpacing:1.5}}>DISCOVER SETTINGS</Text>
