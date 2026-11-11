@@ -12,10 +12,15 @@ async function load() {
   loading = true;
   try {
     const webgpu = typeof navigator !== 'undefined' && !!navigator.gpu;
-    estimator = await pipeline('depth-estimation', MODEL, {
-      device: webgpu ? 'webgpu' : 'wasm',
-      dtype: webgpu ? 'fp16' : 'q8',
-    });
+    if (webgpu) {
+      try {
+        estimator = await pipeline('depth-estimation', MODEL, { device: 'webgpu', dtype: 'fp16' });
+      } catch {
+        // Some browsers expose WebGPU but cannot allocate or run this model.
+        estimator = null;
+      }
+    }
+    if (!estimator) estimator = await pipeline('depth-estimation', MODEL, { device: 'wasm', dtype: 'q8' });
     return estimator;
   } finally { loading = false; }
 }
