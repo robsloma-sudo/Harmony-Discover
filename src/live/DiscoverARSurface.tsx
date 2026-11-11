@@ -17,7 +17,7 @@ type NativeProps = ViewProps & {
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }> } }) => void;
-  onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu'] } }) => void;
+  onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics'] } }) => void;
 };
 
 let NativeARView: React.ComponentType<NativeProps> | null = null;
@@ -95,7 +95,7 @@ function WebLiveCamera(props: NativeProps) {
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu } });
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: result.bottles.length, candidates: result.bottles.map((b, i) => ({ trackId: i + 1, x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })) } });
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
