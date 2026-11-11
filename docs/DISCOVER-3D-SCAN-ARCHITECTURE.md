@@ -190,3 +190,29 @@ Store large mesh/texture/evidence assets in private Discover storage with owner-
 ## Immediate next action
 
 Build a native iOS capability probe and one-object tracking prototype first. Before coding native modules, confirm the exact iPhone/iPad model used for testing; LiDAR and supported AR features vary by model. This specification does not authorize production deployment or changes to Harmony Core/Journeys.
+
+
+## First test device: iPhone 17 (standard, not Pro)
+
+The first target device supplied for this work is **iPhone 17**. Apple’s standard iPhone 17 specifications list the A19 chip, camera sensors, gyroscope and accelerometer, but do not list a LiDAR Scanner. The iPhone 17 Pro specifications do list LiDAR. Therefore the first implementation must not assume LiDAR scene depth or LiDAR mesh reconstruction.
+
+### iPhone 17 implementation profile
+
+- Use ARKit world tracking and camera/IMU motion tracking where supported.
+- Probe ARKit support at runtime; do not hardcode device support based only on the marketing model name.
+- Treat metric depth and mesh reconstruction as unavailable unless the runtime capability probe positively reports them.
+- Use multi-view camera motion, feature tracking, silhouette fitting and parametric bottle geometry for the first 3D prototype.
+- Use a known-size reference object or user-entered calibration only when metric dimensions are requested. Otherwise show proportions and explicitly estimated dimensions.
+- Keep the live blue contour anchored to tracked image features/object pose. Do not imply a LiDAR-derived mesh.
+- Keep close-up still-frame OCR for small print; the live overlay can remain smooth while OCR runs on selected frames.
+- Keep Smart Scan and Menu Pages as the immediate fallback if AR tracking is unsupported, interrupted or low-confidence.
+
+### Phase 0 decision
+
+The hardware target is now known well enough to begin an iPhone-first prototype. The next engineering task is a native iOS ARKit capability probe and one-object tracking proof of concept. The probe must report world-tracking support, scene-depth support, smoothed-scene-depth support and scene-reconstruction support independently, plus runtime tracking state. Do not create database tables, upload scans or alter production services for this prototype.
+
+### Device evidence
+
+- Apple iPhone 17 technical specifications: https://support.apple.com/en-us/125089
+- Apple iPhone 17 Pro technical specifications (LiDAR listed): https://support.apple.com/en-us/125091
+- Apple ARKit scene reconstruction overview: https://developer.apple.com/documentation/ARKit/visualizing-and-interacting-with-a-reconstructed-scene
