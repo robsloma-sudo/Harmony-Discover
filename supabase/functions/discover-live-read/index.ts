@@ -30,7 +30,13 @@ const DETAILS: Record<string, string> = {
   cask_finish: "cask or oak finish as printed (e.g. Sherry Cask, Port Finish, French Oak, New Charred Oak)",
   flavor: "flavour as printed for flavoured products (e.g. Peach, Vanilla)",
   batch: "batch, barrel or bottle number as printed",
-  importer: "importer as printed",\n  subcategory: "specific beverage subtype (e.g. Scotch whisky, American whiskey, Cognac, Armagnac, Pisco, red wine, white wine, sparkling wine)",\n  package_type: "container type as seen or printed (glass bottle, can, keg, growler, carton, pouch)",\n  package_size: "net contents or package size as printed",\n  sku: "SKU or item code printed on package",\n  barcode: "UPC, EAN or other barcode digits only when decoded from a barcode",\n  style: "beverage style as printed (e.g. IPA, lager, stout, brut, rosé)",
+  importer: "importer as printed",
+  subcategory: "specific beverage subtype (e.g. Scotch whisky, American whiskey, Cognac, Armagnac, Pisco, red wine, white wine, sparkling wine)",
+  package_type: "container type as seen or printed (glass bottle, can, keg, growler, carton, pouch)",
+  package_size: "net contents or package size as printed",
+  sku: "SKU or item code printed on package",
+  barcode: "UPC, EAN or other barcode digits only when decoded from a barcode",
+  style: "beverage style as printed (e.g. IPA, lager, stout, brut, rosé)",
 };
 const DETAIL_KEYS = Object.keys(DETAILS);
 const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
