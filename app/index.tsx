@@ -20,12 +20,10 @@ export default function Home() {
   const [capturing, setCapturing] = useState(false);
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [cameraMessage, setCameraMessage] = useState('');
-  const [liveScan, setLiveScan] = useState(false);
+  const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const { addPages } = useScan();
 
   const capture = async () => {
-    // One scan button for everything: on the web build the live scan (bottles and menus) starts right here, with no page change.
-    if (Platform.OS === 'web') { setLiveScan(true); return; }
     if (capturing) return;
     if (!permission?.granted) {
       const result = await requestPermission();
@@ -36,7 +34,10 @@ export default function Home() {
       setCapturing(true);
       setCameraMessage('');
       const photo = await camera.current?.takePictureAsync({ quality: 0.85 });
-      if (photo?.uri) { addPages([photo.uri], 'camera'); router.push('/preview'); }
+      // One scan button for everything. On the web build the photo freezes on this screen and the
+      // scanner runs over it (bottles and menus); there is no page change.
+      if (photo?.uri && Platform.OS === 'web') setScanPhotos([photo.uri]);
+      else if (photo?.uri) { addPages([photo.uri], 'camera'); router.push('/preview'); }
       else setCameraMessage('The camera did not return an image. Try again.');
     } catch {
       setCameraMessage('Could not capture this image. Please try again.');
@@ -45,13 +46,17 @@ export default function Home() {
 
   const openGallery = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 10, quality: 0.85 });
-      if (!result.canceled && result.assets.length) { addPages(result.assets.map(a => a.uri), 'gallery'); router.push('/preview'); }
+      const web = Platform.OS === 'web';
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: web ? 6 : 10, quality: 0.85 });
+      if (result.canceled || !result.assets.length) return;
+      // On the web build up to six photos freeze on this screen, each with its own scanner.
+      if (web) setScanPhotos(result.assets.slice(0, 6).map(a => a.uri));
+      else { addPages(result.assets.map(a => a.uri), 'gallery'); router.push('/preview'); }
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
   };
 
-  // The live scan replaces the viewfinder in place (and takes over the camera) until it is closed.
-  if (liveScan && Platform.OS === 'web') return <LiveScanner onClose={() => setLiveScan(false)} />;
+  // The frozen photos and their scanners take over this screen until the person is done.
+  if (scanPhotos && Platform.OS === 'web') return <LiveScanner photos={scanPhotos} onClose={() => setScanPhotos(null)} />;
   if (!permission) return <View style={s.loading}><Text style={s.loadingText}>DISCOVER</Text></View>;
 
   return (
