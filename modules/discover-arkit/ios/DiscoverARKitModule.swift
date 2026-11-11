@@ -1,6 +1,8 @@
 import ExpoModulesCore
 import ARKit
 import SceneKit
+import Vision
+import CoreImage
 import UIKit
 
 public class DiscoverARKitModule: Module {
@@ -37,7 +39,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -72,6 +74,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onTrackingUpdate = EventDispatcher()
   let onARReady = EventDispatcher()
   let onARError = EventDispatcher()
+  let onVisualCandidates = EventDispatcher()
+  private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
+  private var lastVisionFrameTime: TimeInterval = 0
+  private let rectangleOverlay = CAShapeLayer()
 
   private lazy var sceneView: ARSCNView = {
     let view = ARSCNView(frame: .zero)
@@ -80,12 +86,18 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     view.session.delegate = self
     view.backgroundColor = .black
     addSubview(view)
+    rectangleOverlay.strokeColor = UIColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 0.98).cgColor
+    rectangleOverlay.fillColor = UIColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 0.07).cgColor
+    rectangleOverlay.lineWidth = 2.0
+    rectangleOverlay.lineJoin = .round
+    view.layer.addSublayer(rectangleOverlay)
     return view
   }()
 
   public override func layoutSubviews() {
     super.layoutSubviews()
     sceneView.frame = bounds
+    rectangleOverlay.frame = sceneView.bounds
   }
 
   public override func didMoveToWindow() {
@@ -99,6 +111,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard active != isActive else { return }
     isActive = active
     if !active {
+      rectangleOverlay.path = nil
       sceneView.session.pause()
       lastTrackingState = "paused"
       onTrackingUpdate(["state": "paused", "reason": "view_inactive"])
@@ -120,6 +133,72 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     }
     sceneView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
     onARReady(["state": "starting"])
+  }
+
+  public func session(_ session: ARSession, didUpdate frame: ARFrame) {
+    guard isActive else { return }
+    let now = frame.timestamp
+    guard now - lastVisionFrameTime >= 0.25 else { return }
+    lastVisionFrameTime = now
+    let pixelBuffer = frame.capturedImage
+    let imageWidth = CVPixelBufferGetWidth(pixelBuffer)
+    let imageHeight = CVPixelBufferGetHeight(pixelBuffer)
+
+    visionQueue.async { [weak self] in
+      guard let self else { return }
+      let request = VNDetectRectanglesRequest()
+      request.maximumObservations = 8
+      request.minimumConfidence = 0.55
+      request.minimumSize = 0.04
+      request.minimumAspectRatio = 0.12
+      request.maximumAspectRatio = 0.98
+      request.quadratureTolerance = 25
+      do {
+        try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform([request])
+        let observations = (request.results ?? []).map { observation -> [String: Double] in
+          let box = observation.boundingBox
+          return [
+            "x": Double(box.minX),
+            "y": Double(1.0 - box.maxY),
+            "width": Double(box.width),
+            "height": Double(box.height),
+            "confidence": Double(observation.confidence)
+          ]
+        }
+        DispatchQueue.main.async { [weak self] in
+          guard let self, self.isActive else { return }
+          self.drawCandidates(observations, imageWidth: imageWidth, imageHeight: imageHeight)
+          self.onVisualCandidates(["count": observations.count, "candidates": observations])
+        }
+      } catch {
+        DispatchQueue.main.async { [weak self] in
+          self?.onARError(["message": "Live visual analysis failed: \(error.localizedDescription)"])
+        }
+      }
+    }
+  }
+
+  private func drawCandidates(_ candidates: [[String: Double]], imageWidth: Int, imageHeight: Int) {
+    let viewSize = sceneView.bounds.size
+    guard viewSize.width > 0, viewSize.height > 0, imageWidth > 0, imageHeight > 0 else { return }
+    let scale = max(viewSize.width / CGFloat(imageWidth), viewSize.height / CGFloat(imageHeight))
+    let renderedWidth = CGFloat(imageWidth) * scale
+    let renderedHeight = CGFloat(imageHeight) * scale
+    let offsetX = (viewSize.width - renderedWidth) / 2
+    let offsetY = (viewSize.height - renderedHeight) / 2
+    let path = UIBezierPath()
+    for candidate in candidates {
+      guard let x = candidate["x"], let y = candidate["y"],
+            let width = candidate["width"], let height = candidate["height"] else { continue }
+      let rect = CGRect(
+        x: offsetX + CGFloat(x) * renderedWidth,
+        y: offsetY + CGFloat(y) * renderedHeight,
+        width: CGFloat(width) * renderedWidth,
+        height: CGFloat(height) * renderedHeight
+      )
+      path.append(UIBezierPath(roundedRect: rect, cornerRadius: 5))
+    }
+    rectangleOverlay.path = path.cgPath
   }
 
   public func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
