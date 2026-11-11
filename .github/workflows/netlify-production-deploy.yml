@@ -55,5 +55,8 @@ jobs:
           test -s dist/index.html
           echo "Verified dist/index.html exists."
 
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli
+
       - name: Deploy prebuilt output to the explicitly selected Netlify site
         run: netlify deploy --prod --dir=dist --message "Harmony Discover main ${GITHUB_SHA}"
