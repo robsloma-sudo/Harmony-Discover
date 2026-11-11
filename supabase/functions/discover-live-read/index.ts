@@ -8,14 +8,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.2";
+const VERSION = "0.3.3";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
 const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
 const MIN_LABEL_CONFIDENCE = 0.65;
-const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "other"];
+const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "pisco", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "non_alcoholic_beer", "other"];
 // Everything else a label can carry. Each is copied only when printed; which ones matter depends on the bottle:
 // wine (producer, vintage, appellation, grapes, classification), spirits (age, cask finish, batch, flavour), any (certifications).
 const DETAILS: Record<string, string> = {
@@ -30,7 +30,7 @@ const DETAILS: Record<string, string> = {
   cask_finish: "cask or oak finish as printed (e.g. Sherry Cask, Port Finish, French Oak, New Charred Oak)",
   flavor: "flavour as printed for flavoured products (e.g. Peach, Vanilla)",
   batch: "batch, barrel or bottle number as printed",
-  importer: "importer as printed",
+  importer: "importer as printed",\n  subcategory: "specific beverage subtype (e.g. Scotch whisky, American whiskey, Cognac, Armagnac, Pisco, red wine, white wine, sparkling wine)",\n  package_type: "container type as seen or printed (glass bottle, can, keg, growler, carton, pouch)",\n  package_size: "net contents or package size as printed",\n  sku: "SKU or item code printed on package",\n  barcode: "UPC, EAN or other barcode digits only when decoded from a barcode",\n  style: "beverage style as printed (e.g. IPA, lager, stout, brut, rosé)",
 };
 const DETAIL_KEYS = Object.keys(DETAILS);
 const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
@@ -214,7 +214,9 @@ Deno.serve(async (req: Request) => {
     const found = await match(queries);   // matched again on the server; the browser's ids are never trusted
     const venue = clean(body.venue_name, 120) || null;
     const rows = incoming.map((b, i) => {
-      const m = found.find((f) => f.q === queries[i]); const hit = m?.id && m.product && m.category && (m.score ?? 0) >= 0.6;
+      const m = found.find((f) => f.q === queries[i]);
+      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
+      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: b.details, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
