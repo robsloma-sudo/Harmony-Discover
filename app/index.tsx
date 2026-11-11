@@ -22,6 +22,8 @@ export default function Home() {
   const { addPages } = useScan();
 
   const capture = async () => {
+    // One scan button for everything: on the web build it opens the live scanner (bottles and menus).
+    if (Platform.OS === 'web') { router.push('/live' as never); return; }
     if (capturing) return;
     if (!permission?.granted) {
       const result = await requestPermission();

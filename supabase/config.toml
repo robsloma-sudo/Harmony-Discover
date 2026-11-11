@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.discover-api]
 verify_jwt = false
+
+[functions.discover-live-read]
+verify_jwt = true
