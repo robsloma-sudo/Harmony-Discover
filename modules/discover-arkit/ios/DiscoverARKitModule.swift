@@ -77,6 +77,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
+  private var nextCandidateTrackID = 1
+  private var previousCandidates: [(id: Int, rect: CGRect, confidence: CGFloat)] = []
   private let rectangleOverlay = CAShapeLayer()
 
   private lazy var sceneView: ARSCNView = {
@@ -112,6 +114,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     isActive = active
     if !active {
       rectangleOverlay.path = nil
+      previousCandidates.removeAll()
       sceneView.session.pause()
       lastTrackingState = "paused"
       onTrackingUpdate(["state": "paused", "reason": "view_inactive"])
@@ -134,6 +137,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let pixelBuffer = frame.capturedImage
+    CVPixelBufferRetain(pixelBuffer)
     let rawWidth = CVPixelBufferGetWidth(pixelBuffer)
     let rawHeight = CVPixelBufferGetHeight(pixelBuffer)
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
@@ -143,7 +147,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     visionQueue.async { [weak self] in
-      defer { self?.visionFrameGate.signal() }
+      defer {
+        CVPixelBufferRelease(pixelBuffer)
+        self?.visionFrameGate.signal()
+      }
       guard let self else { return }
       let request = VNDetectRectanglesRequest()
       request.maximumObservations = 8
@@ -166,8 +173,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         }
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          self.drawCandidates(observations, imageWidth: imageWidth, imageHeight: imageHeight)
-          self.onVisualCandidates(["count": observations.count, "candidates": observations])
+          let tracked = self.associateCandidates(observations)
+          self.drawCandidates(tracked, imageWidth: imageWidth, imageHeight: imageHeight)
+          self.onVisualCandidates(["count": tracked.count, "candidates": tracked])
         }
       } catch {
         DispatchQueue.main.async { [weak self] in
@@ -175,6 +183,65 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         }
       }
     }
+  }
+
+  private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
+    let incoming: [(rect: CGRect, confidence: CGFloat)] = observations.compactMap { item in
+      guard let x = item["x"], let y = item["y"], let w = item["width"],
+            let h = item["height"], let confidence = item["confidence"] else { return nil }
+      return (CGRect(x: x, y: y, width: w, height: h), CGFloat(confidence))
+    }
+    var usedPrevious = Set<Int>()
+    var next: [(id: Int, rect: CGRect, confidence: CGFloat)] = []
+    var output: [[String: Double]] = []
+
+    for candidate in incoming {
+      var bestIndex: Int?
+      var bestOverlap: CGFloat = 0
+      for (index, previous) in previousCandidates.enumerated() where !usedPrevious.contains(index) {
+        let overlap = Self.intersectionOverUnion(candidate.rect, previous.rect)
+        if overlap > bestOverlap {
+          bestOverlap = overlap
+          bestIndex = index
+        }
+      }
+      let trackID: Int
+      let smoothedRect: CGRect
+      if let bestIndex, bestOverlap >= 0.18 {
+        usedPrevious.insert(bestIndex)
+        let previous = previousCandidates[bestIndex]
+        trackID = previous.id
+        smoothedRect = CGRect(
+          x: previous.rect.minX * 0.62 + candidate.rect.minX * 0.38,
+          y: previous.rect.minY * 0.62 + candidate.rect.minY * 0.38,
+          width: previous.rect.width * 0.62 + candidate.rect.width * 0.38,
+          height: previous.rect.height * 0.62 + candidate.rect.height * 0.38
+        )
+      } else {
+        trackID = nextCandidateTrackID
+        nextCandidateTrackID += 1
+        smoothedRect = candidate.rect
+      }
+      next.append((trackID, smoothedRect, candidate.confidence))
+      output.append([
+        "trackId": Double(trackID),
+        "x": Double(smoothedRect.minX),
+        "y": Double(smoothedRect.minY),
+        "width": Double(smoothedRect.width),
+        "height": Double(smoothedRect.height),
+        "confidence": Double(candidate.confidence)
+      ])
+    }
+    previousCandidates = next
+    return output
+  }
+
+  private static func intersectionOverUnion(_ a: CGRect, _ b: CGRect) -> CGFloat {
+    let intersection = a.intersection(b)
+    guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else { return 0 }
+    let intersectionArea = intersection.width * intersection.height
+    let unionArea = a.width * a.height + b.width * b.height - intersectionArea
+    return unionArea > 0 ? intersectionArea / unionArea : 0
   }
 
   private func drawCandidates(_ candidates: [[String: Double]], imageWidth: Int, imageHeight: Int) {
@@ -227,6 +294,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.rectangleOverlay.path = nil
+        self.previousCandidates.removeAll()
         self.onVisualCandidates(["count": 0, "candidates": []])
       }
     }
