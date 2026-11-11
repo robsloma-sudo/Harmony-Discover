@@ -106,7 +106,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
-      return output;
+      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence }));
     };
 
     // Keep a single request in flight and pace requests by start time, not by
