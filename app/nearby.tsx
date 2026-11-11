@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Image, Linking, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { Screen, styles, colors } from '../src/ui';
 import { findNearbyVenues, type DiscoverVenue, type VenueRadius } from '../src/services/discoverVenueApi';
@@ -19,14 +20,15 @@ function mapUrl(latitude:number,longitude:number,zoom=13) {
   return 'https://staticmap.openstreetmap.de/staticmap.php?center='+latitude+','+longitude+'&zoom='+zoom+'&size=900x520&maptype=mapnik&markers='+latitude+','+longitude+',red-pushpin';
 }
 export default function Nearby() {
-  const [radius,setRadius]=useState<VenueRadius>(5);
-  const [category,setCategory]=useState('');
+  const params = useLocalSearchParams<{ radius?: string; category?: string; search?: string; recenter?: string }>();
+  const [radius,setRadius]=useState<VenueRadius>([1,5,10,15,20].includes(Number(params.radius)) ? Number(params.radius) as VenueRadius : 5);
+  const [category,setCategory]=useState(typeof params.category === 'string' ? params.category : '');
   const [venues,setVenues]=useState<DiscoverVenue[]>([]);
   const [coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null);
   const [loading,setLoading]=useState(false);
   const [locating,setLocating]=useState(false);
   const [error,setError]=useState('');
-  const [query,setQuery]=useState('');
+  const [query,setQuery]=useState(typeof params.search === 'string' ? params.search : '');
   const [mapFailed,setMapFailed]=useState(false);
 
   const loadLocation=useCallback(()=>{
@@ -41,6 +43,16 @@ export default function Nearby() {
       setLocating(false);
     },err=>{setError(locationErrorMessage(err));setLocating(false);},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
   },[]);
+
+  useEffect(()=>{
+    if (typeof params.radius === 'string' && [1,5,10,15,20].includes(Number(params.radius))) setRadius(Number(params.radius) as VenueRadius);
+    if (typeof params.category === 'string' && ['', 'all', 'bar', 'cocktail_bar', 'restaurant', 'brewery', 'winery', 'distillery'].includes(params.category)) setCategory(params.category === 'all' ? '' : params.category);
+    if (typeof params.search === 'string') setQuery(params.search.slice(0,100));
+  },[params.radius,params.category,params.search]);
+
+  useEffect(()=>{
+    if (params.recenter) loadLocation();
+  },[params.recenter,loadLocation]);
 
   useEffect(()=>{
     if(!coords)return;
