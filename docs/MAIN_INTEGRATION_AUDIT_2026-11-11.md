@@ -93,3 +93,18 @@ Do not invent or replay replacement historical migrations against the existing D
 7. Re-test the original error. If it persists, capture the browser console and Network response for the first failing request; do not change backend secrets until the request proves the problem is server-side.
 
 Netlify's deploy overview documents separate production, Deploy Preview, and branch-deploy contexts and context-specific environment variables: https://docs.netlify.com/deploy/deploy-overview/. The Deploys page retains historical deploys and identifies the source branch/commit: https://docs.netlify.com/deploy/manage-deploys/manage-deploys-overview/.
+
+## Compiled artifact inspection — 11 November 2026
+- Downloaded the exact GitHub Actions artifact ID `13865474816` from run `43044701158` (commit `8808dc9422ae2ab81a789ecdf2844c4ad7bda990`), and inspected the exported web bundle.
+- The artifact contains `_expo/static/js/web/entry-edc7c23e6dab52dc6d2d7c58e24f0ff9.js` (1,797,603 bytes) plus 17 route HTML files.
+- The compiled bundle contains the expected Discover DEV Supabase URL `https://lqqmwqrffelgnbngrkep.supabase.co`, the DEV publishable key, and the constructed endpoint `https://lqqmwqrffelgnbngrkep.supabase.co/functions/v1/discover-api`.
+- The compiled bundle also contains the literal guard/error `Discover API is not configured.`, but the same bundle sets `DISCOVER_API_URL` from the non-empty DEV URL. Therefore this guard should not fire in this exact artifact unless runtime module initialization is altered or a different bundle is served.
+- This is strong evidence that the validated CI artifact is configured correctly. It does **not** prove the Netlify site is serving this artifact. Since the live preview has displayed the guard error, the leading explanation is that Netlify is serving a different/older frontend bundle or a different site/build.
+- The publishable key is intentionally public/client-side; no service-role key was found in the inspected compiled bundle by the targeted checks. Do not treat this as a complete secret-scanning certification.
+- The exact artifact was downloaded and unpacked locally for inspection. It has not been deployed to Netlify from this session.
+
+### Next operational step
+- Netlify deployment access is not available through the connected tools in this session. Do not claim the artifact is live or that Netlify's deployed commit has been identified.
+- Use the artifact contents as the known-good deployment candidate for the isolated Discover Netlify site only. Publish the contents of the ZIP (not the ZIP file itself) to the existing Discover site's manual deploy interface, or reconnect Netlify's Git integration to the integration branch after confirming it targets the correct site and deploy context.
+- Before publishing, verify the target is `cosmic-choux-065ee2.netlify.app` and not the original Harmony site. Never deploy this DEV-only bundle to the original Harmony production domain.
+- After publishing, hard-refresh the preview and inspect the served JS asset name and response. Confirm it contains the DEV project URL and calls `/functions/v1/discover-api`. Then test the scan flow.
