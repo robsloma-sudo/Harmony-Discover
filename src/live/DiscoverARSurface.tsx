@@ -51,7 +51,11 @@ function WebLiveCamera(props: NativeProps) {
     let stream: MediaStream | null = null;
     let frameCheck = 0;
     let recognitionTimer = 0;
-    let recognitionBusy = false;\n    type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };\n    const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;\n    let barcodeDetector: BarcodeDetectorLike | null = null;\n    if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
+    let recognitionBusy = false;
+    type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };
+    const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
+    let barcodeDetector: BarcodeDetectorLike | null = null;
+    if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     let lastRecognitionStartedAt = 0;
     const recognitionIntervalMs = 2500;
 
