@@ -1,17 +1,32 @@
-import { Text, View, Pressable } from 'react-native';
+import { Text, View, Pressable, Linking } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { getMockJourney } from '../src/services/mockJourneyApi';
 
 export default function Journey() {
-  const { itemId } = useLocalSearchParams<{itemId:string}>();
+  const { itemId, source, entityType, title, brand, expression, category, proof, size, section, description, price } = useLocalSearchParams<{itemId:string;source?:string;entityType?:string;title?:string;brand?:string;expression?:string;category?:string;proof?:string;size?:string;section?:string;description?:string;price?:string}>();
   const journey = getMockJourney(itemId || 'paper-plane');
+  const isDiscoverHandoff = source === 'discover';
+  const displayTitle = typeof title === 'string' && title.trim() ? title : journey.title;
   return (
     <Screen>
       <Text style={styles.back} onPress={() => router.back()}>‹  Menu</Text>
       <Text style={styles.eyebrow}>YOUR JOURNEY</Text>
-      <Text style={styles.title}>{journey.title}</Text>
-      <Text style={styles.sub}>{journey.intro}</Text>
+      <Text style={styles.title}>{displayTitle}</Text>
+      <Text style={styles.sub}>{isDiscoverHandoff ? 'A discovery captured and reviewed in Harmony Discover. Explore the evidence here, then continue into the wider Harmony learning experience.' : journey.intro}</Text>
+      {isDiscoverHandoff && <View style={{marginTop:8,padding:15,borderWidth:1,borderColor:'#C6A36A55',borderRadius:14,gap:8,backgroundColor:'#111820'}}>
+        <Text style={styles.eyebrow}>DISCOVER SCAN · {String(entityType || 'BEVERAGE').replace('_',' ').toUpperCase()}</Text>
+        {!!brand && <Text style={styles.itemTitle}>{brand}</Text>}
+        {!!expression && <Text style={styles.categoryDesc}>{expression}</Text>}
+        {!!category && <Text style={styles.categoryDesc}>Category · {category}</Text>}
+        {!!section && <Text style={styles.categoryDesc}>Menu section · {section}</Text>}
+        {!!description && <Text style={styles.categoryDesc}>{description}</Text>}
+        {!!price && <Text style={styles.categoryDesc}>Printed price · {price}</Text>}
+        {!!proof && <Text style={styles.categoryDesc}>Proof / strength · {proof}</Text>}
+        {!!size && <Text style={styles.categoryDesc}>Package size · {size}</Text>}
+        <Text style={styles.evidence}>Source: user-initiated Discover scan. Extracted details are observations, not automatically verified canonical records.</Text>
+        <Pressable style={styles.primary} onPress={() => void Linking.openURL('https://harmony-journeys.netlify.app')}><Text style={styles.primaryText}>OPEN HARMONY JOURNEYS</Text></Pressable>
+      </View>}
       {journey.sections.map((section: { heading: string; body: string; evidence: string }) => (
         <View key={section.heading} style={styles.journeySection}>
           <Text style={styles.sectionTitle}>{section.heading}</Text>
@@ -19,9 +34,9 @@ export default function Journey() {
           <Text style={styles.evidence}>{section.evidence}</Text>
         </View>
       ))}
-      <Pressable style={styles.primary} onPress={() => router.push('/collection')}>
+      {!isDiscoverHandoff && <Pressable style={styles.primary} onPress={() => router.push('/collection')}>
         <Text style={styles.primaryText}>Save this discovery</Text>
-      </Pressable>
+      </Pressable>}
     </Screen>
   );
 }
