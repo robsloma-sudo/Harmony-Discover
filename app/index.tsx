@@ -256,6 +256,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const value = event.nativeEvent;
             if (value.bottles) {
               setLiveBottles(value.bottles);
+              setLivePhysicalIds(value.bottles.map(() => ''));
               setLiveReadAt(Date.now());
               setLiveBottleFrameTimestamp(value.frameTimestamp);
               const nearestDepth = depthFramesRef.current.reduce<ARKitDepthFrame | null>((best, frame) => {
