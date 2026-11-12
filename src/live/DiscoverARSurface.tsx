@@ -153,8 +153,10 @@ function WebLiveCamera(props: NativeProps) {
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
         if (bestIndex >= 0) used.add(bestIndex);
         const blend = previous ? 0.38 : 1;
+        const id = previous?.id ?? nextWebTrackId++;
         const track: WebTrack = {
-          id: previous?.id ?? nextWebTrackId++,
+          id,
+          trackId: id,
           x: previous ? previous.x * (1 - blend) + detection.x * blend : detection.x,
           y: previous ? previous.y * (1 - blend) + detection.y * blend : detection.y,
           width: previous ? previous.width * (1 - blend) + detection.width * blend : detection.width,
@@ -201,12 +203,13 @@ function WebLiveCamera(props: NativeProps) {
     };
 
     const runLocalTrackingFrame = () => {
-      if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled || trackingBusy || !webTracks.length) return;
+      if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled || trackingBusy) return;
       trackingBusy = true;
       try {
         const frame = captureTrackingFrame();
         if (!frame) return;
         latestGrayFrame = frame;
+        if (!webTracks.length) return;
         webTracks = webTracks
           .map(track => propagateMotionTrack(track, frame))
           .filter(track => track.misses < 6 && track.confidence >= 0.12);
