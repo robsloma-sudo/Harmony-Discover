@@ -81,6 +81,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onDepthEstimate = EventDispatcher()
   let onDepthStatus = EventDispatcher()
   let onCapturedImage = EventDispatcher()
+  let onFrame = EventDispatcher()
   private var lastCaptureRequestId = 0
   private var lastCloudFrameTime: TimeInterval = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
