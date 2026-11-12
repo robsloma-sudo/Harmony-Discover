@@ -448,10 +448,9 @@ export function DiscoverARSurface(props: NativeProps) {
       nativeFrameReadBusy = true;
       const frame = event.nativeEvent;
       void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
-        const signals = nativeVisionSignals.current.reduce<typeof nativeVisionSignals.current[number] | null>((best, candidate) => {
-          if (!best) return candidate;
-          return Math.abs(candidate.frameTimestamp - frame.timestamp) < Math.abs(best.frameTimestamp - frame.timestamp) ? candidate : best;
-        }, null);
+        const signals = [...nativeVisionSignals.current].sort((a, b) =>
+          Math.abs(a.frameTimestamp - frame.timestamp) - Math.abs(b.frameTimestamp - frame.timestamp),
+        )[0] || null;
         const signalsAreSameFrame = !!signals && Math.abs(signals.frameTimestamp - frame.timestamp) <= 0.20;
         const cloudText = result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean);
         const mergedText = Array.from(new Set([...cloudText, ...(signalsAreSameFrame ? signals!.text : [])]));
