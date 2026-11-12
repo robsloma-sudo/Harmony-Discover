@@ -30,7 +30,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead; contour?: Array<{ x: number; y: number }> }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   /** Web only: enable relative depth inference only on screens that consume it. */
   browserDepth?: boolean;
@@ -125,7 +125,7 @@ function WebLiveCamera(props: NativeProps) {
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
-    type WebTrack = MotionTrack & { id: number; lastSeenAt: number; bottle?: BottleRead };
+    type WebTrack = MotionTrack & { id: number; lastSeenAt: number; bottle?: BottleRead; contour?: Array<{ x: number; y: number }> };
     let webTracks: WebTrack[] = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
@@ -135,7 +135,7 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
-    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead }>) => {
+    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead; contour?: Array<{ x: number; y: number }> }>) => {
       const now = Date.now();
       const used = new Set<number>();
       const next: WebTrack[] = [];
@@ -175,7 +175,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
-      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle }));
+      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour }));
     };
 
     const captureTrackingFrame = (): GrayFrame | null => {
@@ -220,7 +220,7 @@ function WebLiveCamera(props: NativeProps) {
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
           source: 'local',
-          candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })),
+          candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour })),
         } });
       } catch {
         // A failed local frame must not break camera recognition; cloud reads remain the recovery path.
