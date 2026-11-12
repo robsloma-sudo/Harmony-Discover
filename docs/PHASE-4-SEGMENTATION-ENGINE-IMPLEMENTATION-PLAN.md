@@ -119,8 +119,10 @@ Product identity confidence, bottle detection confidence, mask confidence, and p
 
 ### Build validation
 - D-FINE export, graph inspection, ONNX CPU smoke test, and model provenance packaging have succeeded.
-- A native iOS simulator build has succeeded on the platform-separated runtime branch. This is a compile check only, not a physical-device test.
-- The latest web camera integration CI is still pending. An earlier web export caught Metro resolving the native/server stub instead of the web runtime; platform-specific `.web.ts` loader and an exported-bundle check have been added to catch this.
+- Actual ONNX Runtime Web WASM execution with the committed model passed CI; output names and tensor shapes matched the inspected graph contract.
+- TypeScript, scanner/segmentation tests, Deno live-reader check, Expo web export, and exported-app asset verification all passed on commit `18a8f8fb`.
+- The exported client bundle contains the browser-specific model loader and the minimal same-origin WASM runtime assets.
+- A native iOS simulator build has also succeeded on the platform-separated runtime branch. This is a compile check only, not a physical-device test.
 
 ### Still not complete
 - No actual bottle camera frame has yet been shown to produce and render a D-FINE mask in a running browser.
