@@ -50,6 +50,9 @@ begin
   if not (select relrowsecurity from pg_class where oid='public.discover_bottle_save_usage'::regclass) then
     raise exception 'save usage table must have RLS enabled';
   end if;
+  if not exists (select 1 from pg_indexes where schemaname='public' and indexname='discover_bottle_save_usage_day_idx') then
+    raise exception 'daily save usage sum must have a day index';
+  end if;
   if has_table_privilege('anon','public.discover_bottle_save_usage','SELECT')
      or has_table_privilege('authenticated','public.discover_bottle_save_usage','SELECT') then
     raise exception 'client roles must not read save usage counters';
