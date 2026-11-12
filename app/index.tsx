@@ -157,8 +157,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
             if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
-            if (value.barcodes) setLiveBarcodes(value.barcodes);
-            if (value.text) setLiveLabelText(value.text);
+            if (value.barcodes) setLiveBarcodes(previous => JSON.stringify(previous) === JSON.stringify(value.barcodes) ? previous : value.barcodes);
+            if (value.text) setLiveLabelText(previous => previous.join('\u0000') === value.text!.join('\u0000') ? previous : value.text!);
             if (value.menu) setLiveMenu(value.menu);
           }}
           onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
