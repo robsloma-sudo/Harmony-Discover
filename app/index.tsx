@@ -232,9 +232,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
         <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
         <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>{setLiveReadConsent(true);setLiveReadNoticeDismissed(true);}} style={{marginTop:9,alignSelf:'flex-start',paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
-          <Text style={{color:'#111',fontSize:9,fontWeight:'900',letterSpacing:0.8}}>ENABLE LIVE RECOGNITION</Text>
-        </Pressable>
+        <View style={{flexDirection:'row',alignItems:'center',gap:9,marginTop:9}}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>{setLiveReadConsent(true);setLiveReadNoticeDismissed(true);}} style={{paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
+            <Text style={{color:'#111',fontSize:9,fontWeight:'900',letterSpacing:0.8}}>ENABLE LIVE RECOGNITION</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Not now, keep live recognition off" onPress={()=>setLiveReadNoticeDismissed(true)} style={{paddingHorizontal:11,paddingVertical:9,borderRadius:8,borderWidth:1,borderColor:C.line}}>
+            <Text style={{color:C.muted,fontSize:9,fontWeight:'800',letterSpacing:0.6}}>NOT NOW</Text>
+          </Pressable>
+        </View>
       </View>}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
