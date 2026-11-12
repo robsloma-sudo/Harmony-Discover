@@ -232,3 +232,50 @@ begin
   if reclaimed.id is distinct from stale_id then raise exception 'stale processing job was not reclaimed'; end if;
   if reclaimed.attempts <> 2 then raise exception 'stale retry attempt counter did not increment'; end if;
 end $$;
+
+-- Existing legacy brand-only "identified" rows must be reconciled, not returned
+-- unchanged by the new idempotency guard.
+insert into public.product_index(id,brand,product,category)
+values ('10000000-0000-0000-0000-000000000003','Michter''s',null,null);
+insert into public.discover_products(
+  id,brand_name,product_name,identity_payload,status,created_from
+) values (
+  '40000000-0000-0000-0000-000000000001',
+  'Michter''s',null,
+  '{"match_method":"local_fuzzy_index","matched_brand":"Michter''s","matched_product":null,"matched_category":null}'::jsonb,
+  'identified','bottle_scan'
+);
+insert into public.bottle_sightings(
+  id,discover_product_id,product_index_id,match_score,
+  read_brand,read_product,read_category,read_confidence,label_details,reader,reader_version
+) values (
+  '30000000-0000-0000-0000-000000000005',
+  '40000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000003',0.92,
+  'Michter''s','Barrel Strength','American whiskey',0.96,
+  '{"classification":"Limited Release","_field_confidence":{}}'::jsonb,
+  'discover-live-read','0.3.8'
+);
+select * from public.discover_attach_sighting_to_product('30000000-0000-0000-0000-000000000005');
+do $$
+declare
+  linked_product public.discover_products%rowtype;
+  linked_sighting public.bottle_sightings%rowtype;
+begin
+  select * into linked_sighting from public.bottle_sightings
+  where id='30000000-0000-0000-0000-000000000005';
+  select * into linked_product from public.discover_products
+  where id=linked_sighting.discover_product_id;
+  if linked_sighting.discover_product_id <> '40000000-0000-0000-0000-000000000001'::uuid then
+    raise exception 'legacy fuzzy product record should be reconciled in place';
+  end if;
+  if linked_product.status <> 'candidate' then
+    raise exception 'brand-only legacy identified row must be downgraded to candidate';
+  end if;
+  if linked_product.phg_product_id is not null or linked_sighting.product_index_id is not null or linked_sighting.match_score is not null then
+    raise exception 'legacy brand-only catalog association was not cleared';
+  end if;
+  if linked_product.identity_payload ->> 'identity_status' <> 'candidate' then
+    raise exception 'legacy identity payload was not rewritten to candidate';
+  end if;
+end $$;
