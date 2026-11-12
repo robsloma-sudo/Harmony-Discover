@@ -29,8 +29,11 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
   const metricDepth = !!depthFrame && depthFrame.unit === 'meters';
   const orientation = depthFrame ? arkitOrientationFromRawValue(depthFrame.imageOrientation) : null;
   const intrinsics = depthFrame ? intrinsicsFromARKitDepth(depthFrame) : null;
+  // Candidate association is one-to-one: two cloud bottle boxes must not
+  // inherit the same transient detector ID and collapse into one world track.
+  const usedCandidateTrackIds = new Set<number>();
   const spatialPoints = metricDepth && depthFrame && orientation && intrinsics
-    ? bottles.flatMap((bottle, index) => {
+    ? [...bottles].sort((a, b) => b.confidence - a.confidence).flatMap((bottle, index) => {
         const point = unprojectDetection(
           bottle.box,
           { width: depthFrame.width, height: depthFrame.height, metres: depthFrame.depthMeters, confidence: depthFrame.confidence },
@@ -42,6 +45,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
         const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
         let best: { trackId: number; score: number } | null = null;
         for (const candidate of candidates) {
+          if (usedCandidateTrackIds.has(candidate.trackId)) continue;
           const left = Math.max(box.x, candidate.x), top = Math.max(box.y, candidate.y);
           const right = Math.min(box.x + box.width, candidate.x + candidate.width);
           const bottom = Math.min(box.y + box.height, candidate.y + candidate.height);
@@ -54,6 +58,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
           const score = overlap >= 0.05 ? overlap : distance <= 0.16 ? 0.05 * (1 - distance / 0.16) : 0;
           if (score > (best?.score ?? 0)) best = { trackId: candidate.trackId, score };
         }
+        if (best) usedCandidateTrackIds.add(best.trackId);
         return [{
           key: `${bottle.category}-${index}`,
           trackId: best?.trackId ?? null,
