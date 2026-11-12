@@ -122,7 +122,28 @@ begin
   if attached.created_new is not false then raise exception 'repeat attach must be idempotent'; end if;
   if (select count(*) from public.discover_product_evidence where discover_product_id=product.id) <> evidence_count then raise exception 'repeat attach duplicated evidence'; end if;
   if (select count(*) from public.discover_enrichment_jobs where discover_product_id=product.id) <> job_count then raise exception 'repeat attach duplicated jobs'; end if;
-end $$;
+end $;
+
+-- A second physical sighting of the same exact catalog product reuses the
+-- Discover product and must not enqueue duplicate active jobs.
+insert into public.bottle_sightings(
+  id,read_brand,read_product,read_category,read_confidence,label_details,reader,reader_version
+) values (
+  '30000000-0000-0000-0000-000000000004',
+  'Example Spirits','Reposado','tequila',0.98,
+  '{"_field_confidence":{"brand":0.98,"product":0.98}}'::jsonb,
+  'discover-live-read','0.3.8'
+);
+select * from public.discover_attach_sighting_to_product('30000000-0000-0000-0000-000000000004');
+do $
+begin
+  if (select count(*) from public.discover_products where phg_product_id='10000000-0000-0000-0000-000000000001') <> 1 then
+    raise exception 'same catalog product created a duplicate Discover product';
+  end if;
+  if (select count(*) from public.discover_enrichment_jobs where discover_product_id=(select discover_product_id from public.bottle_sightings where id='30000000-0000-0000-0000-000000000004')) <> 2 then
+    raise exception 'second physical sighting duplicated active jobs';
+  end if;
+end $;
 
 -- SKU/package differentiators must prevent a legacy catalog identity merge.
 insert into public.bottle_sightings(
