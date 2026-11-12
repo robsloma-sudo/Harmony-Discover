@@ -94,8 +94,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const gy = -gray[i - EW - 1] - 2 * gray[i - EW] - gray[i - EW + 1] + gray[i + EW - 1] + 2 * gray[i + EW] + gray[i + EW + 1];
         const m = Math.abs(gx) + Math.abs(gy);
         const nx = x / EW, ny = y / EH;
-        const relevant = boxesRef.current.some(box => nx >= box.x0 && nx <= box.x1 && ny >= box.y0 && ny <= box.y1);
-        alpha[i] = relevant && m >= 90 ? Math.min(255, (m - 90) * 2.2) : 0;
+        alpha[i] = m < 90 ? 0 : Math.min(255, (m - 90) * 2.2);
       }
       const canvas = canvasRef.current; if (!canvas) return;
       canvas.width = EW; canvas.height = EH;
@@ -107,7 +106,16 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const row = Math.round(p * (EH - 1));
         if (lastRow < 0) lastRow = row;
         const a = Math.min(row, lastRow), b = Math.max(row, lastRow); let dirty = false;
-        for (let y = a; y <= b; y += 1) { if (shown[y]) continue; shown[y] = 1; shownCount += 1; dirty = true; for (let x = 0; x < EW; x += 1) { const i = y * EW + x, k = i * 4; o[k] = 226; o[k + 1] = 238; o[k + 2] = 255; o[k + 3] = alpha[i]; } }
+        for (let y = a; y <= b; y += 1) {
+          // Wait for object recognition; never trace the room while recognition is pending.
+          if (!boxesRef.current.length || shown[y]) continue;
+          shown[y] = 1; shownCount += 1; dirty = true;
+          for (let x = 0; x < EW; x += 1) {
+            const i = y * EW + x, k = i * 4, nx = x / EW, ny = y / EH;
+            const relevant = boxesRef.current.some(box => nx >= box.x0 && nx <= box.x1 && ny >= box.y0 && ny <= box.y1);
+            o[k] = 226; o[k + 1] = 238; o[k + 2] = 255; o[k + 3] = relevant ? alpha[i] : 0;
+          }
+        }
         if (dirty) ctx.putImageData(out, 0, 0, 0, a, EW, b - a + 1);
         lastRow = row;
         const working = readingRef.current || shownCount < EH;
