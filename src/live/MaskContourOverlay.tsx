@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LayoutChangeEvent, StyleSheet, View } from 'react-native';
-import { contourSegments, type NormalizedPoint } from './contourGeometry';
+import { contourSegments, mapNormalizedPointsToCover, type NormalizedPoint } from './contourGeometry';
 
 type Props = {
   points?: NormalizedPoint[];
@@ -22,21 +22,8 @@ export function MaskContourOverlay({ points, color = '#1677FF', strokeWidth = 2.
     if (width !== size.width || height !== size.height) setSize({ width, height });
   };
   if (!points || points.length < 3) return null;
-  const hasSourceSize = !!sourceWidth && !!sourceHeight && sourceWidth > 0 && sourceHeight > 0 && size.width > 0 && size.height > 0;
-  const displayPoints = hasSourceSize
-    ? (() => {
-        // Match the camera's objectFit:'cover' crop. Stretching normalized mask
-        // coordinates to the view distorts and shifts contours on portrait phones.
-        const scale = Math.max(size.width / sourceWidth!, size.height / sourceHeight!);
-        const renderedWidth = sourceWidth! * scale;
-        const renderedHeight = sourceHeight! * scale;
-        const cropLeft = (renderedWidth - size.width) / 2;
-        const cropTop = (renderedHeight - size.height) / 2;
-        return points.map(point => ({
-          x: (point.x * renderedWidth - cropLeft) / size.width,
-          y: (point.y * renderedHeight - cropTop) / size.height,
-        }));
-      })()
+  const displayPoints = sourceWidth && sourceHeight
+    ? mapNormalizedPointsToCover(points, sourceWidth, sourceHeight, size.width, size.height)
     : points;
   const segments = contourSegments(displayPoints, size.width, size.height);
   return (
