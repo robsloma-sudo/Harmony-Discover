@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
+import type { ARTrackingUpdate, ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const C={bg:'#090D12',panel:'#111821',line:'rgba(198,163,106,0.24)',gold:'#C6A36A',white:'#F0F1F2',muted:'#929AA5',green:'#7DFFB5',amber:'#FFD27A'};
@@ -16,9 +18,12 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}) {
+type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>; bottles?: BottleRead[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+
+export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],menu,lastReadAt}:LiveInventoryProps={}) {
   const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
   const toggle=(id:string)=>setExpanded(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id]);
+  const metricDepthSamples=depthFrame?.depthMeters.filter(value=>Number.isFinite(value)&&value>0).length ?? 0;
   return <View style={s.root}>
     <View style={s.header}>
       <View style={s.grabber}/>
@@ -32,13 +37,16 @@ export function LiveInventoryPanel({onClose}:{onClose?:()=>void}={}) {
       <View style={s.status}>
         <View style={s.dot}/>
         <View style={{flex:1}}>
-          <Text style={s.statusTitle}>VIEWFINDER READY</Text>
-          <Text style={s.statusBody}>The camera stays on the main screen. Scanner controls and results belong here.</Text>
+          <Text style={s.statusTitle}>SHARED CAMERA · {tracking?.state?.toUpperCase().replace('_',' ') || 'STARTING'}</Text>
+          <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}{depthFrame ? ` · ${metricDepthSamples} metric depth samples` : ''}</Text>
         </View>
       </View>
-      <Text style={s.note}>Live recognition is being connected to the shared camera feed. This panel will not start a second camera or show a separate scanner screen.</Text>
+      <Text style={s.note}>This panel reads the same camera session used by the main viewfinder. It never starts another camera. {lastReadAt ? `Last recognition: ${new Date(lastReadAt).toLocaleTimeString()}.` : 'Waiting for the first recognition result.'}</Text>
     </View>
     <ScrollView style={s.scroll} contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
+      <Text style={s.section}>LIVE RECOGNITION · {bottles.length}</Text>
+      {bottles.length ? bottles.map((bottle,index)=><View key={`${bottle.box.x0}-${bottle.box.y0}-${index}`} style={s.group}><View style={s.groupButton}><View style={{flex:1}}><Text style={s.groupTitle}>{[bottle.brand,bottle.product].filter(Boolean).join(' ') || 'Unidentified beverage'}</Text><Text style={s.groupHint}>{bottle.category.toUpperCase()} · {Math.round(bottle.confidence*100)}% confidence · {bottle.state.toUpperCase()}</Text></View></View><View style={s.groupBody}><Text style={s.emptyHint}>{[bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ') || 'No additional label facts returned yet.'}</Text></View></View>):<Text style={s.emptyHint}>Hold a labelled bottle in the viewfinder. Recognition results will appear here as they arrive.</Text>}
+      {menu?.visible && <View style={s.group}><Text style={s.groupTitle}>{menu.title || 'Menu detected'}</Text><Text style={s.groupHint}>{menu.items.length} menu items found</Text></View>}
       <Text style={s.section}>PRODUCT PROFILE</Text>
       {GROUPS.map(([id,title,hint])=><View key={id} style={s.group}>
         <Pressable accessibilityRole="button" accessibilityState={{expanded:expanded.includes(id)}} onPress={()=>toggle(id)} style={s.groupButton}>
