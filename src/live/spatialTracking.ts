@@ -1,5 +1,5 @@
 /**
- * Camera-space 3D reconstruction primitives for the Discover web scanner.
+ * Calibrated camera-space and world-space reconstruction primitives for Discover.
  *
  * Inputs must be metric depth in metres from a calibrated depth provider.
  * Relative monocular depth must NOT be passed here as metres.
@@ -133,4 +133,58 @@ export function updateSpatialTracks(
     if (!seen.has(track.trackId) && now - track.lastSeenAt <= maxAgeMs) next.push(track);
   }
   return next;
+}
+
+
+export type ARKitImageOrientation = 'up' | 'right' | 'down' | 'left';
+
+/** ARKit's 4x4 camera transform is serialized column-major (simd matrix order). */
+export function cameraPointToWorld(
+  point: CameraSpacePoint,
+  cameraTransform: ArrayLike<number>,
+  imageOrientation: ARKitImageOrientation,
+): { x: number; y: number; z: number } | null {
+  if (cameraTransform.length < 16) return null;
+  const m = Array.from({ length: 16 }, (_, index) => Number(cameraTransform[index]));
+  if (!m.every(Number.isFinite)) return null;
+
+  // Detection unprojection uses the upright scan-image axes (right/up/forward).
+  // Rotate those axes back into ARKit's camera-local basis, whose optical axis
+  // points along -Z, before applying the world-from-camera transform.
+  let cameraX: number;
+  let cameraY: number;
+  switch (imageOrientation) {
+    case 'right':
+      cameraX = -point.y;
+      cameraY = point.x;
+      break;
+    case 'left':
+      cameraX = point.y;
+      cameraY = -point.x;
+      break;
+    case 'down':
+      cameraX = -point.x;
+      cameraY = -point.y;
+      break;
+    default:
+      cameraX = point.x;
+      cameraY = point.y;
+      break;
+  }
+  const cameraZ = -point.z;
+  const world = {
+    x: m[0] * cameraX + m[4] * cameraY + m[8] * cameraZ + m[12],
+    y: m[1] * cameraX + m[5] * cameraY + m[9] * cameraZ + m[13],
+    z: m[2] * cameraX + m[6] * cameraY + m[10] * cameraZ + m[14],
+  };
+  return Object.values(world).every(Number.isFinite) ? world : null;
+}
+
+/** Reads the row-major 3x3 intrinsic matrix emitted in depth-grid pixel units. */
+export function intrinsicsFromARKitDepth(frame: Pick<ARKitDepthFrame, 'cameraIntrinsics'>): CameraIntrinsics | null {
+  const k = frame.cameraIntrinsics;
+  if (k.length < 9) return null;
+  const [fx, , cx, , fy, cy] = k;
+  if (![fx, fy, cx, cy].every(value => Number.isFinite(Number(value))) || !finitePositive(Number(fx)) || !finitePositive(Number(fy))) return null;
+  return { fx: Number(fx), fy: Number(fy), cx: Number(cx), cy: Number(cy) };
 }
