@@ -1,15 +1,17 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import {useWindowDimensions} from 'react-native';
 import {ActivityIndicator,Linking,Platform,Pressable,ScrollView,Text,TextInput,View} from 'react-native';
 import {colors} from '../ui';
 import {findNearbyPhgAtlasVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
 import {AtlasMap} from './AtlasMap';
 import type {JourneyScanItem} from './JourneyPlayerOverlay';
 
-const radii:VenueRadius[]=[1,5,10,15,20];
+const radii:VenueRadius[]=[1,5,10,25];
 const filters=[{label:'All',value:''},{label:'Bars',value:'bar'},{label:'Cocktail bars',value:'cocktail_bar'},{label:'Restaurants',value:'restaurant'},{label:'Breweries',value:'brewery'},{label:'Wineries',value:'winery'},{label:'Distilleries',value:'distillery'}];
 type NearbyCommand = { id:number; action:'set_radius'|'set_category'|'search'|'recenter'|'configure'; radius_miles?:number; category?:string; search?:string };
 
 export default function NearbyPanel({command,onCommandResult,journeyItems=[],onOpenJourney}:{command?:NearbyCommand|null;onCommandResult?:(id:number,result:string)=>void;journeyItems?:JourneyScanItem[];onOpenJourney?:(item:JourneyScanItem)=>void}){
+ const {height:screenHeight}=useWindowDimensions();
  const [radius,setRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[selectedVenue,setSelectedVenue]=useState<string|null>(null),[journeysOpen,setJourneysOpen]=useState(false);
  const locate=useCallback(()=>new Promise<string>(resolve=>{
   if(typeof navigator==='undefined'||!navigator.geolocation){const message='Location permission is not available in this build yet.';setError(message);resolve(message);return;}
@@ -30,14 +32,14 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
  const selected=filtered.find(v=>v.id===selectedVenue)||null;
  const venuePins=filtered.map(v=>({id:v.id,name:v.name,latitude:v.latitude,longitude:v.longitude}));
  const openVenue=(v:DiscoverVenue)=>{setSelectedVenue(v.id);};
- return <ScrollView style={{maxHeight:560}} contentContainerStyle={{paddingBottom:10}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-  <Text style={{color:colors.muted,fontSize:10,lineHeight:15,marginBottom:8}}>ATLAS · Move and zoom the map, then search or filter the venues around your location. Location is used only after you opt in.</Text>
-  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} height={218}/>
+ return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{paddingBottom:10}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+  
+  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
   <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginTop:9,marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & LOAD ATLAS'}</Text>}</Pressable>
 
   <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:7}}>
-   <Text style={{color:colors.text,fontSize:10,fontWeight:'900',letterSpacing:1.1}}>JOURNEYS FROM YOUR LAST SCAN</Text>
-   <Text style={{color:colors.muted,fontSize:9}}>{journeyItems.length} ITEMS</Text>
+   <Text style={{color:colors.text,fontSize:9,fontWeight:'900',letterSpacing:1}}>JOURNEYS</Text>
+   <Text style={{color:colors.muted,fontSize:9}}>{journeyItems.length}</Text>
   </View>
   <Pressable disabled={!journeyItems.length} onPress={()=>setJourneysOpen(v=>!v)} style={{padding:12,borderRadius:10,borderWidth:1,borderColor:journeyItems.length?'rgba(74,137,255,0.85)':'rgba(74,137,255,0.25)',backgroundColor:journeyItems.length?'rgba(24,65,130,0.28)':'rgba(14,25,44,0.42)',flexDirection:'row',alignItems:'center',justifyContent:'space-between',opacity:journeyItems.length?1:0.62}}>
    <View><Text style={{color:'#DCEBFF',fontSize:11,fontWeight:'900',letterSpacing:1.2}}>JOURNEYS</Text><Text style={{color:'#94B8EA',fontSize:9,marginTop:3}}>{journeyItems.length?'Choose an item detected in your last photo':'Scan and read a bottle or menu to enable'}</Text></View>
@@ -48,7 +50,7 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
   </Pressable>)}
   {journeysOpen&&<Text style={{color:colors.muted,fontSize:9,lineHeight:14,marginTop:8}}>Playback is waiting for Harmony's approved public journey connection. This list reflects the scan only; it does not claim a matching published journey exists.</Text>}
 
-  <TextInput value={query} onChangeText={setQuery} placeholder="Search venues or towns" placeholderTextColor={colors.muted} style={{backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border,borderRadius:9,padding:10,color:colors.text,marginTop:12,marginBottom:8}}/>
+  <TextInput value={query} onChangeText={setQuery} placeholder="Search venues or towns" placeholderTextColor={colors.muted} style={{backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border,borderRadius:9,padding:10,color:colors.text,marginTop:8,marginBottom:6}}/>
   <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{radii.map(n=><Pressable key={n} onPress={()=>setRadius(n)} style={{padding:7,borderRadius:8,backgroundColor:radius===n?colors.accent:colors.panel}}><Text style={{color:radius===n?'#111':colors.text,fontSize:9,fontWeight:'800'}}>{n} MI</Text></Pressable>)}</View>
   <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{padding:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:colors.panel}}><Text style={{color:category===f.value?'#111':colors.text,fontSize:9,fontWeight:'700'}}>{f.label}</Text></Pressable>)}</View>
   <Text style={{color:colors.text,fontSize:10,fontWeight:'900',marginBottom:6}}>{loading?'SEARCHING ATLAS…':filtered.length+' VENUES'}</Text>
