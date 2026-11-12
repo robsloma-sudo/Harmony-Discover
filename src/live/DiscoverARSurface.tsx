@@ -478,10 +478,20 @@ export function DiscoverARSurface(props: NativeProps) {
       if (nativeFrameReadBusy) return;
       nativeFrameReadBusy = true;
       const frame = event.nativeEvent;
-      void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
-        const signals = [...nativeVisionSignals.current].sort((a, b) =>
+      void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(async result => {
+        // The ARSession delegate emits the cloud frame before the asynchronous
+        // Vision request completes. Give that exact frame a short opportunity
+        // to publish its OCR/barcode boxes before deciding the signals are absent.
+        const signalDeadline = Date.now() + 220;
+        let signals = [...nativeVisionSignals.current].sort((a, b) =>
           Math.abs(a.frameTimestamp - frame.timestamp) - Math.abs(b.frameTimestamp - frame.timestamp),
         )[0] || null;
+        while ((!signals || Math.abs(signals.frameTimestamp - frame.timestamp) > 0.20) && Date.now() < signalDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 12));
+          signals = [...nativeVisionSignals.current].sort((a, b) =>
+            Math.abs(a.frameTimestamp - frame.timestamp) - Math.abs(b.frameTimestamp - frame.timestamp),
+          )[0] || null;
+        }
         const signalsAreSameFrame = !!signals && Math.abs(signals.frameTimestamp - frame.timestamp) <= 0.20;
         const cloudText = result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean);
         const mergedText = Array.from(new Set([...cloudText, ...(signalsAreSameFrame ? signals!.text : [])]));
