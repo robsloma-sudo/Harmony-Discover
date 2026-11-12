@@ -259,7 +259,7 @@ function WebLiveCamera(props: NativeProps) {
         const maskCandidates = webTracks
           .filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, source: 'local', candidates: maskCandidates } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, candidates: maskCandidates } });
 
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
