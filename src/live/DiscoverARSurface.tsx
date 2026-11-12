@@ -262,7 +262,7 @@ function WebLiveCamera(props: NativeProps) {
         const instances = await segmentationPromise;
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
           const segmented = associateInstanceMasks(
-            trackedCandidates.map(track => ({
+            trackedCandidates.slice(0, 8).map(track => ({
               trackId: track.trackId,
               bounds: { x: track.x, y: track.y, width: track.width, height: track.height },
               detectionConfidence: track.confidence,
