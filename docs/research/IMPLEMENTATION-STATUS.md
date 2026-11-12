@@ -67,3 +67,24 @@ The next implementation slice is now committed:
 - Verify Edge Function typecheck/tests and exercise a real DEV queue round trip before enabling the worker secret.
 
 No migration was applied. No Edge Function was deployed. No production Harmony PHG or Harmony Journeys resource was changed.
+
+
+## Category profiles and daily budget controls added (not deployed)
+
+- Added a Discover worker profile selector using the extracted 23-profile Journeys reference, bundled under `supabase/functions/_shared` so the Edge Function can import it at deploy time.
+- Selects profiles by beverage category and whiskey subtype (American, Scotch/Irish, world whisky, with aged-spirit override).
+- Injects the three highest-weight research dimensions into the exact-product research prompt; this is adapted for missing product facts, not the Journeys editorial story score.
+- Search tool usage is now profile-bounded: one search use for generic spirit fallback, two for specific profiles.
+- Added atomic daily reservation accounting in Discover DEV: default cap 5 jobs / 10 search units per consumer per UTC day, and 100 jobs / 200 search units project-wide per UTC day.
+- Budget reservation is made before calling Anthropic. Exhausted jobs are deferred until the next UTC day without consuming their retry-attempt allowance.
+- Queue draining now continues after any non-empty batch so multiple jobs enqueued by one save can be processed promptly.
+
+### Remaining before enabling unattended research
+
+- Add a scheduled DEV-only queue wake-up for retry/deferred jobs; current chaining drains immediately available work but does not wake the queue later on its own.
+- Add provider-reported usage/cost reconciliation and a dead-letter/admin view.
+- Add cache/deduplication by exact product identity and profile version.
+- Add runtime tests and a real Discover DEV queue round trip.
+- Review profile import/build behavior with the actual Supabase CLI before deployment.
+
+No migration has been applied, no secrets have been set, and no function has been deployed.
