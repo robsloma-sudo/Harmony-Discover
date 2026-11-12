@@ -1,0 +1,1736 @@
+{
+  "schema_version": "1.0.0",
+  "source": "Harmony Journeys live configuration, read-only extraction",
+  "extracted_at": "2026-11-12",
+  "adaptation_status": "reference-only; not yet deployed or wired into Discover",
+  "rules": {
+    "max": 5,
+    "base": 1,
+    "story": 1,
+    "age_75": 1,
+    "age_150": 2,
+    "protected": 1,
+    "story_min_history_facts": 3
+  },
+  "limits": {
+    "max_s": 300,
+    "intro_s": 30,
+    "max_photos": 10,
+    "brand_max_s": 150,
+    "brand_min_s": 40,
+    "synthesis_s": 20,
+    "brand_base_s": 30,
+    "ingredients_s": 20,
+    "default_weight": 2,
+    "brand_photos_max": 8,
+    "ingredient_photos": 2,
+    "brand_per_weight_s": 22,
+    "brand_photos_per_weight": 2,
+    "ingredient_photos_no_brand": 4
+  },
+  "profiles": {
+    "gin": {
+      "label": "Gin and genever",
+      "groups": [
+        {
+          "ask": "(covered by the process research) legal category (gin, distilled gin, London gin, cold-compounded gin, cask-aged distilled gin), still type (copper pot or column), one-shot or two-stage distillation,",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "stills",
+            "bottling",
+            "fermentation",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "proof"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "named botanical list for each brand, botanical count, root-heavy versus citrus-heavy recipes, steeping before distillation, herbal expressions",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "crop_origin"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "founding date and founder, the house's first still or site, family ownership changes, recipe secrecy, Old Tom and genever origin claims",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "where the gin must be made under law (Plymouth only, Genever regions), Schiedam and Hasselt as genever centres, the distillery's current site",
+          "group": "place",
+          "topics": [
+            "place",
+            "water_source",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity"
+          ],
+          "weight": 0.15
+        },
+        {
+          "ask": "unaged or rested gin, French oak or wine casks and months, historic wooden vats, genever maturation (optional, at least one year in barrels under 700 litres), 2024 cask-aged labelling rule",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "botanicals_raw",
+        "distill",
+        "producer",
+        "history",
+        "archival",
+        "barrel",
+        "warehouse"
+      ]
+    },
+    "rum": {
+      "label": "Rum, rhum agricole and cachaça",
+      "groups": [
+        {
+          "ask": "(covered by the process research) still type (continuous column, pot, copper pot, Creole column), distillation strength, fermentation length, wild or cultured yeast, dunder or muck used in the wash",
+          "group": "process",
+          "topics": [
+            "distillation",
+            "stills",
+            "fermentation",
+            "processing",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling",
+            "proof"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "AOC zone and cane municipalities (Martinique), limestone aquifer basin (Jamaica GI), village and region of the cane and distillery (Haiti clairin), estate name",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "water_source",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "cask type and maximum cask size, minimum years for each age grade, where the rum was aged, age statement rule, colour additions",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "founding year with its written record (not a claim), family or estate owners, national or cultural role of the spirit",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.15
+        },
+        {
+          "ask": "cane juice or molasses (the legal line between rhum agricole and molasses rum), named cane variety, whether the distillery grows its own cane",
+          "group": "ingredients",
+          "topics": [
+            "raw_material",
+            "crop_origin",
+            "hops",
+            "malt",
+            "yeast"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "distill",
+        "raw",
+        "ferment",
+        "barrel",
+        "warehouse",
+        "producer",
+        "history",
+        "archival",
+        "crush",
+        "cook"
+      ]
+    },
+    "beer": {
+      "label": "Beer",
+      "groups": [
+        {
+          "ask": "exact hop varieties and growing region, malt types (pale or Pilsner, wheat, Vienna, crystal, roasted barley), yeast or bacteria (Saccharomyces, Brettanomyces, Pediococcus, Lactobacillus), water",
+          "group": "ingredients",
+          "topics": [
+            "hops",
+            "malt",
+            "yeast",
+            "raw_material",
+            "water_source",
+            "beer_style",
+            "crop_origin"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "fermentation method (top, bottom, spontaneous, mixed), coolship or overnight open cooling, cask or foeder ageing time, bottle conditioning, lagering time, double dry hopping",
+          "group": "process",
+          "topics": [
+            "fermentation",
+            "ageing",
+            "barrels",
+            "brewing",
+            "processing",
+            "bottling",
+            "distillation",
+            "stills"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "house founding year, monastic origin for Trappist and abbey beers, the legal definition or protected status of the style (Reinheitsgebot 1516, Kolsch PGI 1997, lambic and gueuze TSG 1997, the ITA",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "hop-growing region (Zatec and the Saaz landscape), lambic region (Pajottenland and the Senne valley, Brussels), Kolsch area (Cologne, within 50 km under the PGI), abbey location",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "water_proximity",
+            "crop_origin",
+            "crop_climate",
+            "elevation",
+            "soil",
+            "water_source"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "hops",
+        "malt",
+        "ferment",
+        "coolship",
+        "barrel",
+        "brewhouse",
+        "history",
+        "archival",
+        "monastery",
+        "hop_yard",
+        "producer"
+      ]
+    },
+    "wine": {
+      "label": "Wine",
+      "groups": [
+        {
+          "ask": "appellation and communes, vineyard or cru name, elevation in metres, slope and aspect, soil type, distance to water, climate, Grand Cru or single-vineyard status",
+          "group": "place",
+          "topics": [
+            "place",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "climate",
+            "crop_origin",
+            "water_source"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "variety or blend with percentages, whether the rules fix the grape (for example 100 per cent Nebbiolo), clone or massal selection, vine age if stated",
+          "group": "grapes",
+          "topics": [
+            "grape_varieties",
+            "blend",
+            "crop_origin",
+            "vintage"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "minimum months total and in wood by legal category (Barolo, Riserva, Brunello, Amarone), vessel type (botti, barrique, tonneau, oak vat, concrete), first-release date, vintage on label",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "vintage",
+            "warehouse"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "drying of grapes (appassimento) and how long, maceration length and temperature, fermentation vessel, open or closed, destemming, yield caps",
+          "group": "process",
+          "topics": [
+            "fermentation",
+            "processing",
+            "distillation",
+            "stills"
+          ],
+          "weight": 0.1
+        },
+        {
+          "ask": "founding year and founder, family generations, first vintage or first release, pioneering acts (single-vineyard bottling, first Super Tuscan), war or regime stories, rarity of the bottling",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "terroir",
+        "vineyard",
+        "soil",
+        "grape",
+        "cellar_vessel",
+        "barrel",
+        "drying_loft",
+        "producer",
+        "history",
+        "archival",
+        "ferment"
+      ]
+    },
+    "agave": {
+      "label": "Agave spirit (tequila, mezcal)",
+      "groups": [
+        {
+          "ask": "(covered by the process research) agave type, cooking method and time (stone clay oven, autoclave), milling (tahona, mill), fermentation, column or alembic stills, 100% agave or mixto",
+          "group": "process",
+          "topics": [
+            "processing",
+            "agave_cooking",
+            "distillation",
+            "raw_material",
+            "fermentation",
+            "stills",
+            "mash_bill",
+            "botanicals",
+            "barrels",
+            "bottling",
+            "proof"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "designation of origin territory and municipalities, highlands or lowlands, wild or cultivated agave, altitude where a source states it",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "crop_climate",
+            "elevation",
+            "climate",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "legal class and minimum period, cask size in litres, wood type, finishing barrels, any regulator sampling of casks",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "founding year as sourced, family or owner, legal recognition dates. Flag conflicting dates; do not pick one silently",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.2
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "raw",
+        "cook",
+        "crush",
+        "distill",
+        "barrel",
+        "warehouse",
+        "producer",
+        "history",
+        "archival",
+        "ferment"
+      ]
+    },
+    "amaro": {
+      "label": "Amaro",
+      "groups": [
+        {
+          "ask": "founding year and founder, monastic or secret recipe story, royal or state honours, cholera or Prohibition history",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "number of botanicals, named botanicals (gentian, rhubarb, bitter orange, artichoke, cinchona), which parts are used",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "crop_origin"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "maceration in alcohol or water, infusion temperature and time, distillation type (copper pot, bain-marie, steam), finishing and sugar or caramel",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "botanicals",
+            "fermentation",
+            "stills"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "ageing vessel and duration, if any; many sourced amari state no ageing at all",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.1
+        },
+        {
+          "ask": "town of production and the local source of herbs or water",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "water_source",
+            "elevation",
+            "soil",
+            "water_proximity"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "history",
+        "archival",
+        "warrant",
+        "advertising",
+        "botanicals_raw",
+        "macerate",
+        "producer",
+        "barrel",
+        "distill"
+      ]
+    },
+    "anise": {
+      "label": "Anise spirit and absinthe",
+      "groups": [
+        {
+          "ask": "founding year and house, founding family, the bans that stopped production (Swiss 1910, French 1915, Vichy 1940), dates of revival, and the founder's name",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "wormwood species (grande and petite), green anise, star anise, sweet fennel, coriander, hyssop, lemon balm, mint: each herb and its growing origin; whether the recipe is secret",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "crop_origin"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "(covered by the process research) maceration or second distillation with anise, number of distillations, base spirit (grape spirit, suma, sugar-beet alcohol), botanical dose, final ABV, rest time,",
+          "group": "process",
+          "topics": [
+            "distillation",
+            "processing",
+            "proof",
+            "fermentation",
+            "stills",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "protected name and its legal basis, region, town of origin, water source where the producer says it matters",
+          "group": "place",
+          "topics": [
+            "place",
+            "water_source",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "botanicals_raw",
+        "history",
+        "archival",
+        "distill",
+        "producer"
+      ]
+    },
+    "cider": {
+      "label": "Cider and perry",
+      "groups": [
+        {
+          "ask": "apple classes (bittersweet, bittersharp, sharp, sweet) and perry pear classes; named varieties and the class each one sits in; native varieties allowed under a protected name; where the fruit grows",
+          "group": "ingredients",
+          "topics": [
+            "raw_material",
+            "crop_origin",
+            "crop_climate",
+            "hops",
+            "malt",
+            "yeast"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "keeving; in-bottle (natural) second fermentation and its minimum time; natural cold concentration for ice cider; cask or wood fermentation; lees ageing; malolactic fermentation; pasteurisation rules;",
+          "group": "process",
+          "topics": [
+            "fermentation",
+            "processing",
+            "ageing",
+            "barrels",
+            "water_source",
+            "distillation",
+            "stills"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "founding date and family line of the house; origin of the style with dates; first-of-kind claims (ice cider, keeving) with the dated source; the Three Counties perry tradition; the Asturian cider",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "defined area of the protected name (municipalities, counties, departments, zones); the Three Counties for perry; the Quebec zone and hardiness; the Basque Country and Asturias boundaries",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "crop_origin",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "orchard",
+        "fruit",
+        "press",
+        "ferment",
+        "cellar_vessel",
+        "frozen_fruit",
+        "pour",
+        "history",
+        "archival",
+        "producer",
+        "barrel"
+      ]
+    },
+    "mixer": {
+      "label": "Mixer, syrup and bitters brand",
+      "groups": [
+        {
+          "ask": "the real base of the product (fruit, sugar, almond, pomegranate, coconut, egg white), botanicals and spices named by the producer, gum arabic or other stabilisers, and any shortcut such as glycerin,",
+          "group": "ingredients",
+          "topics": [
+            "raw_material",
+            "botanicals",
+            "crop_origin",
+            "hops",
+            "malt",
+            "yeast"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "how the product is made and how fresh it must be: maceration or percolation time, botanical brewing, syrup cooking ratio and heat, citrus juice rest time and oxidation, pasteurised versus fresh eggs,",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "fermentation",
+            "stills"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "founder, founding year and place, family generations, dated firsts (first product, first factory, first patent), and any loan, secret formula or wartime or Prohibition story with a date",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "where the product is made and where its base comes from: Trinidad, Bermuda, Grenoble, Anjou, Bologna or Porto-maggiore, Puerto Rico, Guyana (demerara), South American cinchona",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "history",
+        "archival",
+        "producer",
+        "citrus_fruit",
+        "botanicals_raw",
+        "macerate",
+        "syrup_cooking",
+        "cinchona_bark",
+        "distill",
+        "place"
+      ]
+    },
+    "vodka": {
+      "label": "Vodka",
+      "groups": [
+        {
+          "ask": "grain, potato or corn used; named variety or type (for example Dankowskie Diamond rye, winter wheat, Stobrawa potato); where the crop is grown",
+          "group": "raw_material",
+          "topics": [
+            "raw_material",
+            "crop_origin",
+            "crop_climate"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "(covered by the process research) column or pot still; number of distillations; charcoal or other filtration; water source and treatment; bottling strength",
+          "group": "process",
+          "topics": [
+            "distillation",
+            "stills",
+            "processing",
+            "water_source",
+            "bottling",
+            "fermentation",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "proof"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "founder; founding year; distillery history; state ownership or privatisation; first legal distilling permit; dated awards",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "country and region of production; whether the label may use a protected name (Polska Wódka, Polish Vodka); source of the water",
+          "group": "place",
+          "topics": [
+            "place",
+            "water_proximity",
+            "climate",
+            "elevation",
+            "soil",
+            "water_source"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "raw",
+        "distill",
+        "producer",
+        "history",
+        "archival",
+        "ferment"
+      ]
+    },
+    "brandy": {
+      "label": "Brandy (Cognac, Armagnac, Calvados, pisco, grappa)",
+      "groups": [
+        {
+          "ask": "appellation or cru (Cognac crus, Armagnac zones, Calvados AOCs, Pisco denomination), soil type, climate, distance from the sea where the source gives it",
+          "group": "place",
+          "topics": [
+            "place",
+            "soil",
+            "climate",
+            "crop_origin",
+            "elevation",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "legal age statement and the rule that sets it (youngest eau-de-vie), cask type and size, oak origin, solera tiers, bottling date for vintage bottles, rancio or oxidation where stated",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse",
+            "vintage"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "(covered by the process research) still type (copper pot, column, alambic), number of distillations, fermentation, proof at entry to cask and at bottling where stated",
+          "group": "process",
+          "topics": [
+            "distillation",
+            "stills",
+            "fermentation",
+            "processing",
+            "proof",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "founding year, founding family or house, first-of-kind products (first XO), legal or family story with dated facts",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.15
+        },
+        {
+          "ask": "permitted grapes (Cognac, Armagnac, Pisco, Brandy de Jerez base wine), apple and perry-pear varieties (Calvados), pomace for grappa, cherry type for kirsch",
+          "group": "raw_material",
+          "topics": [
+            "grape_varieties",
+            "raw_material",
+            "crop_origin",
+            "crop_climate"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "vineyard",
+        "grape",
+        "orchard",
+        "distill",
+        "barrel",
+        "warehouse",
+        "producer",
+        "history",
+        "archival",
+        "raw",
+        "bottle"
+      ]
+    },
+    "spirit": {
+      "label": "Spirit (bourbon, whiskey, tequila, mezcal, rum, gin, vodka, brandy)",
+      "groups": [
+        {
+          "ask": "(covered by the process research)",
+          "group": "process",
+          "topics": [
+            "raw_material",
+            "mash_bill",
+            "fermentation",
+            "stills",
+            "distillation",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling",
+            "proof"
+          ],
+          "weight": 0.45
+        },
+        {
+          "ask": "founding year, founders or family, landmark events (Prohibition, firsts, revivals)",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "where the raw material grows, water source, climate",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "crop_climate",
+            "water_source",
+            "climate"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "age statement, warehouse, angel's share",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "warehouse"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "v1",
+      "searches": 2,
+      "photo_order": [
+        "producer",
+        "raw",
+        "cook",
+        "distill",
+        "barrel",
+        "warehouse",
+        "history",
+        "archival",
+        "crush",
+        "ferment",
+        "malt",
+        "macerate",
+        "bottle"
+      ]
+    },
+    "liqueur": {
+      "label": "Liqueur",
+      "groups": [
+        {
+          "ask": "founding year and place, founding family or apothecary, who holds the recipe and how many people know it, monks or royal links, legend and what is documented",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "fruit, flower, nut or herb base and its harvest, number of botanicals where the source states it, origin of the raw material",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "hops",
+            "crop_origin"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "maceration time and vessel, distillation type, sugar and colour control, ageing vessel and length, blending",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "ageing",
+            "barrels",
+            "fermentation",
+            "brewing",
+            "stills"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "the town or region where the liqueur is made and where its raw material grows",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "botanicals_raw",
+        "history",
+        "archival",
+        "macerate",
+        "producer",
+        "barrel",
+        "distill"
+      ]
+    },
+    "vermouth": {
+      "label": "Vermouth and aromatised wine",
+      "groups": [
+        {
+          "ask": "founding year and place, founder or founding family, recipe secrecy, first sweet vermouth claims, relaunch dates",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "wine base: grape variety, origin of the wine, share of wine in the blend, sweet or dry base wine (Muscat, Moscato d'Asti, Ugni Blanc, Semillon, Merlot, Bordeaux wine)",
+          "group": "grapes",
+          "topics": [
+            "grape_varieties",
+            "blend",
+            "crop_origin",
+            "raw_material",
+            "vintage"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "botanical make-up: wormwood (Artemisia) and its origin, gentian and other bitters, cinchona bark and quinine, citrus peel, spices, number of plants",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "crop_origin"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "production region and legal origin: Piedmont for Vermouth di Torino, Chambery for Vermouth de Chambery, Podensac and Bordeaux for Lillet, Asti for Cocchi",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.15
+        },
+        {
+          "ask": "how the wine is processed and blended: time from harvest to processing, infusion of herbs, blending with brandy, fining and filtering",
+          "group": "process",
+          "topics": [
+            "processing",
+            "fermentation",
+            "distillation",
+            "stills"
+          ],
+          "weight": 0.05
+        },
+        {
+          "ask": "ageing vessel and length: oak vats, barrels, age statement or none, any ageing rule for Vermouth di Torino",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.05
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "history",
+        "archival",
+        "vineyard",
+        "grape",
+        "botanicals_raw",
+        "producer",
+        "barrel",
+        "macerate"
+      ]
+    },
+    "aperitivo": {
+      "label": "Aperitivo and bitter",
+      "groups": [
+        {
+          "ask": "each named botanical, its form (root, bark, peel, leaf, berry), where it is grown or harvested, and the count of botanicals the producer states",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "crop_origin",
+            "processing"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "founding year and place, founder, family succession, recipe secrecy and who holds it, royal or fair awards, and any survival through Prohibition or war",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "maceration or infusion time and method, the still or percolator, dilution to bottling strength, colour additives, and ABV",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "ageing",
+            "fermentation",
+            "stills"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "the town or region where the drink was first made and where it is made now, and where the botanicals grow",
+          "group": "place",
+          "topics": [
+            "place",
+            "crop_origin",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.2
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "botanicals_raw",
+        "history",
+        "archival",
+        "producer",
+        "macerate",
+        "distill",
+        "place",
+        "colour_source"
+      ]
+    },
+    "fortified": {
+      "label": "Fortified wine (sherry, port, Madeira, Marsala)",
+      "groups": [
+        {
+          "ask": "ageing route (flor under fino and manzanilla, oxidative for oloroso, heat for Madeira estufagem, sun for Maury rancio), solera and criaderas layers, sobretabla, cask size, years in cask or bottle,",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "protected region and sub-zone (Jerez Superior albariza zone, Douro Demarcated Region, Madeira island and coastal Malmsey sites, Marsala DOC, Roussillon AOCs), vineyard altitude in metres, soil type,",
+          "group": "place",
+          "topics": [
+            "place",
+            "elevation",
+            "soil",
+            "climate",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "variety names and percentages, sweetness by variety (Madeira Sercial dry to Malmsey sweet), Grenache share in Banyuls and Maury, permitted white and red varieties in Marsala",
+          "group": "grapes",
+          "topics": [
+            "grape_varieties",
+            "blend",
+            "vintage"
+          ],
+          "weight": 0.1
+        },
+        {
+          "ask": "founding year and founder, first British or foreign shippers, wars and events the stock survived, dated milestones (regulation, first age-statement bottlings), named family or house owners, rare old",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "how fermentation is stopped (grape spirit mutage, fortification to 15 to 17% for sherry, mistela or cooked must for Marsala), sun or demijohn stages, sweetening method, cask or bonbonne handling",
+          "group": "process",
+          "topics": [
+            "processing",
+            "fermentation",
+            "distillation",
+            "stills"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "warehouse",
+        "barrel",
+        "flor",
+        "terroir",
+        "vineyard",
+        "grape",
+        "history",
+        "archival",
+        "producer",
+        "bonbonne"
+      ]
+    },
+    "sparkling": {
+      "label": "Sparkling wine",
+      "groups": [
+        {
+          "ask": "appellation, village or cru rating, hill or slope, elevation, soil, climate",
+          "group": "place",
+          "topics": [
+            "place",
+            "elevation",
+            "soil",
+            "climate",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "permitted varieties and their shares, white or rose base, vintage or non-vintage, blanc de blancs or blanc de noirs",
+          "group": "grapes",
+          "topics": [
+            "grape_varieties",
+            "blend",
+            "vintage"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "method name (traditional, Charmat, ancestral), minimum months on lees for each category, bottle or tank second fermentation, dosage category and grams of sugar per litre, disgorged or not",
+          "group": "process",
+          "topics": [
+            "ageing",
+            "fermentation",
+            "processing",
+            "distillation",
+            "stills"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "oldest house, founding year, first release of a named cuvee, family owners, grower history",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.2
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "vineyard",
+        "grape",
+        "lees_cellar",
+        "riddling",
+        "tank",
+        "terroir",
+        "history",
+        "archival",
+        "producer"
+      ]
+    },
+    "spirit_aged": {
+      "label": "Aged spirit (12+ year age statement)",
+      "groups": [
+        {
+          "ask": "founding year of the house with the source, founder and family, recipe or cask changes with dates, Prohibition or war events, royal warrants, ownership changes, and any conflicting dates",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "legal minimum age and what it means (VS, VSOP, XO; Scotch 3 years; bourbon charred new oak; tequila reposado, añejo, extra añejo), cask type and size, wood origin, warehouse type (rickhouse, dunnage,",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.4
+        },
+        {
+          "ask": "(covered by the process research) still type (pot or column), distillation strength limit, entry proof into cask, bottling proof and Bottled-in-Bond rule (4 years, 100 proof, one distillery and one",
+          "group": "process",
+          "topics": [
+            "distillation",
+            "stills",
+            "processing",
+            "bottling",
+            "proof",
+            "fermentation",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "appellation or legal region, the distillery's town and country, climate that drives barrel maturation (Kentucky heat swings, Scottish stable climate, Cognac oak forests)",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "barrel",
+        "warehouse",
+        "history",
+        "archival",
+        "producer",
+        "distill",
+        "raw",
+        "cook"
+      ]
+    },
+    "asian_spirit": {
+      "label": "Asian spirit (baijiu, shochu, soju, awamori)",
+      "groups": [
+        {
+          "ask": "(covered by the process research) qu or koji starter type, solid-state or pit fermentation, fermentation vessel (pit, earthen jar), number of cycles, single or multiple distillation, aroma type",
+          "group": "process",
+          "topics": [
+            "fermentation",
+            "distillation",
+            "processing",
+            "stills",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling",
+            "proof"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "base grain or tuber: sorghum (baijiu), five grains (Wuliangye), rice (awamori, soju), sweet potato, barley, black sugar, buckwheat; named variety where known; koji mould used",
+          "group": "ingredients",
+          "topics": [
+            "raw_material",
+            "crop_origin",
+            "grape_varieties",
+            "hops",
+            "malt",
+            "yeast"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "ageing vessel (earthenware amphora or jar, clay-lined pit, oak where used), minimum years, kusu rules, blending of ages",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "warehouse",
+            "barrels"
+          ],
+          "weight": 0.15
+        },
+        {
+          "ask": "province or prefecture, town, local water (for example the Chishui River for Moutai), climate and microbes that settle in cellars",
+          "group": "place",
+          "topics": [
+            "place",
+            "water_source",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity"
+          ],
+          "weight": 0.15
+        },
+        {
+          "ask": "founding year of the company and of the cellars or pits, the first national recognition (1952 national evaluation), family or merger history, first use of a term",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "recipe_secrecy",
+            "rarity",
+            "people"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "ferment",
+        "raw",
+        "distill",
+        "warehouse",
+        "barrel",
+        "history",
+        "archival",
+        "producer",
+        "bottle"
+      ]
+    },
+    "scotch_irish": {
+      "label": "Scotch and Irish whisky",
+      "groups": [
+        {
+          "ask": "Scotch region or Irish island, coast or inland, peat level of the malt (ppm), coastal or inland warehouse",
+          "group": "place",
+          "topics": [
+            "place",
+            "water_proximity",
+            "climate",
+            "elevation",
+            "soil",
+            "water_source"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "(covered by the process research) malting (own floor maltings or bought in), still type, number of distillations, mash cereal shares, single distillery or blend",
+          "group": "process",
+          "topics": [
+            "distillation",
+            "stills",
+            "malt",
+            "processing",
+            "fermentation",
+            "raw_material",
+            "mash_bill",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling",
+            "proof"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "cask type (sherry butt, ex-bourbon, port, rum), cask size, years in wood, warehouse type, cask finish, age statement",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "licence year, founding year and founder, family line still in charge, closures, fires, reopenings",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.2
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "terroir",
+        "producer",
+        "distill",
+        "malt",
+        "warehouse",
+        "barrel",
+        "history",
+        "archival"
+      ]
+    },
+    "world_whisky": {
+      "label": "World whisky (Japanese, Canadian and other)",
+      "groups": [
+        {
+          "ask": "cask type and what it held before (ex-bourbon, ex-sherry, mizunara, ex-port, ex-wine, Madeira), cask size (Canada and Japan's standard both use 700 L as the wood limit), finishes, warehouse type",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "distillery location and prefecture or state, climate (summer heat, humidity, cold winters, tropical monsoon), water source, altitude where a source gives it",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "water_source",
+            "water_proximity",
+            "elevation",
+            "soil"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "founding year and founder, the closure of old distilleries (Hanyu, Karuizawa, Mars Shinshu), royal or legal milestones with dates, awards with year and issuer",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "(covered by the process research) grain bill (malted barley required in Japan; rye, corn and wheat in Canada; rice allowed in Japan), still type (pot, column, Coffey), peat level in ppm where stated,",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "stills",
+            "mash_bill",
+            "raw_material",
+            "malt",
+            "fermentation",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling",
+            "proof"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "barrel",
+        "warehouse",
+        "history",
+        "archival",
+        "producer",
+        "distill",
+        "ferment",
+        "raw"
+      ]
+    },
+    "heritage_herbal": {
+      "label": "Monastic and heritage herbal liqueur",
+      "groups": [
+        {
+          "ask": "dated founding or first recorded date and who verified it; who holds the recipe and how it passed on; expulsions and returns; named founders; trademarks on bottle or name",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "recipe_secrecy",
+            "rarity"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "stated number of plants or herbs and whether the producer names them; which parts are secret; growers or origins where published",
+          "group": "botanicals",
+          "topics": [
+            "botanicals",
+            "raw_material",
+            "crop_origin"
+          ],
+          "weight": 0.25
+        },
+        {
+          "ask": "maceration time and vessel, distillation vessel (copper pot stills), blending steps such as saffron in sugar syrup or honey, who blends the botanicals",
+          "group": "process",
+          "topics": [
+            "processing",
+            "distillation",
+            "stills",
+            "bottling",
+            "fermentation"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "vessel type, duration, cellar name; whether the brand ages at all",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.1
+        },
+        {
+          "ask": "town and region of the distillery or abbey; port or river that matters; current production site after any move",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.1
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "history",
+        "manuscript",
+        "archival",
+        "botanicals_raw",
+        "macerate",
+        "barrel",
+        "warehouse",
+        "producer",
+        "distill"
+      ]
+    },
+    "american_whiskey": {
+      "label": "American whiskey (bourbon, rye, Tennessee)",
+      "groups": [
+        {
+          "ask": "barrel type and char level (No. 4 'alligator char' is the usual one), years in barrel, warehouse type (bonded warehouse, rickhouse, steam-heated warehouse), angel's share, barrel size, single barrel",
+          "group": "ageing",
+          "topics": [
+            "ageing",
+            "barrels",
+            "warehouse"
+          ],
+          "weight": 0.35
+        },
+        {
+          "ask": "(covered by the process research) mash bill (corn, rye or wheat percentages), sour mash, still type (column plus doubler, pot, beer still), proof at distillation (160 max) and entry into barrel (125",
+          "group": "process",
+          "topics": [
+            "mash_bill",
+            "distillation",
+            "stills",
+            "processing",
+            "proof",
+            "fermentation",
+            "raw_material",
+            "botanicals",
+            "agave_cooking",
+            "barrels",
+            "bottling"
+          ],
+          "weight": 0.3
+        },
+        {
+          "ask": "founding year as stated in a dated source, founder or family, Prohibition survival, ownership changes, first post-Prohibition distillery, named master distillers, historic registrations",
+          "group": "history",
+          "topics": [
+            "history",
+            "founding",
+            "people",
+            "rarity",
+            "recipe_secrecy"
+          ],
+          "weight": 0.2
+        },
+        {
+          "ask": "state and county where it is made (Tennessee whiskey must be made in Tennessee), site and warehouse climate, National Register or National Historic Landmark listing of the distillery",
+          "group": "place",
+          "topics": [
+            "place",
+            "climate",
+            "elevation",
+            "soil",
+            "water_proximity",
+            "water_source"
+          ],
+          "weight": 0.15
+        }
+      ],
+      "version": "swarm-run2",
+      "searches": 3,
+      "photo_order": [
+        "warehouse",
+        "barrel",
+        "producer",
+        "history",
+        "archival",
+        "distill",
+        "raw",
+        "bottle"
+      ]
+    }
+  }
+}
