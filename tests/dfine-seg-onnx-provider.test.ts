@@ -1,14 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDfineSegOnnxProvider, DfineSegOnnxProvider, preprocessDfineImage, type DfineOrtSession, type DfineOrtTensor } from '../src/live/dfineSegOnnxProvider';
-import type { SegmentationSeed } from '../src/live/segmentationEngine';
-
-const seed: SegmentationSeed = {
-  trackId: 7,
-  bounds: { x: 0.2, y: 0.1, width: 0.3, height: 0.7 },
-  detectionConfidence: 0.9,
-  sourceTimestampMs: 1000,
-};
-
 function makeFrame(): ImageData {
   return { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255), colorSpace: 'srgb' } as ImageData;
 }
@@ -46,7 +37,7 @@ describe('D-FINE ONNX provider', () => {
     const session = makeSession();
     const tensorFactory = vi.fn((_type: 'float32', data: Float32Array, dims: number[]) => ({ data, dims }));
     const provider = new DfineSegOnnxProvider(session, tensorFactory, { inputSize: 640 });
-    const result = await provider.infer(makeFrame(), [seed]);
+    const result = await provider.infer(makeFrame(), 1000);
     expect(tensorFactory).toHaveBeenCalledWith('float32', expect.any(Float32Array), [1, 3, 640, 640]);
     expect(session.run).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(1);
@@ -62,23 +53,22 @@ describe('D-FINE ONNX provider', () => {
     class Tensor {
       constructor(public type: string, public data: Float32Array, public dims: number[]) {}
     }
-    const provider = await createDfineSegOnnxProvider({
-      Tensor,
-      InferenceSession: { create },
-    }, new Uint8Array([1, 2, 3]), { inputSize: 640 });
+    const runtime = { env: { wasm: {} as { wasmPaths?: string; numThreads?: number } }, Tensor, InferenceSession: { create } };
+    const provider = await createDfineSegOnnxProvider(runtime, new Uint8Array([1, 2, 3]), { inputSize: 640 });
     expect(create).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), { executionProviders: ['wasm'] });
     expect(provider).toBeInstanceOf(DfineSegOnnxProvider);
+    expect(runtime.env.wasm).toEqual({ wasmPaths: '/ort/', numThreads: 1 });
     await provider.dispose();
   });
 
-  it('rejects mixed-frame seeds and malformed graph output shapes', async () => {
+  it('rejects invalid timestamps and malformed graph output shapes', async () => {
     const session = makeSession();
     const provider = new DfineSegOnnxProvider(session, (_type, data, dims) => ({ data, dims }), { inputSize: 640 });
-    expect(await provider.infer(makeFrame(), [seed, { ...seed, trackId: 8, sourceTimestampMs: 1500 }])).toEqual([]);
+    expect(await provider.infer(makeFrame(), Number.NaN)).toEqual([]);
     const badSession = makeSession();
     badSession.run = vi.fn(async () => ({ labels: { data: [39], dims: [1] }, boxes: { data: [], dims: [1] }, scores: { data: [], dims: [1] }, masks: { data: [], dims: [1] } }));
     const badProvider = new DfineSegOnnxProvider(badSession, (_type, data, dims) => ({ data, dims }), { inputSize: 640 });
-    await expect(badProvider.infer(makeFrame(), [seed])).rejects.toThrow('Unexpected D-FINE ONNX output tensor ranks');
+    await expect(badProvider.infer(makeFrame(), 1000)).rejects.toThrow('Unexpected D-FINE ONNX output tensor ranks');
     await provider.dispose();
     await badProvider.dispose();
   });
