@@ -67,5 +67,6 @@ jobs:
           set -euo pipefail
           test -s dist/index.html
           test -s dist/ort/ort-wasm-simd-threaded.wasm
-          test -s dist/ort/ort-wasm-simd-threaded.mjs
+          test -s dist/ort/ort.wasm.bundle.min.mjs
+          test -s dist/ort/ort-loader.js
           grep -R -q --include='*.js' '/models/dfine_seg_n_coco.onnx' dist
