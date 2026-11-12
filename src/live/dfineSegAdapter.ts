@@ -34,21 +34,41 @@ function cropMask(
   mask: Float32Array | Uint8Array,
   maskWidth: number,
   maskHeight: number,
+  imageWidth: number,
+  imageHeight: number,
   bounds: { x: number; y: number; width: number; height: number },
   threshold: number,
 ): { data: Uint8Array; width: number; height: number } | null {
-  const left = Math.max(0, Math.floor(bounds.x * maskWidth));
-  const top = Math.max(0, Math.floor(bounds.y * maskHeight));
-  const right = Math.min(maskWidth, Math.ceil((bounds.x + bounds.width) * maskWidth));
-  const bottom = Math.min(maskHeight, Math.ceil((bounds.y + bounds.height) * maskHeight));
+  const left = Math.max(0, Math.floor(bounds.x * imageWidth));
+  const top = Math.max(0, Math.floor(bounds.y * imageHeight));
+  const right = Math.min(imageWidth, Math.ceil((bounds.x + bounds.width) * imageWidth));
+  const bottom = Math.min(imageHeight, Math.ceil((bounds.y + bounds.height) * imageHeight));
   const width = right - left;
   const height = bottom - top;
   if (width < 2 || height < 2) return null;
+
+  // Match the upstream ONNX wrapper's bilinear resize to original-image size
+  // (align_corners=False), but allocate only the detection crop, not N full
+  // frame masks. Thresholding then matches its default mask_threshold=0.5.
   const data = new Uint8Array(width * height);
   let foreground = 0;
   for (let y = 0; y < height; y++) {
+    const sourceY = Math.max(0, Math.min(maskHeight - 1, (top + y + 0.5) * maskHeight / imageHeight - 0.5));
+    const y0 = Math.floor(sourceY);
+    const y1 = Math.min(maskHeight - 1, y0 + 1);
+    const fy = sourceY - y0;
     for (let x = 0; x < width; x++) {
-      const value = Number(mask[(top + y) * maskWidth + left + x]);
+      const sourceX = Math.max(0, Math.min(maskWidth - 1, (left + x + 0.5) * maskWidth / imageWidth - 0.5));
+      const x0 = Math.floor(sourceX);
+      const x1 = Math.min(maskWidth - 1, x0 + 1);
+      const fx = sourceX - x0;
+      const p00 = Number(mask[y0 * maskWidth + x0]);
+      const p01 = Number(mask[y0 * maskWidth + x1]);
+      const p10 = Number(mask[y1 * maskWidth + x0]);
+      const p11 = Number(mask[y1 * maskWidth + x1]);
+      const topValue = p00 * (1 - fx) + p01 * fx;
+      const bottomValue = p10 * (1 - fx) + p11 * fx;
+      const value = topValue * (1 - fy) + bottomValue * fy;
       if (Number.isFinite(value) && value >= threshold) {
         data[y * width + x] = 1;
         foreground++;
@@ -137,7 +157,7 @@ export function adaptDfineSegOnnxOutput(
   for (const candidate of kept) {
     const maskStart = candidate.index * output.maskWidth * output.maskHeight;
     const mask = output.masks.subarray(maskStart, maskStart + output.maskWidth * output.maskHeight);
-    const cropped = cropMask(mask, output.maskWidth, output.maskHeight, candidate.bounds, maskThreshold);
+    const cropped = cropMask(mask, output.maskWidth, output.maskHeight, imageWidth, imageHeight, candidate.bounds, maskThreshold);
     if (!cropped) continue;
     instances.push({
       width: cropped.width,
