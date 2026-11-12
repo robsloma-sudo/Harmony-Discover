@@ -71,7 +71,7 @@ async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Pro
   if (!ctx) return null;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.88).replace(/^data:image\\/jpeg;base64,/, '');
+  return canvas.toDataURL('image/jpeg', 0.88).split(',')[1] || '';
 }
 
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4; menu: MenuGlimpse | null; note: string };
