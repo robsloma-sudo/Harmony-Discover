@@ -164,7 +164,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
           active={!!permission.granted && !scanPhotos}
-          recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel })}
+          recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
