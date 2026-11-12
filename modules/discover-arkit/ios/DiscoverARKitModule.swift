@@ -617,8 +617,15 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   public func sessionInterruptionEnded(_ session: ARSession) {
-    if isActive {
-      sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.isActive else { return }
+      // ARKit removes anchors during reset; clear our identity-to-anchor maps
+      // before restarting so a reused physical ID cannot point at a stale node.
+      self.spatialAnchors.removeAll()
+      self.spatialAnchorStates.removeAll()
+      self.onSpatialAnchorStatus(["activeCount": 0])
+      self.sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+      self.onARReady(["state": "starting"])
     }
   }
 }
