@@ -52,6 +52,9 @@ public class DiscoverARKitModule: Module {
       Prop("spatialAnchors") { (view: DiscoverARView, candidates: [[String: Any]]) in
         view.updateSpatialAnchors(candidates)
       }
+      Prop("trackingSeeds") { (view: DiscoverARView, seeds: [[String: Any]]) in
+        view.setTrackingSeeds(seeds)
+      }
       AsyncFunction("pause") { (view: DiscoverARView) in
         view.setActive(false)
       }
@@ -105,6 +108,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var lastDepthFrameTime: TimeInterval = 0
   private var nextCandidateTrackID = 1
   private var previousCandidates: [(id: Int, rect: CGRect, confidence: CGFloat)] = []
+  private struct RetainedTrackingFrame { let pixelBuffer: CVPixelBuffer; let orientation: CGImagePropertyOrientation; let generation: Int }
+  private var retainedTrackingFrames: [TimeInterval: RetainedTrackingFrame] = [:] // accessed only on visionQueue
+  private var activeTrackingRequests: [Int: VNTrackObjectRequest] = [:] // accessed only on visionQueue
+  private var trackingMisses: [Int: Int] = [:] // accessed only on visionQueue
+  private var lastLocalTrackingFrameTime: TimeInterval = 0
   private let rectangleOverlay = CAShapeLayer()
 
   private lazy var sceneView: ARSCNView = {
@@ -145,6 +153,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     lastDepthFrameTime = 0
     if !enabled {
       previousCandidates.removeAll()
+      lastLocalTrackingFrameTime = 0
+      visionQueue.async { [weak self] in self?.clearLocalTrackingState() }
       onVisualCandidates(["count": 0, "candidates": []])
     }
   }
@@ -299,6 +309,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     // Do not spend Vision/depth work or emit cloud frames in preview-only mode.
     guard isRecognitionEnabled else { return }
     let now = frame.timestamp
+    if now - lastLocalTrackingFrameTime >= 0.10 {
+      lastLocalTrackingFrameTime = now
+      processLocalTrackingFrame(frame, generation: recognitionGeneration)
+    }
     // Keep metric depth flowing at 2 Hz, and emit an exact matching depth/pose
     // sample whenever a cloud bottle-read frame is scheduled.
     let recognitionDue = now - lastVisionFrameTime >= 0.50
@@ -340,6 +354,15 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       classifyRequest.imageCropAndScaleOption = .centerCrop
       var cloudFrameBase64: String? = nil
       if shouldSendCloudFrame {
+        // Retain a small, bounded set of exact source frames. The cloud response
+        // arrives asynchronously; its bottle boxes must seed Vision on the
+        // original image, not on a later camera pose.
+        CVPixelBufferRetain(pixelBuffer)
+        let retained = RetainedTrackingFrame(pixelBuffer: pixelBuffer, orientation: orientation, generation: generation)
+        retainedTrackingFrames[now] = retained
+        for key in retainedTrackingFrames.keys.sorted().dropLast(4) {
+          if let old = retainedTrackingFrames.removeValue(forKey: key) { CVPixelBufferRelease(old.pixelBuffer) }
+        }
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let scale = min(1.0, 960.0 / max(image.extent.width, image.extent.height))
         let resized = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
@@ -402,6 +425,101 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         DispatchQueue.main.async { [weak self] in
           self?.onARError(["message": "Live visual analysis failed: \(error.localizedDescription)"])
         }
+      }
+    }
+  }
+
+  /// Clears all retained image buffers and Vision tracking requests. Must run on visionQueue.
+  private func clearLocalTrackingState() {
+    for frame in retainedTrackingFrames.values { CVPixelBufferRelease(frame.pixelBuffer) }
+    retainedTrackingFrames.removeAll()
+    activeTrackingRequests.removeAll()
+    trackingMisses.removeAll()
+  }
+
+  /// Accepts cloud detections as seeds on their exact retained source frame.
+  func setTrackingSeeds(_ seeds: [[String: Any]]) {
+    visionQueue.async { [weak self] in
+      guard let self, self.isActive, self.isRecognitionEnabled else { return }
+      for seed in seeds {
+        guard let rawID = seed["trackId"] as? NSNumber,
+              let timestamp = seed["sourceTimestamp"] as? NSNumber,
+              let x = seed["x"] as? NSNumber, let y = seed["y"] as? NSNumber,
+              let width = seed["width"] as? NSNumber, let height = seed["height"] as? NSNumber,
+              let confidence = seed["confidence"] as? NSNumber,
+              confidence.doubleValue >= 0.55 else { continue }
+        let trackID = rawID.intValue
+        let rect = CGRect(x: x.doubleValue, y: y.doubleValue, width: width.doubleValue, height: height.doubleValue)
+        guard trackID > 0, rect.minX >= 0, rect.minY >= 0, rect.width > 0.02, rect.height > 0.02,
+              rect.maxX <= 1.001, rect.maxY <= 1.001 else { continue }
+        guard let frameKey = self.retainedTrackingFrames.keys.min(by: { abs($0 - timestamp.doubleValue) < abs($1 - timestamp.doubleValue) }),
+              abs(frameKey - timestamp.doubleValue) <= 0.025,
+              let source = self.retainedTrackingFrames[frameKey] else { continue }
+        let visionRect = CGRect(x: rect.minX, y: 1 - rect.maxY, width: rect.width, height: rect.height)
+        let observation = VNDetectedObjectObservation(boundingBox: visionRect)
+        let request = VNTrackObjectRequest(detectedObjectObservation: observation)
+        request.trackingLevel = .accurate
+        do {
+          try VNSequenceRequestHandler().perform([request], on: source.pixelBuffer, orientation: source.orientation)
+          if let seeded = request.results?.first as? VNDetectedObjectObservation {
+            request.inputObservation = seeded
+            self.activeTrackingRequests[trackID] = request
+            self.trackingMisses[trackID] = 0
+          }
+        } catch {
+          self.activeTrackingRequests.removeValue(forKey: trackID)
+          self.trackingMisses.removeValue(forKey: trackID)
+        }
+      }
+      // Release each cached source frame after its bounded retention window.
+      let staleKeys = self.retainedTrackingFrames.keys.filter { timestamp in
+        timestamp < (self.retainedTrackingFrames.keys.max() ?? timestamp) - 8.0
+      }
+      for key in staleKeys {
+        if let old = self.retainedTrackingFrames.removeValue(forKey: key) { CVPixelBufferRelease(old.pixelBuffer) }
+      }
+    }
+  }
+
+  /// Propagates seeded boxes across subsequent camera frames using Vision object tracking.
+  private func processLocalTrackingFrame(_ frame: ARFrame, generation: Int) {
+    let pixelBuffer = frame.capturedImage
+    CVPixelBufferRetain(pixelBuffer)
+    let timestamp = frame.timestamp
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    visionQueue.async { [weak self] in
+      defer { CVPixelBufferRelease(pixelBuffer) }
+      guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation,
+            !self.activeTrackingRequests.isEmpty else { return }
+      var output: [[String: Double]] = []
+      for (trackID, request) in self.activeTrackingRequests {
+        do {
+          try VNSequenceRequestHandler().perform([request], on: pixelBuffer, orientation: orientation)
+          guard let observation = request.results?.first as? VNDetectedObjectObservation,
+                observation.confidence >= 0.25 else {
+            let misses = (self.trackingMisses[trackID] ?? 0) + 1
+            self.trackingMisses[trackID] = misses
+            if misses >= 6 { self.activeTrackingRequests.removeValue(forKey: trackID); self.trackingMisses.removeValue(forKey: trackID) }
+            continue
+          }
+          request.inputObservation = observation
+          self.trackingMisses[trackID] = 0
+          let box = observation.boundingBox
+          output.append([
+            "trackId": Double(trackID),
+            "x": Double(box.minX), "y": Double(1 - box.maxY),
+            "width": Double(box.width), "height": Double(box.height),
+            "confidence": Double(observation.confidence)
+          ])
+        } catch {
+          let misses = (self.trackingMisses[trackID] ?? 0) + 1
+          self.trackingMisses[trackID] = misses
+          if misses >= 6 { self.activeTrackingRequests.removeValue(forKey: trackID); self.trackingMisses.removeValue(forKey: trackID) }
+        }
+      }
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation else { return }
+        self.onVisualCandidates(["count": output.count, "timestamp": timestamp, "candidates": output])
       }
     }
   }
