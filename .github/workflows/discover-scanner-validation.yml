@@ -48,7 +48,7 @@ jobs:
         run: npm run typecheck
 
       - name: Run scanner unit tests
-        run: npx vitest run tests/live-recognition-policy.test.ts tests/overlay-track-association.test.ts tests/spatial-bottle-tracker.test.ts tests/patch-motion-tracker.test.ts tests/tracked-bottle-registry.test.ts tests/mask-contour.test.ts tests/contour-geometry.test.ts
+        run: npx vitest run tests/live-recognition-policy.test.ts tests/overlay-track-association.test.ts tests/spatial-bottle-tracker.test.ts tests/patch-motion-tracker.test.ts tests/tracked-bottle-registry.test.ts tests/mask-contour.test.ts tests/contour-geometry.test.ts tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts
 
       - name: Export web build
         run: npm run build:web
