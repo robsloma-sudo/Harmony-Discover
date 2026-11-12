@@ -30,7 +30,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   /** Web only: enable relative depth inference only on screens that consume it. */
   browserDepth?: boolean;
@@ -125,7 +125,7 @@ function WebLiveCamera(props: NativeProps) {
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
-    type WebTrack = MotionTrack & { id: number; lastSeenAt: number };
+    type WebTrack = MotionTrack & { id: number; lastSeenAt: number; bottle?: BottleRead };
     let webTracks: WebTrack[] = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
@@ -135,7 +135,7 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
-    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number }>) => {
+    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead }>) => {
       const now = Date.now();
       const used = new Set<number>();
       const next: WebTrack[] = [];
@@ -165,6 +165,7 @@ function WebLiveCamera(props: NativeProps) {
           lastSeenAt: now,
           misses: 0,
           features: [],
+          bottle: detection.bottle,
         };
         if (latestGrayFrame) track.features = seedMotionFeatures(latestGrayFrame, track);
         next.push(track);
@@ -174,7 +175,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
-      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence }));
+      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle }));
     };
 
     const captureTrackingFrame = (): GrayFrame | null => {
@@ -218,7 +219,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter((track): track is WebTrack => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
-          candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })),
+          candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })),
         } });
       } catch {
         // A failed local frame must not break camera recognition; cloud reads remain the recovery path.
@@ -287,7 +288,7 @@ function WebLiveCamera(props: NativeProps) {
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })));
+        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })));
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, candidates: trackedCandidates } });
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
@@ -508,7 +509,7 @@ function FallbackNativeCamera(props: NativeProps) {
   return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => { cameraReady.current = true; props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } }); }} />;
 }
 
-type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number };
+type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; bottle: BottleRead };
 let nativeRecognitionTracks: RecognitionTrack[] = [];
 let nextNativeRecognitionTrackId = 1;
 let nativeFrameReadBusy = false;
@@ -544,6 +545,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
       height: prior ? prior.height * (1 - blend) + box.height * blend : box.height,
       confidence: bottle.confidence,
       lastSeenAt: now,
+      bottle,
     };
     next.push(track);
     return track;
@@ -604,7 +606,7 @@ export function DiscoverARSurface(props: NativeProps) {
         } });
         const tracked = trackNativeBottleReads(result.bottles);
         setTrackingSeeds(tracked.map((track, index) => ({ ...track, sourceTimestamp: frame.timestamp })));
-        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
+        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
       }).catch(error => {
         props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
       }).finally(() => { nativeFrameReadBusy = false; });
