@@ -350,7 +350,13 @@ Deno.serve(async (req: Request) => {
     });
     const { error } = await db.from("bottle_sightings").insert(rows);
     if (error) { console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error.message, 160) })); return reply({ error: "save_failed" }, 503, origin); }
-    return reply({ ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length }, 200, origin);
+    return reply({
+      ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length,
+      enriched_bottles: enriched.map((b) => ({
+        brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size,
+        details: b.details, field_confidence: b.field_confidence, research_sources: b.research_sources,
+      })),
+    }, 200, origin);
   }
   return reply({ error: "unknown_action" }, 400, origin);
 });
