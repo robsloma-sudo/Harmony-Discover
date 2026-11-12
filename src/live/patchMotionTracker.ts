@@ -102,7 +102,7 @@ export function propagateMotionTrack(track: MotionTrack, frame: GrayFrame, searc
   }
   const matchRatio = nextFeatures.length / track.features.length;
   if (nextFeatures.length < 3 || matchRatio < 0.34) {
-    return { ...track, confidence: track.confidence * 0.58, misses: track.misses + 1 };
+    return { ...track, confidence: track.confidence * 0.82, misses: track.misses + 1 };
   }
   const dx = median(dxs), dy = median(dys);
   const x = Math.max(0, Math.min(1 - track.width, track.x + dx / frame.width));
