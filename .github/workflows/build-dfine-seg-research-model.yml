@@ -30,10 +30,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
 
       - name: Clone upstream D-FINE-seg
-        run: git clone --depth 1 https://github.com/ArgoHA/D-FINE-seg.git .research/dfine-seg
+        run: mkdir -p .research && git clone --depth 1 https://github.com/ArgoHA/D-FINE-seg.git .research/dfine-seg
 
       - name: Install upstream export dependencies
         working-directory: .research/dfine-seg
@@ -63,8 +62,6 @@ jobs:
           DEST="$GITHUB_WORKSPACE/model-artifacts/dfine_seg_${MODEL_SIZE}_coco.onnx"
           cp "$MODEL_PATH" "$DEST"
           sha256sum "$DEST" > "$DEST.sha256"
-          UPSTREAM_SHA="$(git rev-parse HEAD)"
-          DFINE_VERSION="$(dfine version)"
           python - <<'PY'
           import json, os, pathlib, subprocess
           root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "model-artifacts"
