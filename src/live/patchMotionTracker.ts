@@ -30,6 +30,20 @@ function textureScore(patch: number[]): number {
   return patch.reduce((sum, value) => sum + (value - mean) ** 2, 0) / patch.length;
 }
 
+function patchErrorAt(frame: GrayFrame, x: number, y: number, radius: number, reference: number[]): number | null {
+  if (x < radius || y < radius || x >= frame.width - radius || y >= frame.height - radius) return null;
+  let error = 0;
+  let index = 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    const row = (y + dy) * frame.width;
+    for (let dx = -radius; dx <= radius; dx++) {
+      error += Math.abs(frame.pixels[row + x + dx] - reference[index++]);
+    }
+  }
+  return error / reference.length;
+}
+
+
 /** Seed high-texture patches inside a confirmed bottle box. Coordinates are in frame pixels. */
 export function seedMotionFeatures(frame: GrayFrame, box: MotionBox, maximum = 9): MotionFeature[] {
   const candidates: Array<MotionFeature & { texture: number }> = [];
@@ -78,11 +92,8 @@ export function propagateMotionTrack(track: MotionTrack, frame: GrayFrame, searc
     let bestY = feature.y;
     for (let dy = -searchRadius; dy <= searchRadius; dy++) {
       for (let dx = -searchRadius; dx <= searchRadius; dx++) {
-        const candidate = patchAt(frame, feature.x + dx, feature.y + dy, 2);
-        if (!candidate) continue;
-        let error = 0;
-        for (let i = 0; i < candidate.length; i++) error += Math.abs(candidate[i] - feature.patch[i]);
-        error /= candidate.length;
+        const error = patchErrorAt(frame, feature.x + dx, feature.y + dy, 2, feature.patch);
+        if (error === null) continue;
         if (error < bestError) {
           bestError = error;
           bestX = feature.x + dx;
