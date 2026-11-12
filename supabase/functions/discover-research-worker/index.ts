@@ -17,7 +17,7 @@ const ENRICHMENT_TOOL = {
     } } }
   } }
 };
-const clean=(v:unknown,n:number)=>String(v??"").replace(/\\s+/g," ").trim().slice(0,n);
+const clean=(v:unknown,n:number)=>String(v??"").replace(/\s+/g," ").trim().slice(0,n);
 const unit=(v:unknown)=>{const n=Number(v);return Number.isFinite(n)?Math.max(0,Math.min(1,n)):0;};
 
 async function research(key:string,bottle:Record<string,unknown>){
@@ -75,7 +75,7 @@ Deno.serve(async req=>{
       if(Object.keys(result.details).length){
         const current=(sighting.label_details&&typeof sighting.label_details==="object"?sighting.label_details:{}) as Record<string,unknown>;
         const merged={...current,...result.details,_research_field_confidence:{...((current._research_field_confidence&&typeof current._research_field_confidence==="object"?current._research_field_confidence:{}) as Record<string,unknown>),...result.scores},_research_sources:[...((Array.isArray(current._research_sources)?current._research_sources:[])),...result.sources]};
-        const {error:updateError}=await db.from("bottle_sightings").update({label_details:merged,read_vintage:/^(18|19|20)\\d{2}$/.test(String(merged.vintage||""))?Number(merged.vintage):sighting.read_vintage}).eq("id",sighting.id);
+        const {error:updateError}=await db.from("bottle_sightings").update({label_details:merged,read_vintage:/^(18|19|20)\d{2}$/.test(String(merged.vintage||""))?Number(merged.vintage):sighting.read_vintage}).eq("id",sighting.id);
         if(updateError)throw new Error("sighting_update_failed");
       }else empty++;
       const {error:finishError}=await db.rpc("discover_finish_bottle_research_job",{p_job:job.id,p_worker:workerId,p_status:"completed",p_error:null});
@@ -88,7 +88,7 @@ Deno.serve(async req=>{
   }
   // Drain a larger save batch in bounded invocations rather than risking a long-running Edge request.
   if ((jobs || []).length === 2) {
-    const workerUrl = url.replace(/\\/$/, "") + "/functions/v1/discover-research-worker";
+    const workerUrl = url.replace(/\/$/, "") + "/functions/v1/discover-research-worker";
     EdgeRuntime.waitUntil(fetch(workerUrl, {
       method: "POST",
       headers: { "content-type": "application/json", "x-discover-worker-secret": secret },
