@@ -29,7 +29,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
 
   return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
     <View style={{ gap: 12 }}>
-      <Text style={{ color: muted, fontSize: 10, lineHeight: 16 }}>NATIVE IPHONE AR SESSION · SHARED WITH THE MAIN VIEWFINDER</Text>
+      <Text style={{ color: muted, fontSize: 10, lineHeight: 16 }}>SHARED CAMERA SESSION · ARKit WORLD TRACKING WHEN AVAILABLE</Text>
       <View style={{ padding: 12, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(198,163,106,0.2)' }}>
         <Text style={{ color: trackingColor, fontSize: 12, fontWeight: '900', letterSpacing: 0.5 }}>TRACKING · {tracking.state.toUpperCase().replace('_', ' ')}</Text>
         <Text style={{ color: muted, fontSize: 10, marginTop: 4 }}>{tracking.reason || 'ARKit camera pose tracking is stable.'}</Text>
