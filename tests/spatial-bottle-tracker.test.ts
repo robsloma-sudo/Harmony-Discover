@@ -49,11 +49,36 @@ describe('persistent physical bottle tracking', () => {
     expect(next.observed[0].physicalObjectId).not.toBe(first.observed[0].physicalObjectId);
   });
 
-  it('marks old identities lost but retains them for diagnostics', () => {
+  it('does not create phantom tracks when metric depth is unavailable', () => {
+    const tracker = new SpatialBottleTracker();
+    const invalid = { confidence: 0.9, geometryComplete: false, reason: 'insufficient_depth' as const };
+    const first = tracker.update([invalid], 1000);
+    const second = tracker.update([invalid], 1500);
+    expect(first.observed).toEqual([null]);
+    expect(second.observed).toEqual([null]);
+    expect(second.tracks).toEqual([]);
+  });
+
+  it('does not count the same camera frame twice toward confirmation', () => {
+    const tracker = new SpatialBottleTracker();
+    const observation = { worldPoint: point(0), confidence: 0.9, geometryComplete: true };
+    const first = tracker.update([observation], 1000);
+    const duplicate = tracker.update([observation], 1000);
+    expect(first.observed[0]?.state).toBe('potential');
+    expect(duplicate.observed).toEqual([null]);
+    expect(duplicate.tracks[0].state).toBe('potential');
+    const nextFrame = tracker.update([observation], 1500);
+    expect(nextFrame.observed[0]?.state).toBe('confirmed');
+  });
+
+  it('removes lost identities after the diagnostic retention window', () => {
     const tracker = new SpatialBottleTracker({ lostRetentionMs: 1000, occlusionGraceMs: 300 });
     tracker.update([{ worldPoint: point(0), confidence: 0.9, geometryComplete: true }], 1000);
     tracker.update([{ worldPoint: point(0), confidence: 0.9, geometryComplete: true }], 1100);
-    const result = tracker.update([], 2300);
-    expect(result.tracks[0].state).toBe('lost');
+    const retained = tracker.update([], 1700);
+    expect(retained.tracks).toHaveLength(1);
+    expect(retained.tracks[0].state).toBe('occluded');
+    const expired = tracker.update([], 2200);
+    expect(expired.tracks).toHaveLength(0);
   });
 });
