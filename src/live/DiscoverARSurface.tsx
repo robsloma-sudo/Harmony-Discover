@@ -244,7 +244,7 @@ function WebLiveCamera(props: NativeProps) {
           if (disposed) return;
           const current = videoRef.current;
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
-            callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'normal', reason: 'browser_video_frames_verified' } });
+            callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
             scheduleRecognition();
             return;
@@ -343,7 +343,7 @@ function FallbackNativeCamera(props: NativeProps) {
     }, 2500);
     return () => { cancelled = true; clearInterval(timer); };
   }, [props.active]);
-  return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => props.onTrackingUpdate?.({ nativeEvent: { state: 'normal', reason: 'expo_camera_preview_ready' } })} />;
+  return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } })} />;
 }
 
 type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number };
