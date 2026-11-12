@@ -97,7 +97,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead; contour?: Array<{ x: number; y: number }> }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; imageWidth?: number; imageHeight?: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead; contour?: Array<{ x: number; y: number }> }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   /** Web only: enable relative depth inference only on screens that consume it. */
   browserDepth?: boolean;
@@ -354,6 +354,8 @@ function WebLiveCamera(props: NativeProps) {
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
           source: 'local',
+          imageWidth: video.videoWidth,
+          imageHeight: video.videoHeight,
           candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour })),
         } });
       } catch {
@@ -477,7 +479,7 @@ function WebLiveCamera(props: NativeProps) {
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: frameTimestampMs, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })), seedFrame);
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', candidates: trackedCandidates } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', imageWidth: video.videoWidth, imageHeight: video.videoHeight, candidates: trackedCandidates } });
 
         // Run model inference in parallel with the cloud read, then associate
         // the returned masks to the exact persistent track IDs from this frame.
@@ -508,6 +510,8 @@ function WebLiveCamera(props: NativeProps) {
             callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
               count: webTracks.length,
               source: 'local',
+              imageWidth: video.videoWidth,
+              imageHeight: video.videoHeight,
               candidates: webTracks.map(track => ({
                 trackId: track.id,
                 x: track.x,
