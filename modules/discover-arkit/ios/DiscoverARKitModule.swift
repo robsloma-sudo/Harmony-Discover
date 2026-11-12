@@ -154,6 +154,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       return
     }
 
+    // ARKit removes session anchors on reset; clear our lookup tables too, or
+    // the next update may incorrectly believe stale anchors are still installed.
+    spatialAnchors.removeAll()
+    spatialAnchorStates.removeAll()
+    onSpatialAnchorStatus(["activeCount": 0])
     sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     onARReady(["state": "starting"])
   }
