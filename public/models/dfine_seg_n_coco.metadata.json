@@ -17,5 +17,11 @@
     "dynamic_input": false
   },
   "sha256": "999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30",
-  "license_review": "research artifact; verify upstream code, weight, and dataset terms before any redistribution or commercial use"
+  "license_review": "Upstream model card states the code and COCO-pretrained instance-segmentation checkpoints are Apache-2.0. Preserve the upstream license notice; complete internal legal/data-provenance review before public redistribution.",
+  "license": {
+    "code": "Apache-2.0",
+    "checkpoint": "Apache-2.0 (upstream model card explicitly includes COCO-pretrained instance-segmentation checkpoints)",
+    "model_card": "https://huggingface.co/ArgoSA/D-FINE-seg",
+    "dataset_note": "This artifact uses COCO-pretrained instance-segmentation weights, not Cityscapes semantic-segmentation weights."
+  }
 }
