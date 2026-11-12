@@ -35,6 +35,18 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -58,6 +70,11 @@ jobs:
 
       - name: Type-check enrichment worker Edge Function
         run: deno check --node-modules-dir=auto supabase/functions/discover-enrichment-worker/index.ts
+
+      - name: Smoke-test Phase 5 database migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-phase5-migration-smoke.sql
 
       - name: TypeScript validation
         run: npm run typecheck
