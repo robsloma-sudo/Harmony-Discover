@@ -144,6 +144,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
           active={!!permission.granted && !scanPhotos}
+          recognitionEnabled={!!permission.granted && !scanPhotos && (scanMode !== 'auto' || activePanel === 'inventory' || activePanel === 'lidar')}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
