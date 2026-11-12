@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {ActivityIndicator,Linking,Platform,Pressable,ScrollView,Text,TextInput,View} from 'react-native';
 import {colors} from '../ui';
-import {findNearbyVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
+import {findNearbyPhgAtlasVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
 import {AtlasMap} from './AtlasMap';
 import type {JourneyScanItem} from './JourneyPlayerOverlay';
 
@@ -25,7 +25,7 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
   if(command.action==='search'||command.action==='configure'){if(typeof command.search==='string'&&command.search.trim()){setQuery(command.search.trim());applied.push('search');}}
   onCommandResult?.(command.id,applied.length?('Applied Nearby Atlas '+applied.join(', ')+'.'):'I need a valid radius, category, or search phrase to do that.');
  })();},[command,locate,onCommandResult]);
- useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyVenues(coords.latitude,coords.longitude,radius,category||null).then(rows=>{if(active){setVenues(rows);if(selectedVenue&&!rows.some(v=>v.id===selectedVenue))setSelectedVenue(null);}}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,radius,category]);
+ useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyPhgAtlasVenues(coords.latitude,coords.longitude,radius,category||null).then(rows=>{if(active){setVenues(rows);if(selectedVenue&&!rows.some(v=>v.id===selectedVenue))setSelectedVenue(null);}}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,radius,category]);
  const filtered=useMemo(()=>venues.filter(v=>v.name.toLowerCase().includes(query.trim().toLowerCase())||(v.locality||'').toLowerCase().includes(query.trim().toLowerCase())),[venues,query]);
  const selected=filtered.find(v=>v.id===selectedVenue)||null;
  const venuePins=filtered.map(v=>({id:v.id,name:v.name,latitude:v.latitude,longitude:v.longitude}));
