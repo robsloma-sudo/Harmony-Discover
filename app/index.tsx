@@ -15,7 +15,7 @@ import { PreviewPanel } from './preview';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
-export default function Home() {
+export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'settings' } = {}) {
   const camera = useRef<CameraView>(null);
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
@@ -28,9 +28,9 @@ export default function Home() {
   const [cameraMessage, setCameraMessage] = useState('');
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
   const [martyConsentOpen, setMartyConsentOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|null>(null);
+  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
 
   const startMenuScan = async () => {
     setSettingsOpen(false);
