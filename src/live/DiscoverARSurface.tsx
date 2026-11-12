@@ -104,6 +104,8 @@ function WebLiveCamera(props: NativeProps) {
     let recognitionTimer = 0;
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
+    let recognitionCanvas: HTMLCanvasElement | null = null;
+    let recognitionContext: CanvasRenderingContext2D | null = null;
     let recognitionBusy = false;
     type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
@@ -166,16 +168,22 @@ function WebLiveCamera(props: NativeProps) {
     // adding a full delay after the provider response. This stays below the
     // server's 30/minute limit even when inference is fast.
     const scheduleRecognition = (delay = recognitionIntervalMs) => {
-      if (!disposed && callbacksRef.current.recognitionEnabled) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
+      if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled) return;
+      if (recognitionTimer) window.clearTimeout(recognitionTimer);
+      recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
     };
     const recognizeFrame = async () => {
-      if (disposed || recognitionBusy || !callbacksRef.current.recognitionEnabled) return;
+      if (disposed || document.hidden || recognitionBusy || !callbacksRef.current.recognitionEnabled) return;
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
       lastRecognitionStartedAt = Date.now();
       try {
-        const canvas = document.createElement('canvas');
+        // Reuse one bounded canvas for every recognition pass. Repeated full
+        // canvas allocations can accumulate substantial transient memory on
+        // iOS Safari during long camera sessions.
+        if (!recognitionCanvas) recognitionCanvas = document.createElement('canvas');
+        const canvas = recognitionCanvas;
         // Match the crop the user actually sees (object-fit: cover). On a
         // portrait phone the camera stream may be landscape; sending the full
         // uncropped frame makes the label much smaller than it appears on-screen.
@@ -194,7 +202,8 @@ function WebLiveCamera(props: NativeProps) {
         const scale = Math.min(1, 960 / Math.max(sw, sh));
         canvas.width = Math.max(1, Math.round(sw * scale));
         canvas.height = Math.max(1, Math.round(sh * scale));
-        const context = canvas.getContext('2d');
+        recognitionContext = recognitionContext || canvas.getContext('2d');
+        const context = recognitionContext;
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
@@ -283,16 +292,38 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (recognitionTimer) window.clearTimeout(recognitionTimer);
+        recognitionTimer = 0;
+        stream?.getVideoTracks().forEach(track => { track.enabled = false; });
+        return;
+      }
+      stream?.getVideoTracks().forEach(track => { track.enabled = true; });
+      const video = videoRef.current;
+      if (video && video.paused) {
+        void video.play().then(() => scheduleRecognition(0)).catch(error => {
+          callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'camera_resume_failed' } });
+        });
+      } else {
+        scheduleRecognition(0);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     recognitionSchedulerRef.current = () => scheduleRecognition(0);
     void start();
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       recognitionSchedulerRef.current = null;
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       if (depthTimer) window.clearInterval(depthTimer);
       depthEstimator?.dispose();
+      if (recognitionCanvas) { recognitionCanvas.width = 0; recognitionCanvas.height = 0; }
+      recognitionCanvas = null;
+      recognitionContext = null;
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
