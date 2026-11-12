@@ -77,6 +77,9 @@ public class DiscoverARKitModule: Module {
 /// separately validated vision/geometry pipeline.
 public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var isActive = false
+  // Preserve the requested active state across temporary native-view detachment.
+  // Expo/React may keep the prop value unchanged when the view is reattached.
+  private var shouldBeActive = false
   private var isRecognitionEnabled = false
   private var lastTrackingState = ""
 
@@ -124,7 +127,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   public override func didMoveToWindow() {
     super.didMoveToWindow()
     if window == nil {
-      setActive(false)
+      // Pause the hardware session without forgetting that the React prop still
+      // wants this surface active. The same prop may not be re-sent on reattach.
+      stopSession(reason: "view_detached")
+    } else if shouldBeActive {
+      startSession()
     }
   }
 
@@ -137,22 +144,32 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   func setActive(_ active: Bool) {
-    guard active != isActive else { return }
-    isActive = active
-    if !active {
-      rectangleOverlay.path = nil
-      previousCandidates.removeAll()
-      sceneView.session.pause()
-      lastTrackingState = "paused"
-      onTrackingUpdate(["state": "paused", "reason": "view_inactive"])
-      return
+    shouldBeActive = active
+    if active {
+      startSession()
+    } else {
+      stopSession(reason: "view_inactive")
     }
+  }
 
+  private func stopSession(reason: String) {
+    guard isActive else { return }
+    isActive = false
+    rectangleOverlay.path = nil
+    previousCandidates.removeAll()
+    sceneView.session.pause()
+    lastTrackingState = "paused"
+    onVisualCandidates(["count": 0, "candidates": []])
+    onTrackingUpdate(["state": "paused", "reason": reason])
+  }
+
+  private func startSession() {
+    guard !isActive, window != nil, shouldBeActive else { return }
     guard ARWorldTrackingConfiguration.isSupported else {
       onARError(["message": "ARKit world tracking is not supported on this device."])
-      isActive = false
       return
     }
+    isActive = true
 
     // ARKit removes session anchors on reset; clear our lookup tables too, or
     // the next update may incorrectly believe stale anchors are still installed.
@@ -613,7 +630,16 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   public func sessionWasInterrupted(_ session: ARSession) {
-    onTrackingUpdate(["state": "interrupted", "reason": "system_interruption"])
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.previousCandidates.removeAll()
+      self.rectangleOverlay.path = nil
+      self.lastVisionFrameTime = 0
+      self.lastDepthFrameTime = 0
+      self.onVisualCandidates(["count": 0, "candidates": []])
+      self.onDepthStatus(["status": "session_interrupted"])
+      self.onTrackingUpdate(["state": "interrupted", "reason": "system_interruption"])
+    }
   }
 
   public func sessionInterruptionEnded(_ session: ARSession) {
