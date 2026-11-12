@@ -99,6 +99,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     const uri = event.nativeEvent.uri;
     const kind = pendingCapture.current;
     pendingCapture.current = null;
+    setCapturing(false);
     if (!uri || !kind) return;
     if (kind === 'menu_page') {
       appendPages([uri], 'camera');
@@ -118,13 +119,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       if (!result.granted) setCameraMessage('Camera access is needed to capture.');
       return;
     }
-    try {
-      setCapturing(true);
-      setCameraMessage('');
-      pendingCapture.current = 'scan';
-      setCaptureRequestId(value => value + 1);
-    } catch { setCameraMessage('Could not capture this image. Please try again.'); }
-    finally { setCapturing(false); }
+    setCapturing(true);
+    setCameraMessage('');
+    pendingCapture.current = 'scan';
+    setCaptureRequestId(value => value + 1);
   };
 
   const openGallery = async () => {
@@ -158,7 +156,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             if (value.menu) setLiveMenu(value.menu);
             setLiveReadAt(value.frameTimestamp);
           }}
-          onARError={event => setCameraMessage(event.nativeEvent.message || 'Camera session failed.')}
+          onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.permissionFallback]}>
