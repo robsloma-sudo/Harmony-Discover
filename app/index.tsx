@@ -232,7 +232,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
-        <View style={s.topActions}><View style={s.livePill}><View style={s.liveDot}/><Text style={s.liveText}>VIEWFINDER</Text></View><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
+        <View style={s.topActions}><Pressable accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>{if(liveReadConsent){setLiveReadConsent(false);setLiveReadNoticeDismissed(false);}else{setLiveReadNoticeDismissed(false);}}} style={s.livePill}><View style={[s.liveDot,{backgroundColor:liveReadConsent?'#77E5B5':'#B75D55'}]}/><Text style={s.liveText}>{liveReadConsent ? (liveReadAt ? 'LIVE READING' : 'LIVE STARTING') : 'LIVE READ OFF'}</Text></Pressable><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
       </View>
       <View style={[s.centerHint, { top: Math.max(insets.top, 24) + 112, bottom: Math.max(insets.bottom, 12) + (screenHeight < 750 ? 218 : 238) }]} pointerEvents="none">
         <View style={[s.corner, s.tl]} /><View style={[s.corner, s.tr]} /><View style={[s.corner, s.bl]} /><View style={[s.corner, s.br]} />
