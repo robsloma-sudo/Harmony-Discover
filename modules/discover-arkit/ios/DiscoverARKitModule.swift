@@ -104,6 +104,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var lastCloudFrameTime: TimeInterval = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
+  private let localTrackingFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
   private var lastDepthFrameTime: TimeInterval = 0
   private var nextCandidateTrackID = 1
@@ -171,6 +172,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private func stopSession(reason: String) {
     guard isActive else { return }
     isActive = false
+    recognitionGeneration += 1
+    visionQueue.async { [weak self] in self?.clearLocalTrackingState() }
     rectangleOverlay.path = nil
     previousCandidates.removeAll()
     sceneView.session.pause()
@@ -264,6 +267,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     }
     lastCaptureRequestId = requestId
     pendingCaptureRequestId = nil
+    guard localTrackingFrameGate.wait(timeout: .now()) == .success else { return }
     let pixelBuffer = frame.capturedImage
     CVPixelBufferRetain(pixelBuffer)
     let timestamp = frame.timestamp
@@ -441,6 +445,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   func setTrackingSeeds(_ seeds: [[String: Any]]) {
     visionQueue.async { [weak self] in
       guard let self, self.isActive, self.isRecognitionEnabled else { return }
+      var incomingIDs = Set<Int>()
       for seed in seeds {
         guard let rawID = seed["trackId"] as? NSNumber,
               let timestamp = seed["sourceTimestamp"] as? NSNumber,
@@ -449,12 +454,14 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
               let confidence = seed["confidence"] as? NSNumber,
               confidence.doubleValue >= 0.55 else { continue }
         let trackID = rawID.intValue
+        incomingIDs.insert(trackID)
         let rect = CGRect(x: x.doubleValue, y: y.doubleValue, width: width.doubleValue, height: height.doubleValue)
         guard trackID > 0, rect.minX >= 0, rect.minY >= 0, rect.width > 0.02, rect.height > 0.02,
               rect.maxX <= 1.001, rect.maxY <= 1.001 else { continue }
         guard let frameKey = self.retainedTrackingFrames.keys.min(by: { abs($0 - timestamp.doubleValue) < abs($1 - timestamp.doubleValue) }),
               abs(frameKey - timestamp.doubleValue) <= 0.025,
-              let source = self.retainedTrackingFrames[frameKey] else { continue }
+              let source = self.retainedTrackingFrames[frameKey],
+              source.generation == self.recognitionGeneration else { continue }
         let visionRect = CGRect(x: rect.minX, y: 1 - rect.maxY, width: rect.width, height: rect.height)
         let observation = VNDetectedObjectObservation(boundingBox: visionRect)
         let request = VNTrackObjectRequest(detectedObjectObservation: observation)
@@ -470,6 +477,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self.activeTrackingRequests.removeValue(forKey: trackID)
           self.trackingMisses.removeValue(forKey: trackID)
         }
+      }
+      for staleID in self.activeTrackingRequests.keys where !incomingIDs.contains(staleID) {
+        self.activeTrackingRequests.removeValue(forKey: staleID)
+        self.trackingMisses.removeValue(forKey: staleID)
       }
       // Release each cached source frame after its bounded retention window.
       let staleKeys = self.retainedTrackingFrames.keys.filter { timestamp in
@@ -488,7 +499,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
     visionQueue.async { [weak self] in
-      defer { CVPixelBufferRelease(pixelBuffer) }
+      defer { CVPixelBufferRelease(pixelBuffer); self?.localTrackingFrameGate.signal() }
       guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation,
             !self.activeTrackingRequests.isEmpty else { return }
       var output: [[String: Double]] = []
