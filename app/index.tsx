@@ -39,6 +39,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
+  const [liveTextItems, setLiveTextItems] = useState<Array<{text:string;confidence:number;box:{x0:number;y0:number;x1:number;y1:number}}>>([]);
+  const [liveBarcodeItems, setLiveBarcodeItems] = useState<Array<{value:string;symbology:string;box:{x0:number;y0:number;x1:number;y1:number}}>>([]);
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
   const [liveReadAt, setLiveReadAt] = useState<number | null>(null);
   const [cameraMessage, setCameraMessage] = useState('');
@@ -178,6 +180,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
             if (value.barcodes?.length) setLiveBarcodes(previous => { const merged = [...previous]; value.barcodes!.forEach(barcode => { if (!merged.some(item => item.value === barcode.value)) merged.push(barcode); }); return merged.slice(-12); });
             if (value.text?.length) setLiveLabelText(previous => Array.from(new Set([...previous, ...value.text!])).slice(-24));
+            if (value.textItems?.length) setLiveTextItems(value.textItems);
+            if (value.barcodeItems?.length) setLiveBarcodeItems(value.barcodeItems);
             if (value.menu) setLiveMenu(value.menu);
           }}
           onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
