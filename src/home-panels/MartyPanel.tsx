@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useAuth } from '../src/auth/AuthContext';
-import { supabase } from '../src/services/supabase';
-import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../src/voice/voiceSessionCoordinator';
-import type { VoiceSessionGrant } from '../src/voice/sessionContract';
-import { MARTY_BOSTON_CONSENT_VERSION } from '../src/voice/martySullivanBoston';
+import { useAuth } from '../auth/AuthContext';
+import { supabase } from '../services/supabase';
+import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voiceSessionCoordinator';
+import type { VoiceSessionGrant } from '../voice/sessionContract';
+import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
 
 type Line = { id: string; who: 'you' | 'marty' | 'system'; text: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
