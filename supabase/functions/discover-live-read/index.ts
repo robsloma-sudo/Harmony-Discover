@@ -345,7 +345,8 @@ Deno.serve(async (req: Request) => {
       // Packaging, shape, closure, category and brand alone never prove an SKU.
       // Require a high-confidence read of both brand and expression plus an
       // exact normalized expression match to a product-level catalogue row.
-      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);\n      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
+      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
+      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
         !!m?.id && !!m.category && (m.score ?? 0) >= 0.90
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
@@ -415,7 +416,8 @@ Deno.serve(async (req: Request) => {
       const sameExpression = !!m?.product && normalize(m.product) === normalize(b.product);
       // Re-evaluate on the server. Product aggregation requires a strong full
       // expression read and an exact normalized match to a product-level row.
-      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);\n      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
+      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
+      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
         !!m?.id && !!m.category && (m.score ?? 0) >= 0.90;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
