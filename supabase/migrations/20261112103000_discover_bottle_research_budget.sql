@@ -66,7 +66,7 @@ begin
   if p_worker is null or length(p_worker) < 8 then raise exception 'invalid worker id'; end if;
   return query
   with picked as (
-    select j.id from public.bottle_research_jobs j
+    select j.id, j.status as prior_status from public.bottle_research_jobs j
     where ((j.status in ('queued','failed','deferred') and j.available_at <= now())
        or (j.status = 'processing' and j.locked_at < now() - interval '5 minutes'))
       and j.attempts < 4
@@ -75,7 +75,7 @@ begin
     limit greatest(1, least(coalesce(p_limit,10),20))
   )
   update public.bottle_research_jobs j
-  set status='processing', attempts=j.attempts+1, locked_at=now(),
+  set status='processing', attempts=case when picked.prior_status='deferred' then j.attempts else j.attempts+1 end, locked_at=now(),
       locked_by=p_worker, updated_at=now(), last_error=null
   from picked where j.id=picked.id
   returning j.*;
