@@ -69,7 +69,7 @@ The adapter is not a model runtime. The ONNX session, preprocessing pipeline, te
 - `trackedBottleRegistry.ts`: persistent visual track metadata and bounded contour carry-forward.
 - `segmentationEngine.ts`: provider-neutral interface, one-to-one mask/track association, timestamp/confidence/geometry rejection, single-flight bounded-cadence runner, lifecycle reset/disposal.
 - `tests/segmentation-engine.test.ts`: synthetic fixture tests for association, ambiguity, malformed/stale masks, cadence, and disposal.
-- No actual model weights, ONNX runtime, model-specific preprocessing/output decoder, or real-camera inference are integrated yet. Synthetic fixture tests validate the integration contract only.
+- No actual model weights are bundled, and no concrete ONNX Runtime Web dependency/session loader or real-camera inference is integrated yet. The provider is testable with an injected runtime but is not currently instantiated by the live camera. Synthetic fixture tests validate preprocessing, output adaptation, association, and lifecycle contracts only.
 
 ## Next implementation sequence
 
