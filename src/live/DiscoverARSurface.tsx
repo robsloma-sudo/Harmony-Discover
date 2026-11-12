@@ -4,6 +4,7 @@ import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
+import { grayscaleFrame, propagateMotionTrack, seedMotionFeatures, type GrayFrame, type MotionTrack } from './patchMotionTracker';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -106,6 +107,11 @@ function WebLiveCamera(props: NativeProps) {
     let frameCheck = 0;
     let recognitionTimer = 0;
     let depthTimer = 0;
+    let trackingTimer = 0;
+    let trackingCanvas: HTMLCanvasElement | null = null;
+    let trackingContext: CanvasRenderingContext2D | null = null;
+    let latestGrayFrame: GrayFrame | null = null;
+    let trackingBusy = false;
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionCanvas: HTMLCanvasElement | null = null;
     let recognitionContext: CanvasRenderingContext2D | null = null;
@@ -119,7 +125,7 @@ function WebLiveCamera(props: NativeProps) {
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
-    type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number };
+    type WebTrack = MotionTrack & { id: number; lastSeenAt: number };
     let webTracks: WebTrack[] = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
@@ -156,7 +162,9 @@ function WebLiveCamera(props: NativeProps) {
           confidence: detection.confidence,
           lastSeenAt: now,
           misses: 0,
+          features: [],
         };
+        if (latestGrayFrame) track.features = seedMotionFeatures(latestGrayFrame, track);
         next.push(track);
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence };
       });
@@ -165,6 +173,60 @@ function WebLiveCamera(props: NativeProps) {
       });
       webTracks = next;
       return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence }));
+    };
+
+    const captureTrackingFrame = (): GrayFrame | null => {
+      const video = videoRef.current;
+      if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 2 || video.videoHeight < 2) return null;
+      if (!trackingCanvas) trackingCanvas = document.createElement('canvas');
+      const displayWidth = video.clientWidth || video.videoWidth;
+      const displayHeight = video.clientHeight || video.videoHeight;
+      const displayAspect = displayWidth / displayHeight;
+      const sourceAspect = video.videoWidth / video.videoHeight;
+      let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+      if (sourceAspect > displayAspect) { sw = video.videoHeight * displayAspect; sx = (video.videoWidth - sw) / 2; }
+      else if (sourceAspect < displayAspect) { sh = video.videoWidth / displayAspect; sy = (video.videoHeight - sh) / 2; }
+      const scale = Math.min(1, 320 / Math.max(sw, sh));
+      const width = Math.max(1, Math.round(sw * scale));
+      const height = Math.max(1, Math.round(sh * scale));
+      if (trackingCanvas.width !== width || trackingCanvas.height !== height) {
+        trackingCanvas.width = width;
+        trackingCanvas.height = height;
+        trackingContext = trackingCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      const context = trackingContext;
+      if (!context) return null;
+      context.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+      return grayscaleFrame(width, height, context.getImageData(0, 0, width, height).data);
+    };
+
+    const runLocalTrackingFrame = () => {
+      if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled || trackingBusy || !webTracks.length) return;
+      trackingBusy = true;
+      try {
+        const frame = captureTrackingFrame();
+        if (!frame) return;
+        latestGrayFrame = frame;
+        webTracks = webTracks
+          .map(track => propagateMotionTrack(track, frame))
+          .filter(track => track.misses < 6 && track.confidence >= 0.12);
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
+          count: webTracks.length,
+          candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })),
+        } });
+      } catch {
+        // A failed local frame must not break camera recognition; cloud reads remain the recovery path.
+      } finally {
+        trackingBusy = false;
+      }
+    };
+
+    const startLocalTracking = () => {
+      if (!trackingTimer) trackingTimer = window.setInterval(runLocalTrackingFrame, 100);
+    };
+    const stopLocalTracking = () => {
+      if (trackingTimer) window.clearInterval(trackingTimer);
+      trackingTimer = 0;
     };
 
     // Keep a single request in flight and pace requests by start time, not by
@@ -268,6 +330,7 @@ function WebLiveCamera(props: NativeProps) {
         video.muted = true;
         video.playsInline = true;
         await video.play();
+        startLocalTracking();
 
         if (browserDepthRef.current) {
           depthEstimator = new BrowserDepthEstimator(
@@ -303,10 +366,12 @@ function WebLiveCamera(props: NativeProps) {
         recognitionTimer = 0;
         if (depthTimer) window.clearInterval(depthTimer);
         depthTimer = 0;
+        stopLocalTracking();
         stream?.getVideoTracks().forEach(track => { track.enabled = false; });
         return;
       }
       stream?.getVideoTracks().forEach(track => { track.enabled = true; });
+      if (callbacksRef.current.recognitionEnabled) startLocalTracking();
       if (browserDepthRef.current && depthEstimator && !depthTimer) {
         depthTimer = window.setInterval(() => {
           const currentVideo = videoRef.current;
@@ -335,10 +400,16 @@ function WebLiveCamera(props: NativeProps) {
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       if (depthTimer) window.clearInterval(depthTimer);
+      stopLocalTracking();
       depthEstimator?.dispose();
       if (recognitionCanvas) { recognitionCanvas.width = 0; recognitionCanvas.height = 0; }
+      if (trackingCanvas) { trackingCanvas.width = 0; trackingCanvas.height = 0; }
       recognitionCanvas = null;
       recognitionContext = null;
+      trackingCanvas = null;
+      trackingContext = null;
+      latestGrayFrame = null;
+      webTracks = [];
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
