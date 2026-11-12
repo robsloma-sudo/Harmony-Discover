@@ -31,8 +31,8 @@ export function mergeTrackedBottleCandidates<T>(
       // Carry the existing mask outline with the locally propagated box. This
       // only warps a previously measured mask; it does not invent a new mask.
       contour = previousRecord.contour.map(point => ({
-        x: candidate.x + ((point.x - previousRecord.x) / previousRecord.width) * candidate.width,
-        y: candidate.y + ((point.y - previousRecord.y) / previousRecord.height) * candidate.height,
+        x: Number((candidate.x + ((point.x - previousRecord.x) / previousRecord.width) * candidate.width).toFixed(6)),
+        y: Number((candidate.y + ((point.y - previousRecord.y) / previousRecord.height) * candidate.height).toFixed(6)),
       }));
     }
     next.push({ ...candidate, bottle, ...(contour ? { contour } : {}) });
