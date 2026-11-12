@@ -102,11 +102,12 @@ function WebLiveCamera(props: NativeProps) {
     let barcodeDetector: BarcodeDetectorLike | null = null;
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     let lastRecognitionStartedAt = 0;
-    const recognitionIntervalMs = 2500;
+    // ~13 requests/minute maximum while live view is open; one request at a time.
+    const recognitionIntervalMs = 4500;
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
-    type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number };
+    type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number };
     let webTracks: WebTrack[] = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
@@ -143,6 +144,7 @@ function WebLiveCamera(props: NativeProps) {
           confidence: detection.confidence,
           lastSeenAt: now,
           misses: 0,
+          hits: (previous?.hits ?? 0) + 1,
         };
         next.push(track);
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence };
@@ -151,7 +153,10 @@ function WebLiveCamera(props: NativeProps) {
         if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
-      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence }));
+      // Do not expose one-frame guesses as visible bottle tracks. A track must
+      // be seen twice and may survive only one missed recognition interval.
+      return next.filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
+        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence }));
     };
 
     // Keep a single request in flight and pace requests by start time, not by
@@ -247,14 +252,22 @@ function WebLiveCamera(props: NativeProps) {
         video.playsInline = true;
         await video.play();
 
-        depthEstimator = new BrowserDepthEstimator(
-          depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
-          status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
-        );
-        depthEstimator.start();
-        depthTimer = window.setInterval(() => {
-          if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
-        }, 1700);
+        // The relative-depth transformer is a large additional WASM/WebGPU
+        // allocation. Mobile browsers have a much tighter camera-process memory
+        // budget, so keep it off the mobile web path; native iOS uses ARKit depth.
+        const mobileBrowser = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (mobileBrowser) {
+          callbacksRef.current.onDepthStatus?.({ nativeEvent: { status: 'Mobile browser depth paused for camera stability; use native iPhone ARKit for metric depth.' } });
+        } else {
+          depthEstimator = new BrowserDepthEstimator(
+            depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
+            status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
+          );
+          depthEstimator.start();
+          depthTimer = window.setInterval(() => {
+            if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
+          }, 1700);
+        }
 
         const verifyFrame = () => {
           if (disposed) return;

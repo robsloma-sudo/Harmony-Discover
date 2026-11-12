@@ -193,29 +193,34 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveBottles.length > 0 && (
         <View pointerEvents="none" style={s.liveDetectionLayer}>
-          {liveBottles.slice(0, 8).map((bottle, index) => {
+          {liveBottles.slice(0, 8).filter(bottle => bottle.confidence >= 0.58).map((bottle, index) => {
             const x = Math.max(0, Math.min(1, bottle.box.x0));
             const y = Math.max(0, Math.min(1, bottle.box.y0));
             const right = Math.max(x, Math.min(1, bottle.box.x1));
             const bottom = Math.max(y, Math.min(1, bottle.box.y1));
             const width = Math.max(0.035, right - x);
             const height = Math.max(0.045, bottom - y);
-            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
-            const track = liveCandidates.reduce((best, candidate) => {
-              const overlapLeft = Math.max(x, candidate.x);
-              const overlapTop = Math.max(y, candidate.y);
-              const overlapRight = Math.min(right, candidate.x + candidate.width);
-              const overlapBottom = Math.min(bottom, candidate.y + candidate.height);
-              const intersection = Math.max(0, overlapRight - overlapLeft) * Math.max(0, overlapBottom - overlapTop);
-              const union = width * height + candidate.width * candidate.height - intersection;
+            const candidate = liveCandidates.reduce((best, item) => {
+              const left = Math.max(x, item.x), top = Math.max(y, item.y);
+              const r = Math.min(right, item.x + item.width), b = Math.min(bottom, item.y + item.height);
+              const intersection = Math.max(0, r - left) * Math.max(0, b - top);
+              const union = width * height + item.width * item.height - intersection;
               const score = union > 0 ? intersection / union : 0;
-              return score > best.score ? { id: candidate.trackId, score } : best;
-            }, { id: index + 1, score: 0 });
+              return score > best.score ? { item, score } : best;
+            }, { item: null as typeof liveCandidates[number] | null, score: 0 });
+            // Render only a confirmed temporal track, using its smoothed geometry.
+            if (!candidate.item || candidate.score < 0.08) return null;
+            const tracked = candidate.item;
+            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
+            const left = Math.max(0, Math.min(1, tracked.x));
+            const top = Math.max(0, Math.min(1, tracked.y));
+            const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
+            const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
             return (
-              <View key={track.id} style={[s.liveDetectionBox, { left: ((x * 100) + '%') as `${number}%`, top: ((y * 100) + '%') as `${number}%`, width: ((width * 100) + '%') as `${number}%`, height: ((height * 100) + '%') as `${number}%` }]}>
+              <View key={tracked.trackId} style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
-                  <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · LIVE</Text>
+                  <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · TRACKED</Text>
                 </View>
               </View>
             );
