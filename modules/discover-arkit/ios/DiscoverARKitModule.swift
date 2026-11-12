@@ -39,7 +39,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage", "onFrame")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage", "onFrame", "onSpatialAnchorStatus")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -86,7 +86,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onDepthStatus = EventDispatcher()
   let onCapturedImage = EventDispatcher()
   let onFrame = EventDispatcher()
+  let onSpatialAnchorStatus = EventDispatcher()
   private var lastCaptureRequestId = 0
+  private var spatialAnchors: [String: ARAnchor] = [:]
+  private var spatialAnchorStates: [String: String] = [:]
   private var pendingCaptureRequestId: Int?
   private var lastCloudFrameTime: TimeInterval = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
