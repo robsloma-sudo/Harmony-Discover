@@ -88,7 +88,7 @@ describe('segmentation runner lifecycle', () => {
     let resolveInference: ((value: SegmentationInstance[]) => void) | undefined;
     const provider: SegmentationProvider = {
       modelId: 'test',
-      infer: vi.fn(() => new Promise(resolve => { resolveInference = resolve; })),
+      infer: vi.fn(() => new Promise<SegmentationInstance[]>(resolve => { resolveInference = resolve; })),
     };
     const runner = new SegmentationRunner(provider, { now: () => now, minimumIntervalMs: 1000 });
     const pending = runner.runFrame(frame, 2000, [seed()]);
@@ -109,7 +109,7 @@ describe('segmentation runner lifecycle', () => {
     let resolveInference: ((value: SegmentationInstance[]) => void) | undefined;
     const provider: SegmentationProvider = {
       modelId: 'test',
-      infer: () => new Promise(resolve => { resolveInference = resolve; }),
+      infer: () => new Promise<SegmentationInstance[]>(resolve => { resolveInference = resolve; }),
     };
     const runner = new SegmentationRunner(provider, { now: () => now });
     const pending = runner.runFrame(frame, 2000, [seed()]);
