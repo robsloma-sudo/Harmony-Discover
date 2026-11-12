@@ -75,4 +75,6 @@ jobs:
           test -s dist/ort/ort-wasm-simd-threaded.mjs
           test -s dist/ort/ort.wasm.bundle.min.mjs
           test -s dist/ort/ort-loader.js
-          grep -R -q --include='*.js' '/models/dfine_seg_n_coco.onnx' dist
+          test -s dist/models/dfine_seg_n_coco.onnx
+          echo 'D-FINE model asset is present in the exported app.'
+          echo '999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30  dist/models/dfine_seg_n_coco.onnx' | sha256sum --check
