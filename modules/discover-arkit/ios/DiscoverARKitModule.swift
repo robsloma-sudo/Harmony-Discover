@@ -39,7 +39,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage", "onFrame")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -82,6 +82,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onDepthStatus = EventDispatcher()
   let onCapturedImage = EventDispatcher()
   private var lastCaptureRequestId = 0
+  private var lastCloudFrameTime: TimeInterval = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
@@ -175,6 +176,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
+    let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
+    if shouldSendCloudFrame { lastCloudFrameTime = now }
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let pixelBuffer = frame.capturedImage
@@ -203,6 +206,17 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
       let classifyRequest = VNClassifyImageRequest()
       classifyRequest.imageCropAndScaleOption = .centerCrop
+      var cloudFrameBase64: String? = nil
+      if shouldSendCloudFrame {
+        let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+        let scale = min(1.0, 960.0 / max(image.extent.width, image.extent.height))
+        let resized = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let context = CIContext()
+        if let cgImage = context.createCGImage(resized, from: resized.extent),
+           let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.62) {
+          cloudFrameBase64 = jpeg.base64EncodedString()
+        }
+      }
       do {
         try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
           .perform([textRequest, barcodeRequest, classifyRequest])
@@ -226,6 +240,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self.rectangleOverlay.path = nil
           self.previousCandidates.removeAll()
           self.onVisualCandidates(["count": 0, "candidates": []])
+          if let cloudFrameBase64 {
+            self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
+          }
           self.onRecognitionUpdate([
             "text": Array(recognizedText),
             "barcodes": Array(barcodes),
