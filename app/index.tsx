@@ -61,7 +61,6 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveLabelText([]);
       setLiveTextItems([]);
       setLiveBarcodeItems([]);
-      setLiveBarcodes([]);
       setLivePhysicalIds([]);
       setLiveSpatialAnchors([]);
       setLiveBottleDepthFrame(null);
