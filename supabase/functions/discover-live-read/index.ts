@@ -340,7 +340,7 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
+      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
       const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
