@@ -29,7 +29,7 @@ export type SegmentedTrack = {
 
 export type SegmentationProvider = {
   readonly modelId: string;
-  infer(frame: ImageData, seeds: SegmentationSeed[]): Promise<SegmentationInstance[]>;
+  infer(frame: ImageData, sourceTimestampMs: number): Promise<SegmentationInstance[]>;
   dispose?(): Promise<void> | void;
 };
 
@@ -146,10 +146,10 @@ export type SegmentationRunnerOptions = {
 };
 
 /**
- * Single-flight, bounded-cadence runner. New frames are dropped while inference
- * is active; stale results are discarded after reset/dispose or if their source
- * frame has aged out. The caller owns camera pixels and should release them
- * after runFrame settles.
+ * Single-flight, bounded-cadence inference runner. Inference is independent
+ * from bottle detections so it can run in parallel with the cloud recognition
+ * request for the same captured frame. The caller associates returned masks
+ * to persistent track IDs once the bottle detections arrive.
  */
 export class SegmentationRunner {
   private busy = false;
@@ -168,24 +168,36 @@ export class SegmentationRunner {
     this.maximumTracksPerFrame = Math.max(1, Math.min(8, options.maximumTracksPerFrame ?? 8));
   }
 
-  async runFrame(frame: ImageData, frameTimestampMs: number, seeds: SegmentationSeed[]): Promise<SegmentedTrack[]> {
-    if (this.disposed || this.busy || !finite(frameTimestampMs) || this.now() - this.lastStartedAt < this.minimumIntervalMs) return [];
-    if (!frame || frame.width < 2 || frame.height < 2 || seeds.length === 0) return [];
-    const eligible = seeds
-      .filter(seed => seed.detectionConfidence >= 0.55 && Math.abs(seed.sourceTimestampMs - frameTimestampMs) <= 200)
-      .slice(0, this.maximumTracksPerFrame);
-    if (!eligible.length) return [];
+  async runInference(frame: ImageData, frameTimestampMs: number): Promise<SegmentationInstance[]> {
+    if (this.disposed || this.busy || !finite(frameTimestampMs) ||
+        this.now() - this.lastStartedAt < this.minimumIntervalMs ||
+        this.now() - frameTimestampMs > this.maximumFrameAgeMs) return [];
+    if (!frame || frame.width < 2 || frame.height < 2 || frame.data.length !== frame.width * frame.height * 4) return [];
 
     this.busy = true;
     this.lastStartedAt = this.now();
     const generation = this.generation;
     try {
-      const instances = await this.provider.infer(frame, eligible);
-      if (this.disposed || generation !== this.generation || this.now() - frameTimestampMs > this.maximumFrameAgeMs) return [];
-      return associateInstanceMasks(eligible, instances);
+      const instances = await this.provider.infer(frame, frameTimestampMs);
+      if (this.disposed || generation !== this.generation ||
+          this.now() - frameTimestampMs > this.maximumFrameAgeMs) return [];
+      return instances.filter(instance =>
+        finite(instance.sourceTimestampMs) &&
+        Math.abs(instance.sourceTimestampMs - frameTimestampMs) <= 200,
+      );
     } finally {
       this.busy = false;
     }
+  }
+
+  async runFrame(frame: ImageData, frameTimestampMs: number, seeds: SegmentationSeed[]): Promise<SegmentedTrack[]> {
+    if (seeds.length === 0) return [];
+    const eligible = seeds
+      .filter(seed => seed.detectionConfidence >= 0.55 && Math.abs(seed.sourceTimestampMs - frameTimestampMs) <= 200)
+      .slice(0, this.maximumTracksPerFrame);
+    if (!eligible.length) return [];
+    const instances = await this.runInference(frame, frameTimestampMs);
+    return associateInstanceMasks(eligible, instances);
   }
 
   reset(): void {
