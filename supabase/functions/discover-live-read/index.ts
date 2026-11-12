@@ -313,7 +313,9 @@ Deno.serve(async (req: Request) => {
           }
           for (const key of ["brand", "product", "category", "proof", "size", "origin", ...DETAIL_KEYS]) {
             const value = key === "brand" ? b.brand : key === "product" ? b.product : key === "category" ? b.category : key === "proof" ? b.proof : key === "size" ? b.size : key === "origin" ? b.origin : (pickDetails(b)[key]);
-            if (value && out[key] === undefined) out[key] = unit(b.confidence);
+            // Overall frame confidence is not field-level proof for brand or
+            // expression. Missing per-field scores must stay missing for identity.
+            if (value && out[key] === undefined && key !== "brand" && key !== "product") out[key] = unit(b.confidence);
           }
           return out;
         })(),
