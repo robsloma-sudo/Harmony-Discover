@@ -34,35 +34,19 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [martyConsentOpen, setMartyConsentOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
 
-  const startMenuScan = async () => {
+  // Scanner menu items select a mode only. The center shutter is the sole capture trigger.
+  const startMenuScan = () => {
+    setScanMode('menu');
+    setScanSource('camera');
+    setCameraMessage('MENU SCAN SELECTED · Press the center capture button to scan.');
     setSettingsOpen(false);
-    if (!permission?.granted) {
-      const p = await requestPermission();
-      if (!p.granted) { setCameraMessage('Camera access is needed to read a menu.'); return; }
-    }
-    try {
-      const photo = await camera.current?.takePictureAsync({ quality: 0.88 });
-      if (!photo?.uri) { setCameraMessage('The viewfinder could not capture this menu page.'); return; }
-      addPages([photo.uri], 'camera');
-      setScanMode('menu');
-      setScanSource('camera');
-      setScanPhotos([photo.uri]);
-    } catch { setCameraMessage('Could not capture this menu page. Please try again.'); }
   };
 
-  const startBottleScan = async () => {
+  const startBottleScan = () => {
+    setScanMode('bottle');
+    setScanSource('camera');
+    setCameraMessage('BOTTLE SCAN SELECTED · Press the center capture button to scan.');
     setSettingsOpen(false);
-    if (!permission?.granted) {
-      const p = await requestPermission();
-      if (!p.granted) { setCameraMessage('Camera access is needed to scan a bottle.'); return; }
-    }
-    try {
-      const photo = await camera.current?.takePictureAsync({ quality: 0.92 });
-      if (!photo?.uri) { setCameraMessage('The camera could not capture this bottle.'); return; }
-      setScanMode('bottle');
-      setScanSource('camera');
-      setScanPhotos([photo.uri]);
-    } catch { setCameraMessage('Could not capture this bottle. Please try again.'); }
   };
 
   const addMenuPages = async () => {
@@ -80,14 +64,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     setSettingsOpen(false);
     if (!permission?.granted) {
       const result = await requestPermission();
-      if (!result.granted) setCameraMessage('Camera access is needed to capture a menu.');
+      if (!result.granted) setCameraMessage('Camera access is needed to capture.');
       return;
     }
     try {
       setCapturing(true);
       setCameraMessage('');
       const photo = await camera.current?.takePictureAsync({ quality: 0.85 });
-      if (photo?.uri) { setScanMode('auto'); setScanSource('camera'); setScanPhotos([photo.uri]); }
+      if (photo?.uri) { if (scanMode === 'menu') addPages([photo.uri], 'camera'); setScanSource('camera'); setScanPhotos([photo.uri]); }
       else setCameraMessage('The camera did not return an image. Try again.');
     } catch { setCameraMessage('Could not capture this image. Please try again.'); }
     finally { setCapturing(false); }
@@ -136,7 +120,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable accessibilityRole="button" accessibilityLabel="Nearby discoveries" style={s.utilityControl} onPress={() => setActivePanel('nearby')}><Ionicons name="compass-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>NEARBY</Text></Pressable>
           <View style={s.centerControls}>
             <Pressable accessibilityRole="button" accessibilityLabel="Choose photos from gallery" style={[s.primaryControl, s.primaryControlHalf]} onPress={openGallery}><Ionicons name="images-outline" size={compactDock ? 11 : 12} color={C.ivory} /></Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing menu' : 'Capture menu'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing scan' : scanMode === 'menu' ? 'Capture menu page' : scanMode === 'bottle' ? 'Capture bottle' : 'Capture scan'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel={flashEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, s.primaryControlHalf, flashEnabled && s.primaryControlActive]} onPress={() => setFlashEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 11 : 12} color={flashEnabled ? C.brass : C.ivory} /></Pressable>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => setSettingsOpen(v => !v)}><Ionicons name="settings-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
