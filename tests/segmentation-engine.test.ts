@@ -35,7 +35,7 @@ function instance(overrides: Partial<SegmentationInstance> = {}): SegmentationIn
   };
 }
 
-const frame = { width: 64, height: 64 } as ImageData;
+const frame = { width: 64, height: 64, data: new Uint8ClampedArray(64 * 64 * 4) } as ImageData;
 
 describe('segmentation engine association', () => {
   it('computes normalized intersection-over-union', () => {
@@ -83,7 +83,7 @@ describe('segmentation engine association', () => {
 });
 
 describe('segmentation runner lifecycle', () => {
-  it('enforces single-flight inference and bounded cadence', async () => {
+  it('enforces single-flight inference and bounded cadence independently of detections', async () => {
     let now = 2000;
     let resolveInference: ((value: SegmentationInstance[]) => void) | undefined;
     const provider: SegmentationProvider = {
@@ -91,16 +91,30 @@ describe('segmentation runner lifecycle', () => {
       infer: vi.fn(() => new Promise<SegmentationInstance[]>(resolve => { resolveInference = resolve; })),
     };
     const runner = new SegmentationRunner(provider, { now: () => now, minimumIntervalMs: 1000 });
-    const pending = runner.runFrame(frame, 2000, [{ ...seed(), sourceTimestampMs: 2000 }]);
-    expect(await runner.runFrame(frame, 2000, [seed()])).toEqual([]);
+    const pending = runner.runInference(frame, 2000);
+    expect(await runner.runInference(frame, 2000)).toEqual([]);
     resolveInference?.([instance({ sourceTimestampMs: 2000 })]);
-    expect(await pending).toHaveLength(1);
-    expect(await runner.runFrame(frame, 2500, [seed()])).toEqual([]);
+    const masks = await pending;
+    expect(masks).toHaveLength(1);
+    expect(associateInstanceMasks([{ ...seed(), sourceTimestampMs: 2000 }], masks)).toHaveLength(1);
+    expect(await runner.runInference(frame, 2500)).toEqual([]);
     now = 3001;
-    const next = runner.runFrame(frame, 3001, [{ ...seed(), sourceTimestampMs: 3001 }]);
+    const next = runner.runInference(frame, 3001);
     resolveInference?.([instance({ sourceTimestampMs: 3001 })]);
-    await next;
+    expect(await next).toHaveLength(1);
     expect(provider.infer).toHaveBeenCalledTimes(2);
+    await runner.dispose();
+  });
+
+  it('supports the convenience runFrame association path', async () => {
+    const provider: SegmentationProvider = {
+      modelId: 'test',
+      infer: async (_frame, timestamp) => [instance({ sourceTimestampMs: timestamp })],
+    };
+    const runner = new SegmentationRunner(provider, { now: () => 1000 });
+    const result = await runner.runFrame(frame, 1000, [seed()]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.trackId).toBe(1);
     await runner.dispose();
   });
 
@@ -112,9 +126,9 @@ describe('segmentation runner lifecycle', () => {
       infer: () => new Promise<SegmentationInstance[]>(resolve => { resolveInference = resolve; }),
     };
     const runner = new SegmentationRunner(provider, { now: () => now });
-    const pending = runner.runFrame(frame, 2000, [seed()]);
+    const pending = runner.runInference(frame, 2000);
     runner.reset();
-    resolveInference?.([instance()]);
+    resolveInference?.([instance({ sourceTimestampMs: 2000 })]);
     expect(await pending).toEqual([]);
     await runner.dispose();
   });
@@ -126,6 +140,6 @@ describe('segmentation runner lifecycle', () => {
     await runner.dispose();
     await runner.dispose();
     expect(dispose).toHaveBeenCalledTimes(1);
-    expect(await runner.runFrame(frame, 2000, [seed()])).toEqual([]);
+    expect(await runner.runInference(frame, Date.now())).toEqual([]);
   });
 });
