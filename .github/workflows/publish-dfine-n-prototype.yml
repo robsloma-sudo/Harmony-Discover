@@ -33,7 +33,12 @@ jobs:
           repository: ${{ github.repository }}
           path: model-artifacts
 
-      - name: Verify model artifact checksum and add graph contract
+      - name: Set up Python for actual ONNX graph inspection
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify checksum and inspect/execute actual ONNX graph
         run: |
           set -euo pipefail
           MODEL="model-artifacts/dfine_seg_n_coco.onnx"
@@ -41,26 +46,59 @@ jobs:
           EXPECTED_SHA="$(awk '{print $1}' model-artifacts/dfine_seg_n_coco.onnx.sha256)"
           ACTUAL_SHA="$(sha256sum "$MODEL" | awk '{print $1}')"
           test "$EXPECTED_SHA" = "$ACTUAL_SHA"
-          cat > model-artifacts/dfine_seg_graph_contract.json <<'JSON'
-          {
-            "graph_name": "D-FINE-seg-N COCO instance segmentation",
-            "inputs": [
-              {"name": "input", "shape": [1, 3, 640, 640], "element_type": "FLOAT"}
-            ],
-            "outputs": [
-              {"name": "labels", "shape": [1, 300], "element_type": "INT64"},
-              {"name": "boxes", "shape": [1, 300, 4], "element_type": "FLOAT"},
-              {"name": "scores", "shape": [1, 300], "element_type": "FLOAT"},
-              {"name": "masks", "shape": [1, 300, 160, 160], "element_type": "FLOAT"}
-            ],
-            "verification": {
-              "onnx_export_parity": "passed",
-              "cpu_onnxruntime_smoke_test": "passed",
-              "input_preprocessing": "RGB NCHW float32 scaled to 0..1, direct 640x640 resize",
-              "mask_postprocessing": "box crop, bilinear resize to source-frame crop, threshold 0.5"
+          python -m pip install --upgrade pip
+          python -m pip install "onnx>=1.22.0" "onnxruntime>=1.21.1" numpy
+          python - "$MODEL" "model-artifacts/dfine_seg_graph_contract.json" <<'PY'
+          import json, sys
+          import numpy as np
+          import onnx
+          import onnxruntime as ort
+          from onnx import TensorProto
+
+          model_path, output_path = sys.argv[1:3]
+          model = onnx.load(model_path)
+          onnx.checker.check_model(model)
+          def describe(value):
+              t = value.type.tensor_type
+              shape = [d.dim_value if d.dim_value else (d.dim_param or None) for d in t.shape.dim]
+              return {"name": value.name, "shape": shape, "element_type": TensorProto.DataType.Name(t.elem_type)}
+          session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+          inputs, outputs = session.get_inputs(), session.get_outputs()
+          if len(inputs) != 1:
+              raise SystemExit(f"Expected one input, got {[x.name for x in inputs]}")
+          if inputs[0].name != "input":
+              raise SystemExit(f"Unexpected input tensor name: {inputs[0].name}")
+          names = [x.name for x in outputs]
+          if names != ["labels", "boxes", "scores", "masks"]:
+              raise SystemExit(f"Unexpected output tensor names: {names}")
+          sample = np.zeros((1, 3, 640, 640), dtype=np.float32)
+          values = session.run(None, {"input": sample})
+          shapes = [list(x.shape) for x in values]
+          if len(values) != 4 or shapes[0][0] != 1 or len(shapes[0]) != 2:
+              raise SystemExit(f"Invalid labels shape: {shapes}")
+          count = shapes[0][1]
+          if shapes[1] != [1, count, 4] or shapes[2] != [1, count] or len(shapes[3]) != 4 or shapes[3][:2] != [1, count]:
+              raise SystemExit(f"Output tensor shape mismatch: {shapes}")
+          contract = {
+            "graph_name": model.graph.name,
+            "ir_version": model.ir_version,
+            "opsets": [{"domain": x.domain, "version": x.version} for x in model.opset_import],
+            "inputs": [describe(x) for x in inputs],
+            "outputs": [describe(x) for x in outputs],
+            "runtime_smoke_test": {
+              "provider": "CPUExecutionProvider",
+              "input_shape": list(sample.shape),
+              "output_shapes": shapes,
+              "output_names": names,
+              "output_dtypes": [str(x.dtype) for x in values],
+              "status": "passed"
             }
           }
-          JSON
+          with open(output_path, "w") as f:
+              json.dump(contract, f, indent=2)
+              f.write("\\n")
+          print(json.dumps(contract, indent=2))
+          PY
 
       - name: Fetch matching upstream license notice
         run: |
