@@ -42,6 +42,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveBottleFrameTimestamp, setLiveBottleFrameTimestamp] = useState<number | null>(null);
   const [liveSpatialAnchors, setLiveSpatialAnchors] = useState<NativeSpatialAnchor[]>([]);
   const physicalBottleTrackerRef = useRef(new SpatialBottleTracker({ confirmationHits: 2, occlusionGraceMs: 2500, lostRetentionMs: 12000, minimumConfidence: 0.65 }));
+  const processedBottleFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [livePhysicalIds, setLivePhysicalIds] = useState<string[]>([]);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
@@ -67,6 +68,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveBottleFrameTimestamp(null);
       depthFramesRef.current = [];
       physicalBottleTrackerRef.current.reset();
+      processedBottleFrameTimestampRef.current = Number.NEGATIVE_INFINITY;
     }, 6000);
     return () => clearTimeout(staleTimer);
   }, [liveReadAt]);
@@ -78,6 +80,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     }
     if (liveTracking.state === 'paused' || liveTracking.state === 'interrupted' || liveTracking.state === 'not_available') {
       physicalBottleTrackerRef.current.reset();
+      processedBottleFrameTimestampRef.current = Number.NEGATIVE_INFINITY;
       setLiveSpatialAnchors([]);
       setLivePhysicalIds([]);
       setLiveBottles([]);
@@ -108,6 +111,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveSpatialAnchors(previous => previous.map(anchor => ({ ...anchor, state: 'occluded' })));
       return;
     }
+    const frameTimestampMs = liveBottleFrameTimestamp * 1000;
+    if (frameTimestampMs <= processedBottleFrameTimestampRef.current) return;
+    processedBottleFrameTimestampRef.current = frameTimestampMs;
     const observations = liveBottles.map(bottle => {
       const projection = projectBottleBoxToWorld(liveBottleDepthFrame, {
         x: bottle.box.x0,
@@ -127,7 +133,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           : projection.reason === 'low_depth_confidence' ? 'low_confidence' as const : 'incomplete_geometry' as const,
       };
     });
-    const updated = physicalBottleTrackerRef.current.update(observations, liveBottleFrameTimestamp * 1000);
+    const updated = physicalBottleTrackerRef.current.update(observations, frameTimestampMs);
     setLivePhysicalIds(updated.observed.map(track => track?.physicalObjectId || ''));
     setLiveSpatialAnchors(updated.tracks.flatMap(track => track.worldPoint && track.state !== 'lost'
       ? [{ physicalObjectId: track.physicalObjectId, x: track.worldPoint.x, y: track.worldPoint.y, z: track.worldPoint.z, state: track.state }]
