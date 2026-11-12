@@ -6,6 +6,7 @@ export type BottleTrackCandidate<T> = {
   height: number;
   confidence: number;
   bottle?: T;
+  contour?: Array<{ x: number; y: number }>;
 };
 
 export type TrackedBottleRecord<T> = BottleTrackCandidate<T> & { bottle: T };
