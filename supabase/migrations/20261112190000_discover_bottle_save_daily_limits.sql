@@ -7,6 +7,10 @@ create table if not exists public.discover_bottle_save_usage (
   primary key (consumer_id, day)
 );
 
+-- The global daily sum filters by day, so give that access path a leading index.
+create index if not exists discover_bottle_save_usage_day_idx
+  on public.discover_bottle_save_usage (day);
+
 alter table public.discover_bottle_save_usage enable row level security;
 revoke all on public.discover_bottle_save_usage from public, anon, authenticated;
 grant all on public.discover_bottle_save_usage to service_role;
