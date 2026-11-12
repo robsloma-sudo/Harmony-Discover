@@ -86,3 +86,25 @@ Initial engineering targets (not achieved results): first useful mask under 500 
 ## Decision
 
 Prototype D-FINE-seg-N, D-FINE-seg-S, and MobileSAM side by side. D-FINE-seg-N is the first browser candidate by size; S is the quality comparison. D-FINE-seg is the leading candidate for generic bottle instance masks and future fine-tuning; MobileSAM is the prompt-refinement comparison for cloud-seeded boxes. Do not adopt either until exact checkpoint provenance, browser operator support, and iPhone measurements are recorded.
+
+## Native iOS candidate: Apple Vision foreground instance masks
+
+Apple provides `VNGenerateForegroundInstanceMaskRequest` in Vision on iOS 17 and later. It produces instance masks for noticeable foreground objects, and `VNInstanceMaskObservation` can generate a scaled mask for selected instance IDs. This requires no third-party SDK or downloaded model.
+
+References:
+- https://developer.apple.com/documentation/vision/vngenerateforegroundinstancemaskrequest
+- https://developer.apple.com/documentation/vision/vninstancemaskobservation
+- https://developer.apple.com/forums/thread/763315
+
+Use this as a native iPhone experiment, not as the universal segmentation solution:
+- It is generic foreground-instance separation, not a bottle-class detector. It may isolate the most noticeable foreground object and miss bottles on shelves or overlapping stock.
+- Runtime availability is iOS 17+. Keep the module deployment target unchanged and guard calls with `if #available(iOS 17.0, *)`.
+- Apple's sample requires a physical iOS 17 device; do not treat simulator success as runtime validation.
+- Run the request only on a trusted cloud-seed frame or at a low refresh cadence. Associate returned instances to bottle seeds by mask/box overlap, not by assuming instance index equals bottle order.
+- Extract the contour from the actual mask with `extractMaskContour`; never substitute a rounded rectangle if the mask is absent or poor.
+
+## Updated deployment decision
+
+The first native contour experiment should compare Apple's built-in Vision foreground masks (iOS 17+ physical device) against a box-prompted MobileSAM mask. For the web, keep D-FINE-seg-N/S and MobileSAM as offline benchmark candidates. ONNX Runtime Web's official compatibility table currently lists WASM on iOS Safari, but not WebGPU; WebGL is in maintenance mode. Therefore, the iPhone Safari path must be benchmarked on WASM first, and desktop WebGPU results cannot be used to predict iPhone Safari performance.
+
+Do not integrate any segmentation engine into the active viewfinder until the mask-quality, cold-start, sustained latency, memory, battery, and thermal gates above are measured.
