@@ -184,8 +184,25 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
     setSaving(true);
     try {
       const result = await saveBottleSightings(session, venue.trim(), tally);
+      setStates(prev => prev.map(photo => ({
+        ...photo,
+        bottles: photo.bottles.map(b => {
+          const researched = result.enriched.find(x =>
+            x.brand.trim().toLowerCase() === (b.match?.brand || b.brand).trim().toLowerCase() &&
+            x.product.trim().toLowerCase() === b.product.trim().toLowerCase()
+          );
+          if (!researched) return b;
+          return {
+            ...b,
+            details: { ...b.details, ...(researched.details || {}) },
+            fieldConfidence: { ...b.fieldConfidence, ...(researched.fieldConfidence || {}) },
+            researchSources: researched.researchSources || b.researchSources,
+          };
+        }),
+      })));
       setReview(false); setRemoved(prev => ({ ...prev, ...Object.fromEntries(tally.map(b => [keyOf(b), true as const])) }));
-      setNote(`Saved ${result.saved} bottle${result.saved === 1 ? '' : 's'}`);
+      const researchedFields = result.enriched.reduce((sum, b) => sum + Object.keys(b.details || {}).length, 0);
+      setNote(`Saved ${result.saved} bottle${result.saved === 1 ? '' : 's'} · ${researchedFields} researched fields added`);
     } catch (error) { setNote(bottleErrorMessage(error)); }
     finally { setSaving(false); }
   }
