@@ -38,3 +38,32 @@ Files:
 - No Edge Function has been deployed.
 - No Netlify deployment has been triggered.
 - Main Harmony PHG production and Harmony Journeys production remain untouched.
+
+
+## Asynchronous queue implementation added (not deployed)
+
+The next implementation slice is now committed:
+
+- Adds `bottle_research_jobs`, a durable queue keyed uniquely to each saved bottle sighting.
+- Adds an atomic `SKIP LOCKED` claim RPC with stale-worker recovery, attempt limits, and exponential retry delay.
+- Changes bottle save to insert sightings first, then enqueue up to five research jobs. The camera save response no longer waits for web research.
+- Adds a dedicated `discover-research-worker` Edge Function, protected by `DISCOVER_RESEARCH_WORKER_SECRET`, that claims two jobs per invocation, searches, validates source provenance, and merges accepted facts back into the original sighting.
+- Worker invocations chain in bounded batches when a batch is full, allowing a five-bottle save to drain without one long-running invocation.
+- Research facts retain per-field confidence and source mappings in the existing `label_details` JSON structure.
+- Failed work is retried with backoff; the queue is durable if an invocation terminates unexpectedly.
+
+### Required Discover DEV secrets before deployment
+
+- `DISCOVER_RESEARCH_WORKER_SECRET`: generate a high-entropy random secret and set the same value for both Edge Functions.
+- Existing `ANTHROPIC_API_KEY` remains required by `discover-live-read`; the worker also reads it.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are the existing Discover DEV Edge Function secrets.
+
+### Remaining safeguards before production use
+
+- Add a project-wide daily research spend/search cap, not just per-save and per-invocation limits.
+- Add cache/deduplication by normalized exact product identity.
+- Add queue observability and a dead-letter review path.
+- Add category profiles and the golden-set evaluation.
+- Verify Edge Function typecheck/tests and exercise a real DEV queue round trip before enabling the worker secret.
+
+No migration was applied. No Edge Function was deployed. No production Harmony PHG or Harmony Journeys resource was changed.
