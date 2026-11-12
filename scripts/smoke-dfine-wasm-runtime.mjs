@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
 const root = path.resolve('public');
@@ -8,28 +7,11 @@ const bundlePath = path.resolve('node_modules/onnxruntime-web/dist/ort.wasm.bund
 if (!fs.existsSync(bundlePath)) throw new Error('ONNX Runtime WASM bundle is missing.');
 const ort = await import(pathToFileURL(bundlePath).href);
 
-const server = createServer((request, response) => {
-  const pathname = decodeURIComponent(new URL(request.url || '/', 'http://127.0.0.1').pathname);
-  const file = path.resolve(root, '.' + pathname);
-  if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-    response.writeHead(404);
-    response.end('not found');
-    return;
-  }
-  response.setHeader('content-type', file.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
-  response.end(fs.readFileSync(file));
-});
-
-await new Promise((resolve, reject) => {
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
-});
-const address = server.address();
-if (!address || typeof address === 'string') throw new Error('Local asset server failed to start.');
-
 let session;
 try {
-  ort.env.wasm.wasmPaths = 'http://127.0.0.1:' + address.port + '/ort/';
+  // Node's ESM loader requires file: URLs for the WASM helper module. The
+  // browser loader uses the same assets through the same-origin /ort/ path.
+  ort.env.wasm.wasmPaths = pathToFileURL(path.resolve(root, 'ort') + path.sep).href;
   ort.env.wasm.numThreads = 1;
   session = await ort.InferenceSession.create(
     fs.readFileSync(path.resolve(root, 'models/dfine_seg_n_coco.onnx')),
@@ -48,10 +30,7 @@ try {
       throw new Error('Unexpected ONNX Runtime WASM output shape for ' + name);
     }
   }
-  console.log('D-FINE ONNX Runtime Web WASM smoke test passed:', JSON.stringify(
-    Object.fromEntries(Object.entries(expected).map(([name, dims]) => [name, dims])),
-  ));
+  console.log('D-FINE ONNX Runtime Web WASM smoke test passed:', JSON.stringify(expected));
 } finally {
   if (session) await session.release();
-  await new Promise(resolve => server.close(resolve));
 }
