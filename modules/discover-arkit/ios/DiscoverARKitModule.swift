@@ -214,7 +214,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       emitDepthFrame(frame)
     }
     guard isRecognitionEnabled else { return }
-    guard now - lastVisionFrameTime >= 0.25 else { return }
+    // Run local OCR/barcode/classification at 2 Hz; cloud bottle identification remains paced at 2.5 seconds.
+    guard now - lastVisionFrameTime >= 0.50 else { return }
     lastVisionFrameTime = now
     let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
     if shouldSendCloudFrame { lastCloudFrameTime = now }
