@@ -4,9 +4,16 @@ const base = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
 
 export type BottleState = 'matched' | 'reported' | 'unsure';
+export type BottleEdgePath = {
+  kind: 'hard' | 'label' | 'print';
+  points: Array<{ x: number; y: number }>;
+  confidence: number;
+  inferred?: boolean;
+};
 export type BottleRead = {
   box: { x0: number; y0: number; x1: number; y1: number };
   label_box?: { x0: number; y0: number; x1: number; y1: number } | null;
+  edgePaths?: BottleEdgePath[];
   words: string[];
   brand: string; product: string; category: string;
   proof: string; size: string; origin: string; confidence: number;
