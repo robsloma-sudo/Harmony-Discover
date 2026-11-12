@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { ARKitDepthFrame, ARTrackingUpdate } from '../live/DiscoverARSurface';
 import type { BottleRead } from '../services/discoverLiveApi';
+import { SpatialBottleTracker } from '../live/spatialBottleTracker';
 import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection, updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
 
 const ink = '#F1EEE7';
@@ -75,6 +76,25 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
     : [];
 
   const worldTracksRef = React.useRef<SpatialTrack[]>([]);
+  const physicalTrackerRef = React.useRef(new SpatialBottleTracker({ confirmationHits: 2, occlusionGraceMs: 2500, lostRetentionMs: 7000 }));
+  const [physicalTracks, setPhysicalTracks] = React.useState<ReturnType<SpatialBottleTracker['update']>['tracks']>([]);
+  React.useEffect(() => {
+    if (tracking.state !== 'normal') {
+      physicalTrackerRef.current.reset();
+      setPhysicalTracks([]);
+      onSpatialAnchors?.([]);
+      return;
+    }
+    const observations = spatialPoints.map(point => ({
+      worldPoint: point.world,
+      confidence: point.confidence,
+      geometryComplete: point.samples >= 4,
+      visualKey: [point.categoryKey, point.identityKey].filter(Boolean).join(':') || undefined,
+      reason: point.samples < 4 ? 'incomplete_geometry' as const : undefined,
+    }));
+    const updated = physicalTrackerRef.current.update(observations, depthFrame?.timestamp ? depthFrame.timestamp * 1000 : Date.now());
+    setPhysicalTracks(updated.tracks);
+  }, [depthFrame?.timestamp, bottles, candidates, tracking.state]);
   const spatialPointMetadataRef = React.useRef(new Map<number, (typeof spatialPoints)[number]>());
   for (const point of spatialPoints) {
     if (point.trackId !== null) spatialPointMetadataRef.current.set(point.trackId, point);
@@ -99,14 +119,12 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
   });
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
   React.useEffect(() => {
-    const anchors = persistentWorldPoints.flatMap(point => {
-      if (!Number.isFinite(point.world.x) || !Number.isFinite(point.world.y) || !Number.isFinite(point.world.z)) return [];
-      const age = point.trackAge;
-      const state = age > 1800 ? 'occluded' : point.confidence >= 0.78 && age >= 900 ? 'confirmed' : 'potential';
-      return [{ physicalObjectId: 'world-track-' + String(point.worldTrackId), x: point.world.x, y: point.world.y, z: point.world.z, state }];
+    const anchors = physicalTracks.flatMap(track => {
+      if (!track.worldPoint || track.state === 'lost') return [];
+      return [{ physicalObjectId: track.physicalObjectId, x: track.worldPoint.x, y: track.worldPoint.y, z: track.worldPoint.z, state: track.state }];
     });
     onSpatialAnchors?.(anchors);
-  }, [persistentWorldPoints.length, depthFrame?.timestamp, onSpatialAnchors]);
+  }, [physicalTracks, onSpatialAnchors]);
 
   return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
     <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ gap: 10, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
