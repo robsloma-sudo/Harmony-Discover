@@ -59,7 +59,7 @@ describe('segmentation engine association', () => {
   });
 
   it('rejects low-confidence, malformed, and empty masks', () => {
-    expect(associateInstanceMasks([seed()], [instance({ confidence: 0.1 })])).toEqual([]);
+    expect(associateInstanceMasks([seed()], [instance({ detectionConfidence: 0.1 })])).toEqual([]);
     expect(associateInstanceMasks([seed()], [instance({ data: new Uint8Array(2) })])).toEqual([]);
     expect(associateInstanceMasks([seed()], [instance({ data: new Uint8Array(600) })])).toEqual([]);
   });
