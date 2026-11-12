@@ -29,6 +29,8 @@ try {
       async deleteAuthUser(id) { const { error } = await db.auth.admin.deleteUser(id); if (error && error.status !== 404) throw new Error('auth_user_delete_failed'); },
     },
     observations: { db, limiter: dbLimiter(db, 'observations', 60, 60) },
+    // PHG bridge intentionally remains disabled until a dedicated read-only identity and server secret are provisioned.
+    atlas: null,
     allowedOrigins,
     async readMenu(observationId, authorization) {
       const response = await fetch(runtimeEnv.SUPABASE_URL + '/functions/v1/discover-menu-read', {

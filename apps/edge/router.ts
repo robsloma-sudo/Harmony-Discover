@@ -18,6 +18,7 @@ export interface EdgeDeps {
     limiter: SubjectLimiter;
   };
   observations: { db: SupabaseClient; limiter: SubjectLimiter } | null;
+  atlas: { limiter: SubjectLimiter; query(latitude: number, longitude: number, radiusMiles: number, venueType: string | null): Promise<Result> } | null;
   readMenu(observationId: string, authorization: string): Promise<Result>;
   allowedOrigins: Set<string>;
   log?: (message: string, error: unknown) => void;
@@ -76,14 +77,30 @@ export async function handle(req: Request, deps: EdgeDeps): Promise<Response> {
       return respond({ status: 200, body: { ok: true, service: 'harmony-discover-api', runtime: 'supabase-edge' } });
     }
 
+    const atlas = path === '/v1/atlas/venues' && method === 'GET';
     const learning = path.startsWith('/v1/learning/');
     const account = path === '/v1/me' || path.startsWith('/v1/me/');
     const observation = path === '/v1/observations' || path.startsWith('/v1/observations/');
-    if (!learning && !account && !observation) return fail(404, 'not_found');
+    if (!atlas && !learning && !account && !observation) return fail(404, 'not_found');
 
     const subject = await deps.identify(req.headers.get('authorization') ?? undefined);
-    const limiter = learning ? deps.learning.limiter : account ? deps.account.limiter : deps.observations?.limiter;
+    const atlasDeps = deps.atlas;
+    if (atlas && !atlasDeps) return fail(503, 'atlas_bridge_not_configured');
+    const limiter = atlas ? atlasDeps!.limiter : learning ? deps.learning.limiter : account ? deps.account.limiter : deps.observations?.limiter;
     if (!limiter || !(await limiter.allow(subject))) return fail(limiter ? 429 : 503, limiter ? 'rate_limited' : 'unavailable');
+
+    if (atlas) {
+      const url = new URL(req.url);
+      const latitude = Number(url.searchParams.get('latitude'));
+      const longitude = Number(url.searchParams.get('longitude'));
+      const radius = Number(url.searchParams.get('radius_miles'));
+      const rawType = url.searchParams.get('venue_type');
+      const allowedTypes = new Set(['bar','restaurant','brewery','winery','distillery','cocktail_bar','hotel','other']);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return fail(400, 'invalid_coordinates');
+      if (![1,5,10,15,20].includes(radius)) return fail(400, 'invalid_radius');
+      if (rawType && !allowedTypes.has(rawType)) return fail(400, 'invalid_venue_type');
+      return respond(await atlasDeps!.query(latitude, longitude, radius, rawType));
+    }
 
     if (learning) {
       const services = { identify: deps.identify, ...deps.learning };

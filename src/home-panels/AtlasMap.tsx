@@ -25,8 +25,8 @@ export function unprojectMercator(pixel:Point, zoom:number):Point {
   return { longitude, latitude: 180 / Math.PI * Math.atan(Math.sinh(n)) };
 }
 
-export function AtlasMap({center, venues, onSelectVenue, height=210}:{
-  center:Point|null; venues:VenuePin[]; onSelectVenue?:(id:string)=>void; height?:number;
+export function AtlasMap({center, venues, onSelectVenue, height=210, fitKey}:{
+  center:Point|null; venues:VenuePin[]; onSelectVenue?:(id:string)=>void; height?:number; fitKey?:string;
 }) {
   const [size,setSize] = useState({width:0,height});
   const [mapCenter,setMapCenter] = useState<Point>(center || {latitude:39.5,longitude:-98.35});
@@ -37,6 +37,22 @@ export function AtlasMap({center, venues, onSelectVenue, height=210}:{
   centerRef.current = mapCenter;
 
   React.useEffect(()=>{ if(center){setMapCenter(center);setZoom(12);} },[center?.latitude,center?.longitude]);
+
+  // Reframe the map after a radius/search result settles: fit the user's position
+  // and every returned venue, using the highest zoom that keeps all pins visible.
+  React.useEffect(()=>{
+    if(!center||size.width<1||size.height<1)return;
+    const points:Point[]=[center,...venues];
+    if(points.length===1){setMapCenter(center);setZoom(14);return;}
+    const projected=points.map(p=>projectMercator(p,0));
+    const xs=projected.map(p=>p.x),ys=projected.map(p=>p.y);
+    const spanX=Math.max(0.00001,Math.max(...xs)-Math.min(...xs));
+    const spanY=Math.max(0.00001,Math.max(...ys)-Math.min(...ys));
+    const usableW=Math.max(80,size.width-76),usableH=Math.max(80,size.height-76);
+    const fitted=clamp(Math.floor(Math.min(Math.log2(usableW/spanX),Math.log2(usableH/spanY))),2,17);
+    const mid=unprojectMercator({longitude:(Math.min(...xs)+Math.max(...xs))/2,latitude:(Math.min(...ys)+Math.max(...ys))/2},0);
+    setMapCenter(mid);setZoom(fitted);
+  },[fitKey,center?.latitude,center?.longitude,size.width,size.height]);
 
   const responder = useMemo(()=>PanResponder.create({
     onStartShouldSetPanResponder:()=>false,
