@@ -70,8 +70,8 @@ describe("Discover enrichment worker policy", () => {
     expect(mapResearchSourceType("regulator", "https://www.ttb.gov/labeling")).toBe("ttb_cola");
     expect(mapResearchSourceType("regulator", "https://agency.gov/registry")).toBe("government_registry");
     expect(mapResearchSourceType("gs1", "https://www.gs1.org/services")).toBe("barcode_registry");
-    expect(mapResearchSourceType("retailer", "https://shop.example/product")).toBe("retailer");
-    expect(mapResearchSourceType("reference", "https://reference.example/page")).toBe("web_search");
+    expect(mapResearchSourceType("retailer", "https://shop.example/product")).toBeNull();
+    expect(mapResearchSourceType("reference", "https://reference.example/page")).toBeNull();
     expect(mapResearchSourceType("manufacturer", "http://producer.example")).toBeNull();
     expect(mapResearchSourceType("unknown", "https://example.com")).toBeNull();
   });
