@@ -7,6 +7,7 @@ as $function$
 declare
   s public.bottle_sightings%rowtype;
   m public.product_index%rowtype;
+  v_existing_product public.discover_products%rowtype;
   product_id uuid;
   category_id uuid;
   exact_count integer := 0;
@@ -18,13 +19,31 @@ declare
   fields jsonb;
   identity jsonb;
   has_variant boolean := false;
+  v_legacy_link boolean := false;
   v_job record;
 begin
   select * into s from public.bottle_sightings where id = p_sighting_id for update;
   if not found then raise exception 'Bottle sighting not found'; end if;
   if s.discover_product_id is not null then
-    return query select s.discover_product_id, coalesce(s.match_score, 0)::numeric, false;
-    return;
+    select * into v_existing_product
+    from public.discover_products
+    where id = s.discover_product_id
+    for update;
+
+    if not found then
+      -- Repair an orphaned sighting link by creating a fresh candidate below.
+      s.discover_product_id := null;
+    elsif v_existing_product.phg_product_id is null
+       and coalesce(v_existing_product.identity_payload ->> 'match_method', '') in
+         ('local_fuzzy_index', 'brand_only_fuzzy', 'fuzzy_brand_only') then
+      -- Reconcile legacy brand-only/fuzzy attachments rather than preserving
+      -- an old "identified" state that was never backed by a product expression.
+      v_legacy_link := true;
+    else
+      -- Strictly attached or manually managed products remain idempotent.
+      return query select s.discover_product_id, coalesce(s.match_score, 0)::numeric, false;
+      return;
+    end if;
   end if;
 
   details := coalesce(s.label_details, '{}'::jsonb);
@@ -87,7 +106,21 @@ begin
       'matched_brand', m.brand, 'matched_product', m.product,
       'field_confidence', fields, 'sku_differentiators_checked', true
     );
-    if product_id is null then
+    if product_id is null and v_legacy_link then
+      product_id := s.discover_product_id;
+      update public.discover_products
+      set phg_product_id = m.id,
+          brand_name = m.brand,
+          product_name = m.product,
+          category_phg_id = category_id,
+          product_class = coalesce(s.read_category, m.category),
+          status = 'identified',
+          match_confidence = score,
+          identity_payload = identity,
+          last_seen_at = now(),
+          updated_at = now()
+      where id = product_id;
+    elsif product_id is null then
       insert into public.discover_products(
         phg_product_id, brand_name, product_name, category_phg_id, product_class,
         match_confidence, identity_payload, status, created_from
@@ -103,6 +136,17 @@ begin
           identity_payload = identity_payload || identity, last_seen_at = now(), updated_at = now()
       where id = product_id;
     end if;
+
+    if v_legacy_link and product_id <> s.discover_product_id then
+      update public.discover_products
+      set status = 'needs_review',
+          identity_payload = identity_payload || jsonb_build_object(
+            'identity_status', 'superseded_candidate',
+            'superseded_by_discover_product_id', product_id
+          ),
+          updated_at = now()
+      where id = s.discover_product_id;
+    end if;
   else
     identity := jsonb_build_object(
       'sighting_id', s.id,
@@ -110,15 +154,30 @@ begin
       'field_confidence', fields, 'sku_differentiators_present', has_variant,
       'identity_policy', 'brand_and_expression_exact_0_90'
     );
-    insert into public.discover_products(
-      brand_name, product_name, category_phg_id, product_class,
-      match_confidence, identity_payload, status, created_from
-    ) values (
-      coalesce(s.read_brand, 'Unknown brand'), s.read_product, category_id, s.read_category,
-      greatest(0, least(1, coalesce(s.read_confidence, 0)))::numeric,
-      identity, case when exact_count > 1 then 'needs_review' else 'candidate' end, 'bottle_scan'
-    ) returning id into product_id;
-    created := true;
+    if v_legacy_link then
+      product_id := s.discover_product_id;
+      update public.discover_products
+      set phg_product_id = null,
+          brand_name = coalesce(s.read_brand, 'Unknown brand'),
+          product_name = s.read_product,
+          category_phg_id = category_id,
+          product_class = s.read_category,
+          match_confidence = greatest(0, least(1, coalesce(s.read_confidence, 0)))::numeric,
+          identity_payload = identity,
+          status = case when exact_count > 1 then 'needs_review' else 'candidate' end,
+          updated_at = now()
+      where id = product_id;
+    else
+      insert into public.discover_products(
+        brand_name, product_name, category_phg_id, product_class,
+        match_confidence, identity_payload, status, created_from
+      ) values (
+        coalesce(s.read_brand, 'Unknown brand'), s.read_product, category_id, s.read_category,
+        greatest(0, least(1, coalesce(s.read_confidence, 0)))::numeric,
+        identity, case when exact_count > 1 then 'needs_review' else 'candidate' end, 'bottle_scan'
+      ) returning id into product_id;
+      created := true;
+    end if;
   end if;
 
   update public.bottle_sightings as sighting
