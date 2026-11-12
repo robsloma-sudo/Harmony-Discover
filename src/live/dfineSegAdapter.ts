@@ -38,7 +38,7 @@ function cropMask(
   imageHeight: number,
   bounds: { x: number; y: number; width: number; height: number },
   threshold: number,
-): { data: Uint8Array; width: number; height: number } | null {
+): { data: Uint8Array; width: number; height: number; bounds: { x: number; y: number; width: number; height: number } } | null {
   const left = Math.max(0, Math.floor(bounds.x * imageWidth));
   const top = Math.max(0, Math.floor(bounds.y * imageHeight));
   const right = Math.min(imageWidth, Math.ceil((bounds.x + bounds.width) * imageWidth));
@@ -75,7 +75,12 @@ function cropMask(
       }
     }
   }
-  return foreground >= 4 ? { data, width, height } : null;
+  return foreground >= 4 ? {
+    data,
+    width,
+    height,
+    bounds: { x: left / imageWidth, y: top / imageHeight, width: width / imageWidth, height: height / imageHeight },
+  } : null;
 }
 
 /**
@@ -162,7 +167,7 @@ export function adaptDfineSegOnnxOutput(
       width: cropped.width,
       height: cropped.height,
       data: cropped.data,
-      bounds: candidate.bounds,
+      bounds: cropped.bounds,
       confidence: candidate.score,
       sourceTimestampMs,
       modelId,
