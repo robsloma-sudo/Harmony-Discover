@@ -15,7 +15,7 @@ const PROJECT = "lqqmwqrffelgnbngrkep";
 const VERSION = "0.2.0";
 const MAX_BATCH = 5;
 const MAX_BODY_BYTES = 2048;
-const DAILY_RESEARCH_CAP = 30;
+const DAILY_RESEARCH_ATTEMPT_CAP = 30;
 const RESEARCH_MODEL = Deno.env.get("DISCOVER_ENRICHMENT_MODEL") || "claude-haiku-5-5";
 
 const ENRICHMENT_TOOL = {
@@ -355,13 +355,20 @@ Deno.serve(async (req: Request) => {
   const worker = String(body.worker ?? "discover-enrichment-worker").replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 80) || "discover-enrichment-worker";
 
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  let dailyResearchAttempts = 0;
   let dailyCapReached = true;
   if (anthropicKey) {
-    const { count, error } = await db.from("discover_enrichment_jobs").select("id", { count: "exact", head: true })
-      .eq("job_type", "official_source_lookup").eq("status", "complete")
-      .gte("updated_at", new Date(Date.now() - 86400000).toISOString());
+    const { data: recentResearchJobs, error } = await db.from("discover_enrichment_jobs")
+      .select("id,attempts")
+      .eq("job_type", "official_source_lookup")
+      .gte("updated_at", new Date(Date.now() - 86400000).toISOString())
+      .limit(1000);
     if (error) return json({ error: "daily_research_budget_check_failed" }, 503);
-    dailyCapReached = (count ?? 0) >= DAILY_RESEARCH_CAP;
+    dailyResearchAttempts = (recentResearchJobs ?? []).reduce(
+      (sum: number, item: Record<string, unknown>) => sum + Math.max(1, Number(item.attempts) || 1),
+      0,
+    );
+    dailyCapReached = dailyResearchAttempts >= DAILY_RESEARCH_ATTEMPT_CAP;
   }
   const supportedTypes = getSupportedJobTypes(!!anthropicKey, dailyCapReached);
   const { data: claimed, error: claimError } = await db.rpc("discover_claim_enrichment_jobs", {
@@ -406,7 +413,7 @@ Deno.serve(async (req: Request) => {
     completed: results.filter(x => x.outcome === "complete").length,
     retried: results.filter(x => x.outcome === "retry").length,
     failed: results.filter(x => x.outcome === "failed").length,
-    research_budget: { daily_cap: DAILY_RESEARCH_CAP, cap_reached: dailyCapReached },
+    research_budget: { daily_attempt_cap: DAILY_RESEARCH_ATTEMPT_CAP, attempts_in_last_24h: dailyResearchAttempts, cap_reached: dailyCapReached },
     results,
     supported_job_types: [...supportedTypes],
     deferred_job_types: deferredTypes,
