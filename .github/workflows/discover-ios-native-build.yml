@@ -13,6 +13,9 @@ on:
       - "app.json"
       - "eas.json"
       - ".github/workflows/discover-ios-native-build.yml"
+  push:
+    branches:
+      - fix/spatial-frame-sync-2026-11-12
   workflow_dispatch:
 
 permissions:
