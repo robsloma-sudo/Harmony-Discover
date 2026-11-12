@@ -8,6 +8,7 @@ on:
       - "app/**"
       - "src/**"
       - "tests/**"
+      - "scripts/**"
       - "modules/discover-arkit/**"
       - "package.json"
       - "package-lock.json"
@@ -43,6 +44,10 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Smoke-test D-FINE model in ONNX Runtime Web WASM
+        if: hashFiles('public/models/dfine_seg_n_coco.onnx') != ''
+        run: node scripts/smoke-test-dfine-wasm.mjs
 
       - name: Set up Deno
         uses: denoland/setup-deno@v2
