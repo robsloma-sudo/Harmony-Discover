@@ -9,6 +9,7 @@ import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
+import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
 import { MartyPanel } from '../src/home-panels/MartyPanel';
@@ -144,7 +145,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
           active={!!permission.granted && !scanPhotos}
-          recognitionEnabled={!!permission.granted && !scanPhotos && (scanMode !== 'auto' || activePanel === 'inventory' || activePanel === 'lidar')}
+          recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
