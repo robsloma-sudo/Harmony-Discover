@@ -395,10 +395,37 @@ Deno.serve(async (req: Request) => {
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
-    const { error } = await db.from("bottle_sightings").insert(rows);
-    if (error) { console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error.message, 160) })); return reply({ error: "save_failed" }, 503, origin); }
+    const { data: savedRows, error } = await db.from("bottle_sightings").insert(rows).select("id");
+    if (error || !savedRows || savedRows.length !== rows.length) {
+      console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error?.message || "insert_count_mismatch", 160) }));
+      return reply({ error: "save_failed" }, 503, origin);
+    }
+
+    // Attach every persisted sighting to the Discover-owned product catalog.
+    // The RPC performs matching server-side; no browser-supplied product IDs are trusted.
+    const attachments = await Promise.all(savedRows.map(async (saved: { id: string }) => {
+      const { data, error: attachError } = await db.rpc("discover_attach_sighting_to_product", {
+        p_sighting_id: saved.id,
+      });
+      if (attachError) {
+        console.log(JSON.stringify({ evt: "bottle_product_attach_error", sighting_id: saved.id, msg: clean(attachError.message, 160) }));
+        return { sightingId: saved.id, productId: null, created: false };
+      }
+      const result = Array.isArray(data) ? data[0] : data;
+      return {
+        sightingId: saved.id,
+        productId: result?.discover_product_id ?? null,
+        created: result?.created_new === true,
+      };
+    }));
+
     return reply({
-      ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length,
+      ok: true,
+      saved: rows.length,
+      matched: rows.filter((x) => x.product_index_id).length,
+      productLinked: attachments.filter((x) => x.productId).length,
+      productCreated: attachments.filter((x) => x.created).length,
+      productLinks: attachments,
       enriched_bottles: enriched.map((b) => ({
         brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size,
         details: b.details, field_confidence: b.field_confidence, research_sources: b.research_sources,
