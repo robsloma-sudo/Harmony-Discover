@@ -95,7 +95,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
   }
   const persistentWorldPoints = worldTracksRef.current.flatMap(track => {
     const source = spatialPointMetadataRef.current.get(track.sourceTrackId ?? track.trackId);
-    return source ? [{ ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt }] : [];
+    return source ? [{ ...source, world: track.position, velocity: track.velocity, worldTrackId: track.trackId, trackAge: Date.now() - track.lastSeenAt }] : [];
   });
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
   React.useEffect(() => {
@@ -103,7 +103,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
       if (!Number.isFinite(point.world.x) || !Number.isFinite(point.world.y) || !Number.isFinite(point.world.z)) return [];
       const age = point.trackAge;
       const state = age > 1800 ? 'occluded' : point.confidence >= 0.78 && age >= 900 ? 'confirmed' : 'potential';
-      return [{ physicalObjectId: 'world-track-' + String(point.trackId), x: point.world.x, y: point.world.y, z: point.world.z, state }];
+      return [{ physicalObjectId: 'world-track-' + String(point.worldTrackId), x: point.world.x, y: point.world.y, z: point.world.z, state }];
     });
     onSpatialAnchors?.(anchors);
   }, [persistentWorldPoints.length, depthFrame?.timestamp, onSpatialAnchors]);
