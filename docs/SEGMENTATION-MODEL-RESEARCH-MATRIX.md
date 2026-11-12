@@ -82,7 +82,7 @@ The provider includes a direct-resize RGB NCHW float32 preprocessing path and in
 2. Run a versioned, manually annotated bottle set covering clear/dark glass, glare, backlighting, overlap, adjacent bottles, shelf clutter, reflections, motion blur, and unusual bottle shapes. Record mask IoU, boundary F-score, detection recall/precision, and bottle-to-mask association rate.
 3. Measure cold model-load time, first-mask latency, warm latency, sustained inference cadence, peak memory, long-session stability, battery, and thermal behavior on desktop and physical iPhone.
 4. Tune cadence, score threshold, mask threshold, crop resolution, and contour point budget only against that fixed dataset; retain no-silhouette behavior when inference fails or masks are ambiguous.
-5. Complete code/checkpoint/license/dataset redistribution review before public or commercial model bundling.
+5. Preserve the upstream Apache-2.0 license notice and metadata. The upstream model card states that code and COCO-pretrained instance-segmentation checkpoints are Apache-2.0; the Cityscapes semantic-segmentation checkpoints are the non-commercial exception and are not used here. Complete internal legal/data-provenance review before public redistribution. See [upstream D-FINE-seg model card](https://huggingface.co/ArgoSA/D-FINE-seg).
 6. Evaluate MobileSAM or another prompted-refinement model only if the generic model misses important bottle boundaries; keep it a separate optional refinement stage.
 7. Native iOS segmentation is a separate follow-on. The current integrated model path is browser/WASM only.
 
