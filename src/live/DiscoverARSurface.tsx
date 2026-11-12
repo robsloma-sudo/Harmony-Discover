@@ -214,7 +214,7 @@ function WebLiveCamera(props: NativeProps) {
         webTracks = webTracks
           .map((track): WebTrack => {
             const propagated = propagateMotionTrack(track, frame);
-            return { ...track, ...propagated, id: track.id, lastSeenAt: track.lastSeenAt };
+            return { ...track, ...propagated, id: track.id, lastSeenAt: propagated.misses === 0 ? Date.now() : track.lastSeenAt };
           })
           .filter((track): track is WebTrack => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
