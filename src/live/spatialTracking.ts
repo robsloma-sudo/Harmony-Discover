@@ -189,9 +189,12 @@ export function cameraPointToWorld(
 export function intrinsicsFromARKitDepth(frame: { cameraIntrinsics: ArrayLike<number> }): CameraIntrinsics | null {
   const k = frame.cameraIntrinsics;
   if (k.length < 9) return null;
-  const [fx, , cx, , fy, cy] = k;
-  if (![fx, fy, cx, cy].every(value => Number.isFinite(Number(value))) || !finitePositive(Number(fx)) || !finitePositive(Number(fy))) return null;
-  return { fx: Number(fx), fy: Number(fy), cx: Number(cx), cy: Number(cy) };
+  const fx = Number(k[0]);
+  const cx = Number(k[2]);
+  const fy = Number(k[4]);
+  const cy = Number(k[5]);
+  if (![fx, fy, cx, cy].every(Number.isFinite) || !finitePositive(fx) || !finitePositive(fy)) return null;
+  return { fx, fy, cx, cy };
 }
 
 
