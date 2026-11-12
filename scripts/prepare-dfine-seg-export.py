@@ -32,6 +32,8 @@ def main() -> None:
     train["root"] = str(args.output_root.resolve())
     train["device"] = "cpu"
     train["img_size"] = [640, 640]
+    train["keep_ratio"] = False
+    train["conf_thresh"] = 0.5
     train["in_channels"] = 3
     train["label_to_name"] = coco_names
     train["pretrained_model_path"] = f"pretrained/dfine_seg_{args.size}_coco.pt"
