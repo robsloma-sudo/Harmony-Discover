@@ -1,0 +1,57 @@
+name: Discover iOS native build
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "app/**"
+      - "src/**"
+      - "modules/discover-arkit/**"
+      - "package.json"
+      - "package-lock.json"
+      - "app.json"
+      - "eas.json"
+      - ".github/workflows/discover-ios-native-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discover-ios-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-native-build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked JavaScript dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate native iOS project
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods dependencies
+        run: pod install --project-directory=ios
+
+      - name: Compile iOS simulator target
+        run: |
+          xcodebuild \
+            -workspace ios/HarmonyDiscover.xcworkspace \
+            -scheme HarmonyDiscover \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
