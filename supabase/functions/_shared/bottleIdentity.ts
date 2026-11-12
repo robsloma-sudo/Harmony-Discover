@@ -28,8 +28,12 @@ export function hasUnmodeledSkuDifferentiator(bottle: Record<string, unknown>): 
     ? bottle.details : {}) as Record<string, unknown>;
   // Current product_index cannot reliably disambiguate package/release variants.
   return [
-    bottle.proof, bottle.size, details.vintage, details.package_size,
+    bottle.proof, bottle.size,
+    details.vintage, details.package_size, details.package_type,
     details.sku, details.barcode, details.upc_ean, details.batch, details.lot_code,
+    details.age_statement, details.cask_finish, details.cask_type, details.barrel_number,
+    details.flavor, details.style, details.appellation, details.appellation_level,
+    details.classification, details.dosage, details.residual_sugar,
   ].some(value => clean(value, 80).length > 0);
 }
 
