@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import type { ARKitDepthFrame, ARTrackingUpdate } from '../live/DiscoverARSurface';
 import type { BottleRead } from '../services/discoverLiveApi';
 import { SpatialBottleTracker } from '../live/spatialBottleTracker';
@@ -25,7 +25,25 @@ type Props = {
  * Diagnostics for the one camera session owned by the home viewfinder.
  * This panel deliberately does not mount a camera or start another AR session.
  */
-export default function LidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, candidates, bottles, onSpatialAnchors }: Props) {
+export default function LidarScannerPanel(props: Props) {
+  // LiDAR is native-only. Never mount the native diagnostics UI on Safari/web.
+  if (Platform.OS === 'web') return <WebLidarNotice onClose={props.onClose} />;
+  return <NativeLidarScannerPanel {...props} />;
+}
+
+function WebLidarNotice({ onClose }: { onClose: () => void }) {
+  return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
+    <View style={{ gap: 10 }}>
+      <Text style={{ color: ink, fontSize: 12, fontWeight: '900', letterSpacing: 0.5 }}>LiDAR NEEDS THE IPHONE APP</Text>
+      <Text style={{ color: muted, fontSize: 11, lineHeight: 17 }}>Depth scanning uses the iPhone's LiDAR sensor, which a web page can't reach. Use the main scan button here; 3D scanning arrives with the Harmony Discover iPhone app.</Text>
+    </View>
+    <Pressable onPress={onClose} style={{ padding: 14, borderRadius: 9, borderWidth: 1, borderColor: 'rgba(255,255,255,0.24)', alignItems: 'center', justifyContent: 'center', marginTop: 12 }}>
+      <Text style={{ color: ink, fontSize: 11, fontWeight: '800' }}>CLOSE</Text>
+    </Pressable>
+  </View>;
+}
+
+function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, candidates, bottles, onSpatialAnchors }: Props) {
   const validDepthSamples = depthFrame?.depthMeters.filter(value => Number.isFinite(value) && value > 0).length ?? 0;
   const trackingColor = tracking.state === 'normal' ? green : amber;
   const metricDepth = !!depthFrame && depthFrame.unit === 'meters';
