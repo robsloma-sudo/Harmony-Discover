@@ -93,7 +93,7 @@ Product identity confidence, bottle detection confidence, mask confidence, and p
 
 ## Current phase status
 
-<badge color="warning">Implementation in progress — not accepted</badge>
+**Status: Implementation in progress — not accepted.**
 
 ### Verified model artifact
 - D-FINE-seg-N COCO instance-segmentation model exported to ONNX FP32 and passed upstream parity.
