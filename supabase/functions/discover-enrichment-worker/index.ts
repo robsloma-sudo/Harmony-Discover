@@ -3,6 +3,7 @@
 // a reviewed, source-specific provider is implemented; no speculative evidence is written.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { DEFERRED_JOB_TYPES, SUPPORTED_JOB_TYPES, getIdentityJobRetryPlan, validateIdentityJobReferences } from "./workerPolicy.ts";
 
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MAX_BATCH = 5;
@@ -55,7 +56,7 @@ Deno.serve(async (req: Request) => {
     p_worker: worker,
     p_limit: requestedLimit,
     p_stale_after_seconds: 600,
-    p_job_types: ["identity_match"],
+    p_job_types: [...SUPPORTED_JOB_TYPES],
   });
   if (claimError) {
     console.error(JSON.stringify({ event: "queue_claim_failed", message: claimError.message.slice(0, 180) }));
@@ -70,9 +71,7 @@ Deno.serve(async (req: Request) => {
     try {
       const input = job.input_payload && typeof job.input_payload === "object" ? job.input_payload as Record<string, unknown> : {};
       const sightingId = String(input.sighting_id ?? "");
-      if (!jobId || !productId || !/^[0-9a-f-]{36}$/i.test(sightingId)) {
-        throw new Error("job_missing_product_or_sighting_reference");
-      }
+      if (!jobId || !productId || !sightingId) throw new Error("job_missing_product_or_sighting_reference");
 
       const [{ data: product, error: productError }, { data: sighting, error: sightingError }] = await Promise.all([
         db.from("discover_products").select("id,status,brand_name,product_name,identity_payload")
@@ -80,24 +79,11 @@ Deno.serve(async (req: Request) => {
         db.from("bottle_sightings").select("id,discover_product_id,product_index_id,read_brand,read_product")
           .eq("id", sightingId).maybeSingle(),
       ]);
-      if (productError || !product) throw new Error("discover_product_not_found");
-      if (sightingError || !sighting || sighting.discover_product_id !== productId) {
-        throw new Error("sighting_product_link_mismatch");
-      }
-
-      const identity = product.identity_payload && typeof product.identity_payload === "object"
-        ? product.identity_payload as Record<string, unknown> : {};
-      const identityStatus = String(identity.identity_status ?? "candidate");
-      if (identityStatus === "catalog_exact" && !sighting.product_index_id) {
-        throw new Error("catalog_identity_missing_product_index_link");
-      }
-
+      if (productError) throw new Error("discover_product_not_found");
+      if (sightingError) throw new Error("sighting_product_link_mismatch");
       const output = {
         result: "identity_checked",
-        identity_status: identityStatus,
-        discover_product_id: productId,
-        sighting_id: sightingId,
-        catalog_linked: !!sighting.product_index_id,
+        ...validateIdentityJobReferences(job, product, sighting),
         checked_at: new Date().toISOString(),
       };
       const { data: completedRow, error: completeError } = await db.from("discover_enrichment_jobs").update({
@@ -112,20 +98,17 @@ Deno.serve(async (req: Request) => {
       results.push({ id: jobId, outcome: "complete" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown_worker_error";
-      const attempts = Number(job.attempts ?? 1);
-      const maxAttempts = Number(job.max_attempts ?? 4);
-      const terminal = attempts >= maxAttempts;
-      const delaySeconds = Math.min(3600, 30 * (2 ** Math.max(0, attempts - 1)));
+      const retryPlan = getIdentityJobRetryPlan(job.attempts, job.max_attempts);
       const { data: retriedRow, error: retryError } = await db.from("discover_enrichment_jobs").update({
-        status: terminal ? "failed" : "retry",
-        available_at: new Date(Date.now() + delaySeconds * 1000).toISOString(),
+        status: retryPlan.status,
+        available_at: retryPlan.availableAt,
         locked_at: null,
         locked_by: null,
         last_error: message.slice(0, 500),
         updated_at: new Date().toISOString(),
       }).eq("id", jobId).eq("status", "processing").eq("locked_by", worker).select("id").maybeSingle();
       if (retryError || !retriedRow) console.error(JSON.stringify({ event: "job_retry_write_failed_or_lock_lost", job_id: jobId }));
-      results.push({ id: jobId, outcome: terminal ? "failed" : "retry" });
+      results.push({ id: jobId, outcome: retryPlan.status });
     }
   }
 
@@ -137,7 +120,7 @@ Deno.serve(async (req: Request) => {
     retried: results.filter(x => x.outcome === "retry").length,
     failed: results.filter(x => x.outcome === "failed").length,
     results,
-    supported_job_types: ["identity_match"],
-    deferred_job_types: ["official_source_lookup", "barcode_lookup", "cola_lookup", "field_extraction", "conflict_resolution", "refresh"],
+    supported_job_types: [...SUPPORTED_JOB_TYPES],
+    deferred_job_types: [...DEFERRED_JOB_TYPES],
   });
 });
