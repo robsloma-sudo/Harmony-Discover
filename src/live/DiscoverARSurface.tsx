@@ -401,7 +401,7 @@ export function DiscoverARSurface(props: NativeProps) {
         text: result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean),
         barcodes: [],
         classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
-        frameTimestamp: frame.timestamp,
+        frameTimestamp: Date.now(),
         bottles: result.bottles,
         menu: result.menu,
         diagnostics: result.diagnostics,
