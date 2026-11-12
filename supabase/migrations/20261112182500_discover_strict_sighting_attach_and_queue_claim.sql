@@ -133,11 +133,8 @@ begin
   insert into public.discover_enrichment_jobs(discover_product_id, job_type, priority, input_payload)
   select product_id, job.job_type, job.priority, jsonb_build_object('sighting_id', s.id)
   from (values ('identity_match'::text, 10::smallint), ('official_source_lookup'::text, 30::smallint)) job(job_type, priority)
-  where not exists (
-    select 1 from public.discover_enrichment_jobs q
-    where q.discover_product_id = product_id and q.job_type = job.job_type
-      and q.status in ('queued', 'processing', 'retry')
-  );
+  on conflict (discover_product_id, job_type)
+    where status in ('queued', 'processing', 'retry') do nothing;
   return query select product_id, score, created;
 end;
 $function$;
@@ -147,8 +144,10 @@ grant execute on function public.discover_attach_sighting_to_product(uuid) to se
 
 -- Atomic queue claim with SKIP LOCKED, bounded batch size, stale-lock recovery,
 -- and terminal failure when the retry budget has already been exhausted.
+drop function if exists public.discover_claim_enrichment_jobs(text, integer, integer);
 create or replace function public.discover_claim_enrichment_jobs(
-  p_worker text, p_limit integer default 5, p_stale_after_seconds integer default 600
+  p_worker text, p_limit integer default 5, p_stale_after_seconds integer default 600,
+  p_job_types text[] default array['identity_match']::text[]
 )
 returns setof public.discover_enrichment_jobs
 language sql security definer set search_path to ''
@@ -168,8 +167,9 @@ as $function$
   ),
   candidates as (
     select j.id from public.discover_enrichment_jobs j cross join limits
-    where ((j.status in ('queued', 'retry') and j.available_at <= now())
-      or (j.status = 'processing' and j.locked_at < now() - limits.stale_after and j.attempts < j.max_attempts))
+    where j.job_type = any(coalesce(p_job_types, array['identity_match']::text[]))
+      and ((j.status in ('queued', 'retry') and j.available_at <= now())
+        or (j.status = 'processing' and j.locked_at < now() - limits.stale_after and j.attempts < j.max_attempts))
     order by j.priority asc, j.available_at asc, j.created_at asc
     for update of j skip locked limit (select batch_size from limits)
   )
@@ -180,5 +180,10 @@ as $function$
   from candidates c where j.id = c.id returning j.*;
 $function$;
 
-revoke all on function public.discover_claim_enrichment_jobs(text, integer, integer) from public, anon, authenticated;
-grant execute on function public.discover_claim_enrichment_jobs(text, integer, integer) to service_role;
+revoke all on function public.discover_claim_enrichment_jobs(text, integer, integer, text[]) from public, anon, authenticated;
+grant execute on function public.discover_claim_enrichment_jobs(text, integer, integer, text[]) to service_role;
+
+-- Prevent concurrent scans from creating duplicate active work for the same product/type.
+create unique index if not exists discover_enrichment_jobs_one_active_per_product_type
+on public.discover_enrichment_jobs(discover_product_id, job_type)
+where status in ('queued', 'processing', 'retry');
