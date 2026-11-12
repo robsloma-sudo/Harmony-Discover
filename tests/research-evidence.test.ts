@@ -5,6 +5,7 @@ describe("research evidence provenance", () => {
   it("normalizes URL variants and rejects non-HTTPS URLs", () => {
     expect(normalizeResearchUrl("https://producer.example/spec?ref=search#facts")).toBe("https://producer.example/spec");
     expect(normalizeResearchUrl("http://producer.example/spec")).toBe("");
+    expect(normalizeResearchUrl("https://producer.example/TechSheet")).toBe("https://producer.example/TechSheet");
   });
   it("collects only URLs from actual web search result blocks", () => {
     const found = collectSearchResultSources([{type:"text",text:"https://invented.example"},{type:"web_search_tool_result",content:[{url:"https://producer.example/tech-sheet",title:"Technical sheet"}]}]);
