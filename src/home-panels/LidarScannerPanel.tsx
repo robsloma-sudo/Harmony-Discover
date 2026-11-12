@@ -57,6 +57,10 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
         return [{
           key: `${bottle.category}-${index}`,
           trackId: best?.trackId ?? null,
+          categoryKey: bottle.category.toLowerCase(),
+          identityKey: (bottle.match?.brand || bottle.brand || bottle.product || '').trim().toLowerCase().replace(/\\s+/g, ' '),
+          box: bottle.box,
+          confidence: bottle.confidence,
           name: bottle.match?.brand || bottle.brand || bottle.product || bottle.category.replace(/_/g, ' '),
           world,
           samples: point.sampleCount,
@@ -84,7 +88,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
     if (!activeWorldTrackIds.has(trackId)) spatialPointMetadataRef.current.delete(trackId);
   }
   const persistentWorldPoints = worldTracksRef.current.flatMap(track => {
-    const source = spatialPointMetadataRef.current.get(track.trackId);
+    const source = spatialPointMetadataRef.current.get(track.sourceTrackId ?? track.trackId);
     return source ? [{ ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt }] : [];
   });
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
