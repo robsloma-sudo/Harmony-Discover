@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
@@ -16,8 +16,11 @@ export type ARKitDepthFrame = { width: number; height: number; sourceWidth: numb
 
 export type NativeSpatialAnchor = { physicalObjectId: string; x: number; y: number; z: number; state: 'confirmed' | 'potential' | 'occluded' };
 
+type NativeTrackingSeed = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; sourceTimestamp: number };
+
 type NativeProps = ViewProps & {
   spatialAnchors?: NativeSpatialAnchor[];
+  trackingSeeds?: NativeTrackingSeed[];
   active?: boolean;
   recognitionEnabled?: boolean;
   captureRequestId?: number;
@@ -476,10 +479,11 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 }
 
 export function DiscoverARSurface(props: NativeProps) {
+  const [trackingSeeds, setTrackingSeeds] = useState<NativeTrackingSeed[]>([]);
   const nativeVisionSignals = useRef<Array<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; frameTimestamp: number }>>([]);
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
-  return <NativeARView {...props}
+  return <NativeARView {...props} trackingSeeds={trackingSeeds}
     onRecognitionUpdate={event => {
       const value = event.nativeEvent;
       nativeVisionSignals.current.push({ text: value.text || [], barcodes: value.barcodes || [], textItems: value.textItems || [], barcodeItems: value.barcodeItems || [], imageWidth: value.imageWidth, imageHeight: value.imageHeight, frameTimestamp: value.frameTimestamp });
@@ -522,6 +526,7 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
+        setTrackingSeeds(tracked.map((track, index) => ({ ...track, sourceTimestamp: frame.timestamp })));
         props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
       }).catch(error => {
         props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
