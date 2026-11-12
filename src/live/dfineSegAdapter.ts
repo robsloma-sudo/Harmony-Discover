@@ -98,7 +98,7 @@ export function adaptDfineSegOnnxOutput(
   options: DfineSegAdapterOptions = {},
 ): SegmentationInstance[] {
   const bottleClassIds = new Set(options.bottleClassIds ?? [39]);
-  const minimumScore = options.minimumScore ?? 0.45;
+  const minimumScore = options.minimumScore ?? 0.5;
   const maskThreshold = options.maskThreshold ?? 0.5;
   const nmsThreshold = options.nmsIoUThreshold ?? 0.7;
   const modelId = options.modelId ?? 'dfine-seg-coco-instance-onnx';
@@ -139,7 +139,6 @@ export function adaptDfineSegOnnxOutput(
   const kept: typeof candidates = [];
   for (const candidate of candidates) {
     const suppressed = kept.some(other => {
-      if (candidate.label !== other.label) return false;
       const left = Math.max(candidate.x1, other.x1);
       const top = Math.max(candidate.y1, other.y1);
       const right = Math.min(candidate.x2, other.x2);
