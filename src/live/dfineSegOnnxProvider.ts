@@ -111,14 +111,16 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
     }
 
     const labelData = Array.from(labels!.data);
+    const boxData = Array.from(boxes!.data, value => Number(value));
+    const scoreData = Array.from(scores!.data, value => Number(value));
     const maskData = masks!.data;
     if (!(maskData instanceof Float32Array) && !(maskData instanceof Uint8Array)) {
       throw new Error('D-FINE masks must be Float32Array or Uint8Array output.');
     }
     return adaptDfineSegOnnxOutput({
       labels: labelData,
-      boxes: boxes!.data as ArrayLike<number>,
-      scores: scores!.data as ArrayLike<number>,
+      boxes: boxData,
+      scores: scoreData,
       masks: maskData,
       maskWidth,
       maskHeight,
