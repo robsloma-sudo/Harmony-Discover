@@ -17,6 +17,9 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://lqqmwqrffelgnbngrkep.supabase.co
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - name: Check out production source
         uses: actions/checkout@v4
