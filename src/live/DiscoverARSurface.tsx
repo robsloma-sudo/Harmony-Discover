@@ -356,8 +356,8 @@ function WebLiveCamera(props: NativeProps) {
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
           source: 'local',
-          imageWidth: video.videoWidth,
-          imageHeight: video.videoHeight,
+          imageWidth: frame.width,
+          imageHeight: frame.height,
           candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour })),
         } });
       } catch {
@@ -481,7 +481,7 @@ function WebLiveCamera(props: NativeProps) {
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: frameTimestampMs, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })), seedFrame);
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', imageWidth: video.videoWidth, imageHeight: video.videoHeight, candidates: trackedCandidates } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', imageWidth: canvas.width, imageHeight: canvas.height, candidates: trackedCandidates } });
 
         // Run model inference in parallel with the cloud read, then associate
         // the returned masks to the exact persistent track IDs from this frame.
@@ -512,8 +512,8 @@ function WebLiveCamera(props: NativeProps) {
             callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
               count: webTracks.length,
               source: 'local',
-              imageWidth: video.videoWidth,
-              imageHeight: video.videoHeight,
+              imageWidth: canvas.width,
+              imageHeight: canvas.height,
               candidates: webTracks.map(track => ({
                 trackId: track.id,
                 x: track.x,
