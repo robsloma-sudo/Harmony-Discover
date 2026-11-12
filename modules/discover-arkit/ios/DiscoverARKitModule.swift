@@ -266,15 +266,28 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
           .perform([textRequest, barcodeRequest, classifyRequest])
 
-        let recognizedText = (textRequest.results ?? []).compactMap { observation -> String? in
-          guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.25 else { return nil }
-          return candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }.prefix(18)
+        // Vision boxes are normalized with a bottom-left origin; convert to top-left 0...1 image coordinates
+        // (same convention as the server reader's box/label_box) so overlays can attach to each word and barcode.
+        func topLeftBox(_ r: CGRect) -> [String: Double] {
+          ["x0": Double(r.minX), "y0": Double(1 - r.maxY), "x1": Double(r.maxX), "y1": Double(1 - r.minY)]
+        }
 
-        let barcodes = (barcodeRequest.results ?? []).compactMap { observation -> [String: String]? in
+        let textItems: [[String: Any]] = (textRequest.results ?? []).compactMap { observation -> [String: Any]? in
+          guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.25 else { return nil }
+          let string = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+          guard !string.isEmpty else { return nil }
+          return ["text": string, "confidence": Double(candidate.confidence), "box": topLeftBox(observation.boundingBox)]
+        }.prefix(18).map { $0 }
+        let recognizedText = textItems.compactMap { $0["text"] as? String }
+
+        let barcodeItems: [[String: Any]] = (barcodeRequest.results ?? []).compactMap { observation -> [String: Any]? in
           guard let value = observation.payloadStringValue, !value.isEmpty else { return nil }
-          return ["value": value, "symbology": observation.symbology.rawValue]
-        }.prefix(8)
+          return ["value": value, "symbology": observation.symbology.rawValue, "box": topLeftBox(observation.boundingBox)]
+        }.prefix(8).map { $0 }
+        // Unchanged shape for existing listeners: value and symbology only.
+        let barcodes = barcodeItems.map { item -> [String: String] in
+          ["value": item["value"] as? String ?? "", "symbology": item["symbology"] as? String ?? ""]
+        }
 
         let classifications = (classifyRequest.results ?? []).prefix(6).map { item in
           ["identifier": item.identifier, "confidence": String(format: "%.3f", item.confidence)]
@@ -283,8 +296,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
           self.onRecognitionUpdate([
-            "text": Array(recognizedText),
-            "barcodes": Array(barcodes),
+            "text": recognizedText,
+            "barcodes": barcodes,
+            "textItems": textItems,
+            "barcodeItems": barcodeItems,
+            "imageWidth": imageWidth,
+            "imageHeight": imageHeight,
             "classifications": classifications,
             "frameTimestamp": now
           ])
