@@ -46,12 +46,19 @@ export async function readLiveFrame(jpegBase64: string): Promise<LiveRead> {
 }
 
 /** Saves the bottles the person kept as sightings. */
-export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number }> {
+export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
   const result = await call({
     action: 'save', scan_session_id: scanSessionId, venue_name: venueName,
     bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details, field_confidence: b.fieldConfidence, research_sources: b.researchSources })),
   });
-  return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0 };
+  const enriched = Array.isArray(result.enriched_bottles) ? result.enriched_bottles.map((b: Record<string,unknown>) => ({
+    brand: String(b.brand || ''), product: String(b.product || ''),
+    category: String(b.category || ''), proof: String(b.proof || ''), size: String(b.size || ''),
+    details: (b.details && typeof b.details === 'object' ? b.details : {}) as Record<string,string|string[]>,
+    fieldConfidence: (b.field_confidence && typeof b.field_confidence === 'object' ? b.field_confidence : {}) as Record<string,number>,
+    researchSources: Array.isArray(b.research_sources) ? b.research_sources : [],
+  })) : [];
+  return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0, enriched };
 }
 
 export function bottleErrorMessage(error: unknown): string {
