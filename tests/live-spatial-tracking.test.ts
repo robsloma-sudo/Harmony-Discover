@@ -24,7 +24,7 @@ describe("ARKit depth calibration", () => {
 
   it("rejects invalid depth samples and uses a median from the inner box", () => {
     const depth = { width: 4, height: 4, metres: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2] };
-    expect(sampleBoxDepth(depth, { x0: 0, y0: 0, x1: 1, y1: 1 })).toEqual({ metres: 2, sampleCount: 15 });
+    expect(sampleBoxDepth(depth, { x0: 0, y0: 0, x1: 1, y1: 1 })).toEqual({ metres: 2, sampleCount: 3 });
   });
 
   it("unprojects normalized detections using depth-grid pixel intrinsics", () => {
