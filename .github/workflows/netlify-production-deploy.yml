@@ -34,6 +34,10 @@ jobs:
 
       - name: Verify deployment configuration
         run: |
+          if [ "$NETLIFY_SITE_ID" != "3c50b789-a7f5-4ed4-806e-e5e455924646" ]; then
+            echo "::error::Refusing to deploy: NETLIFY_SITE_ID is not the Harmony Discover production site."
+            exit 1
+          fi
           if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
             echo "::error::Missing GitHub Actions secret NETLIFY_AUTH_TOKEN."
             exit 1
@@ -59,4 +63,4 @@ jobs:
         run: npm install --global netlify-cli
 
       - name: Deploy prebuilt output without running Netlify build
-        run: netlify deploy --prod --dir=dist --no-build --message "Harmony Discover main ${GITHUB_SHA}"
+        run: netlify deploy --prod --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --dir=dist --no-build --message "Harmony Discover main ${GITHUB_SHA}"
