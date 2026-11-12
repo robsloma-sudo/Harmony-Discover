@@ -74,7 +74,7 @@ export class SpatialBottleTracker {
       let bestDistance = this.options.maxAssociationDistanceMeters;
       if (observation.worldPoint) {
         for (const candidate of this.tracks) {
-          if (used.has(candidate.physicalObjectId) || !candidate.worldPoint || candidate.state === 'lost') continue;
+          if (used.has(candidate.physicalObjectId) || !candidate.worldPoint || candidate.state === 'lost' || now - candidate.lastSeenAt > this.options.lostRetentionMs) continue;
           if (candidate.visualKey && observation.visualKey && candidate.visualKey !== observation.visualKey) continue;
           const d = distance(candidate.worldPoint, observation.worldPoint);
           if (d < bestDistance) { bestDistance = d; match = candidate; }
