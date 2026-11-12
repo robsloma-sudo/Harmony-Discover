@@ -218,6 +218,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           cloudFrameBase64 = jpeg.base64EncodedString()
         }
       }
+      if let cloudFrameBase64 {
+        DispatchQueue.main.async { [weak self] in
+          guard let self, self.isActive else { return }
+          self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
+        }
+      }
       do {
         try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
           .perform([textRequest, barcodeRequest, classifyRequest])
@@ -238,9 +244,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          if let cloudFrameBase64 {
-            self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
-          }
           self.onRecognitionUpdate([
             "text": Array(recognizedText),
             "barcodes": Array(barcodes),
