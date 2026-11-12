@@ -8,6 +8,36 @@ import { grayscaleFrame, propagateMotionTrack, seedMotionFeatures, type GrayFram
 import { associateInstanceMasks, SegmentationRunner, type SegmentationSeed } from './segmentationEngine';
 import { createDfineSegOnnxProvider, type DfineOrtRuntime } from './dfineSegOnnxProvider';
 
+type DfineBrowserWindow = Window & { ort?: DfineOrtRuntime };
+let dfineOrtRuntimePromise: Promise<DfineOrtRuntime> | null = null;
+
+/** Load the UMD browser build as a static asset; Metro cannot parse ORT's ESM dynamic import. */
+function loadDfineBrowserRuntime(): Promise<DfineOrtRuntime> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.reject(new Error('D-FINE browser runtime is only available on web.'));
+  }
+  const browserWindow = window as DfineBrowserWindow;
+  if (browserWindow.ort) return Promise.resolve(browserWindow.ort);
+  if (dfineOrtRuntimePromise) return dfineOrtRuntimePromise;
+
+  dfineOrtRuntimePromise = new Promise<DfineOrtRuntime>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/ort/ort.min.js';
+    script.async = true;
+    script.dataset.discoverOrtRuntime = 'true';
+    script.onload = () => {
+      if (browserWindow.ort) resolve(browserWindow.ort);
+      else reject(new Error('ONNX Runtime browser bundle loaded without exposing window.ort.'));
+    };
+    script.onerror = () => reject(new Error('Unable to load the local ONNX Runtime browser bundle.'));
+    document.head.appendChild(script);
+  }).catch(error => {
+    dfineOrtRuntimePromise = null;
+    throw error;
+  });
+  return dfineOrtRuntimePromise;
+}
+
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
   reason: string;
@@ -308,7 +338,7 @@ function WebLiveCamera(props: NativeProps) {
       if (disposed || segmentationRunner || segmentationLoading) return;
       segmentationLoading = true;
       try {
-        const ort = await import('onnxruntime-web');
+        const ort = await loadDfineBrowserRuntime();
         if (disposed) return;
         const provider = await createDfineSegOnnxProvider(
           ort as unknown as DfineOrtRuntime,
