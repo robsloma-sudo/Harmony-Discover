@@ -28,7 +28,7 @@ async function research(key:string,bottle:Record<string,unknown>,profilePrompt:s
   if(!clean(bottle.read_brand,80)||!missing.length)return {details:{},scores:{},sources:[]};
   const controller=new AbortController(), timeout=setTimeout(()=>controller.abort(),35_000);
   try{
-    const messages:Array<Record<string,unknown>>=[{role:"user",content:"Research missing facts for this exact beverage expression.\\nIDENTITY: "+JSON.stringify(known)+"\\nMISSING: "+missing.join(", ")+"\\nSearch exact brand, expression, category, proof and size. Use official producer/regulator/GS1 sources first. Use web search, then call bottle_enrichment once. Map each field to source URLs. Never guess or overwrite label facts."}];
+    const messages:Array<Record<string,unknown>>=[{role:"user",content:"Research missing facts for this exact beverage expression.\\nIDENTITY: "+JSON.stringify(known)+"\\nMISSING: "+missing.join(", ")+"\\n"+profilePrompt+"\\nSearch exact brand, expression, category, proof and size. Use official producer/regulator/GS1 sources first. Use web search, then call bottle_enrichment once. Map each field to source URLs. Never guess or overwrite label facts."}];
     const allContent:Array<Record<string,unknown>>=[];let result:Record<string,unknown>={};
     for(let turn=0;turn<3;turn++){
       const response=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",signal:controller.signal,
