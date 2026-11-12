@@ -6,13 +6,9 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: harmony-discover-ios-development-build
-  cancel-in-progress: false
-
 jobs:
   build-ios:
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 90
     steps:
       - name: Check out Harmony Discover
@@ -23,6 +19,16 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Confirm Expo token is available
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Missing EXPO_TOKEN repository secret. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "EXPO_TOKEN is configured."
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
