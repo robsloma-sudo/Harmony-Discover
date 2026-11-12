@@ -375,9 +375,18 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       0, fyOriented * scaleY, cyOriented * scaleY,
       0, 0, 1
     ]
+    // Pixel axes in the upright, rotated depth grid are not always aligned
+    // with ARKit camera X/Y. Map image rays back into the native camera basis.
+    let cameraRayBasis: [Double]
+    switch orientation {
+    case .right: cameraRayBasis = [0, 1, 1, 0]
+    case .left: cameraRayBasis = [0, -1, -1, 0]
+    case .down: cameraRayBasis = [-1, 0, 0, 1]
+    default: cameraRayBasis = [1, 0, 0, -1]
+    }
     let transform = frame.camera.transform
     let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
-    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
+    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraRayBasis": cameraRayBasis, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
     DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
   }
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
