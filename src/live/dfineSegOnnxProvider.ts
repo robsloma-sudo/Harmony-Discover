@@ -142,6 +142,7 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
 
 
 export type DfineOrtRuntime = {
+  env?: { wasm?: { wasmPaths?: string; numThreads?: number } };
   Tensor: new (type: 'float32', data: Float32Array, dims: number[]) => unknown;
   InferenceSession: {
     create(
@@ -161,6 +162,10 @@ export async function createDfineSegOnnxProvider(
   model: string | ArrayBuffer | Uint8Array,
   options: DfineOnnxProviderOptions = {},
 ): Promise<DfineSegOnnxProvider> {
+  if (runtime.env?.wasm) {
+    runtime.env.wasm.wasmPaths = '/ort/';
+    runtime.env.wasm.numThreads = 1;
+  }
   const session = await runtime.InferenceSession.create(model, {
     executionProviders: ['wasm'],
   });
