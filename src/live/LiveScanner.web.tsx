@@ -5,12 +5,8 @@ import { useScan } from '../state/ScanContext';
 
 // One scanner for everything: bottles (beer, wine, spirits) and menus. Browser tier.
 // It is not a page: the home screen swaps it in once a photo is taken (or up to six are chosen from the library).
-// Each photo freezes on the screen and gets its own scanner:
-//   1. On the phone: every edge in the photo (bottle curve, cork, label, lettering, menu text) is found once.
-//      A neon line sweeps up and down the photo and reveals those edges as glowing lines as it passes.
-//   2. In the background: the photo goes to discover-live-read once. What is printed on each label, and any
-//      menu, comes back and is thrown out to the sides of the screen.
-// Look: Harmony Journeys. Glowing words, no boxes.
+// Each photo freezes on the screen and gets its own scanner.
+// Results panels use a compact single-line data grid over a translucent glass surface.
 
 const GLOW = '0 1px 2px rgba(0,10,40,.8),0 0 6px #4f8bff,0 0 14px #2b56f0,0 0 28px #1d3fd8';
 const AMBER_GLOW = '0 1px 2px rgba(40,20,0,.8),0 0 8px rgba(255,200,90,.6)';
@@ -77,14 +73,10 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       if (!alive || !img.naturalWidth) return;
       const iw = img.naturalWidth, ih = img.naturalHeight;
       setRatio(iw / ih);
-
-      // the copy Harmony reads
       const s2 = Math.min(1, SEND_LONG / Math.max(iw, ih)), shot = document.createElement('canvas');
       shot.width = Math.round(iw * s2); shot.height = Math.round(ih * s2);
       shot.getContext('2d')!.drawImage(img, 0, 0, shot.width, shot.height);
       onLoaded(shot.toDataURL('image/jpeg', 0.76).replace(/^data:image\/jpeg;base64,/, ''));
-
-      // every edge in the photo, found once
       const s1 = EDGE_LONG / Math.max(iw, ih), EW = Math.max(2, Math.round(iw * s1)), EH = Math.max(2, Math.round(ih * s1));
       const work = document.createElement('canvas'); work.width = EW; work.height = EH;
       const wctx = work.getContext('2d', { willReadFrequently: true })!; wctx.drawImage(img, 0, 0, EW, EH);
@@ -97,7 +89,6 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const m = Math.abs(gx) + Math.abs(gy);
         alpha[i] = m < 90 ? 0 : Math.min(255, (m - 90) * 2.2);
       }
-
       const canvas = canvasRef.current; if (!canvas) return;
       canvas.width = EW; canvas.height = EH;
       const ctx = canvas.getContext('2d')!, out = ctx.createImageData(EW, EH), o = out.data;
@@ -108,13 +99,9 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const row = Math.round(p * (EH - 1));
         if (lastRow < 0) lastRow = row;
         const a = Math.min(row, lastRow), b = Math.max(row, lastRow); let dirty = false;
-        for (let y = a; y <= b; y += 1) {
-          if (shown[y]) continue; shown[y] = 1; shownCount += 1; dirty = true;
-          for (let x = 0; x < EW; x += 1) { const i = y * EW + x, k = i * 4; o[k] = 226; o[k + 1] = 238; o[k + 2] = 255; o[k + 3] = alpha[i]; }
-        }
+        for (let y = a; y <= b; y += 1) { if (shown[y]) continue; shown[y] = 1; shownCount += 1; dirty = true; for (let x = 0; x < EW; x += 1) { const i = y * EW + x, k = i * 4; o[k] = 226; o[k + 1] = 238; o[k + 2] = 255; o[k + 3] = alpha[i]; } }
         if (dirty) ctx.putImageData(out, 0, 0, 0, a, EW, b - a + 1);
         lastRow = row;
-        // the line keeps sweeping while Harmony is still reading, or until the whole photo is traced
         const working = readingRef.current || shownCount < EH;
         if (lineRef.current) { lineRef.current.style.top = `${p * 100}%`; lineRef.current.style.opacity = working ? '1' : '0'; }
         if (working) raf = requestAnimationFrame(tick);
@@ -135,11 +122,9 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', transition: 'opacity .5s' }} />
         {state.bottles.map((b, i) => {
           const cx = ((b.box.x0 + b.box.x1) / 2) * 100, top = Math.max(compact ? 10 : 6, b.box.y0 * 100 - 2), isUnsure = b.state === 'unsure';
-          return (
-            <div key={`${keyOf(b) || 'u'}-${i}`} style={{ position: 'absolute', left: `${cx}%`, top: `${top}%`, transform: 'translate(-50%,-100%)', textAlign: 'center', pointerEvents: 'none', animation: 'hdRise .35s ease-out both', animationDelay: `${i * 0.12}s`, maxWidth: '46%' }}>
-              <div style={isUnsure ? { ...word, color: '#ffd27a', textShadow: AMBER_GLOW, fontSize: compact ? 10 : 13 } : { ...word, fontSize: compact ? 10 : 14 }}>{isUnsure ? 'Unsure' : nameOf(b)}</div>
-            </div>
-          );
+          return <div key={`${keyOf(b) || 'u'}-${i}`} style={{ position: 'absolute', left: `${cx}%`, top: `${top}%`, transform: 'translate(-50%,-100%)', textAlign: 'center', pointerEvents: 'none', animation: 'hdRise .35s ease-out both', animationDelay: `${i * 0.12}s`, maxWidth: '46%' }}>
+            <div style={isUnsure ? { ...word, color: '#ffd27a', textShadow: AMBER_GLOW, fontSize: compact ? 10 : 13, whiteSpace: 'nowrap' } : { ...word, fontSize: compact ? 10 : 14, whiteSpace: 'nowrap' }}>{isUnsure ? 'Unsure' : nameOf(b)}</div>
+          </div>;
         })}
       </div>
     </div>
@@ -164,57 +149,31 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
   const patch = (i: number, next: Partial<PhotoState>) => setStates(prev => prev.map((s, k) => (k === i ? { ...s, ...next } : s)));
   function read(i: number, jpeg: string) {
     if (started.current[i]) return; started.current[i] = true;
-    // photos are read one after another, a moment apart, so six at once stay inside the per-minute limit
-    setTimeout(() => {
-      readLiveFrame(jpeg)
-        .then(r => patch(i, { status: 'done', bottles: r.bottles, menu: r.menu.visible ? r.menu : null }))
-        .catch(error => patch(i, { status: 'error', note: bottleErrorMessage(error) }));
-    }, i * 500);
+    setTimeout(() => { readLiveFrame(jpeg).then(r => patch(i, { status: 'done', bottles: r.bottles, menu: r.menu.visible ? r.menu : null })).catch(error => patch(i, { status: 'error', note: bottleErrorMessage(error) })); }, i * 500);
   }
 
   const all = states.flatMap(s => s.bottles);
-  const tally = useMemo(() => {
-    const map: Record<string, BottleRead> = {};
-    for (const b of all) { const k = keyOf(b); if (b.state !== 'unsure' && k && !removed[k]) map[k] = b; }
-    return Object.values(map);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [states, removed]);
+  const tally = useMemo(() => { const map: Record<string, BottleRead> = {}; for (const b of all) { const k = keyOf(b); if (b.state !== 'unsure' && k && !removed[k]) map[k] = b; } return Object.values(map); }, [states, removed]);
   const unsure = all.filter(b => b.state === 'unsure').length;
   const reading = states.filter(s => s.status === 'reading').length;
   const menuPages = uris.filter((_, i) => states[i]?.menu);
   const menuItems = states.reduce((sum, s) => sum + (s.menu?.items.length || 0), 0);
-
   const cur = open === null ? null : states[open];
   const focus = cur ? cur.bottles.filter(b => b.state !== 'unsure').sort((a, b) => Math.abs((a.box.x0 + a.box.x1) / 2 - 0.5) - Math.abs((b.box.x0 + b.box.x1) / 2 - 0.5))[0] || null : null;
   const showMenu = !!cur && !focus && !!cur.menu;
   const facts: Array<[string, string]> = focus ? factsOf(focus) : showMenu ? cur!.menu!.items.slice(0, 12).map(it => [it.price || it.type, it.name] as [string, string]) : [];
   const sideKey = focus ? keyOf(focus) : showMenu ? `menu-${open}` : '';
-  
-
-  /** Hands the menu photos to the existing menu flow: review, corrections and consent all happen there. */
   function keepMenu() { if (!menuPages.length) return; addPages(menuPages, source); router.push('/preview'); }
-
   async function save() {
     if (!tally.length || saving) return;
     setSaving(true);
     try {
       const result = await saveBottleSightings(session, venue.trim(), tally);
-      setStates(prev => prev.map(photo => ({
-        ...photo,
-        bottles: photo.bottles.map(b => {
-          const researched = result.enriched.find(x =>
-            x.brand.trim().toLowerCase() === (b.match?.brand || b.brand).trim().toLowerCase() &&
-            x.product.trim().toLowerCase() === b.product.trim().toLowerCase()
-          );
-          if (!researched) return b;
-          return {
-            ...b,
-            details: { ...b.details, ...(researched.details || {}) },
-            fieldConfidence: { ...b.fieldConfidence, ...(researched.fieldConfidence || {}) },
-            researchSources: researched.researchSources || b.researchSources,
-          };
-        }),
-      })));
+      setStates(prev => prev.map(photo => ({ ...photo, bottles: photo.bottles.map(b => {
+        const researched = result.enriched.find(x => x.brand.trim().toLowerCase() === (b.match?.brand || b.brand).trim().toLowerCase() && x.product.trim().toLowerCase() === b.product.trim().toLowerCase());
+        if (!researched) return b;
+        return { ...b, details: { ...b.details, ...(researched.details || {}) }, fieldConfidence: { ...b.fieldConfidence, ...(researched.fieldConfidence || {}) }, researchSources: researched.researchSources || b.researchSources };
+      }) })));
       setResearchComplete(true);
       setReview(false); setRemoved(prev => ({ ...prev, ...Object.fromEntries(tally.map(b => [keyOf(b), true as const])) }));
       const researchedFields = result.enriched.reduce((sum, b) => sum + Object.keys(b.details || {}).length, 0);
@@ -225,6 +184,8 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
 
   const cols = uris.length <= 2 ? 1 : 2, rows = Math.ceil(uris.length / cols);
   const status = reading ? (many ? `Harmony is reading ${reading} of ${uris.length}` : 'Harmony is reading') : cur?.status === 'error' ? cur.note : '';
+  const glassPanel: CSSProperties = { background: 'rgba(7,14,32,.48)', backdropFilter: 'blur(18px) saturate(165%)', WebkitBackdropFilter: 'blur(18px) saturate(165%)', border: '1px solid rgba(125,170,255,.48)', boxShadow: '0 8px 28px rgba(0,0,0,.24), inset 0 1px 0 rgba(225,240,255,.12)', borderRadius: 14, boxSizing: 'border-box', overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain', pointerEvents: 'auto' };
+  const singleLine: CSSProperties = { whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none', minWidth: 0 };
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#050a1c', overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none' }}>
       <style>{`
@@ -232,119 +193,93 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         @keyframes hdFlyR{from{opacity:0;transform:translate(-38vw,12vh) scale(.7)}to{opacity:1;transform:none}}
         @keyframes hdRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes hdPulse{0%,100%{opacity:.55}50%{opacity:1}}
-        @media (max-width: 760px){.hd-info-panel,.hd-research-panel{top:31%!important;bottom:112px!important;width:calc(50vw - 18px)!important;padding:8px!important;border-radius:8px!important}.hd-info-panel{left:8px!important}.hd-research-panel{right:8px!important}}
+        .hd-info-panel,.hd-research-panel{scrollbar-width:thin;scrollbar-color:rgba(120,170,255,.45) transparent}
+        .hd-single-line{white-space:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+        .hd-single-line::-webkit-scrollbar{display:none}
+        .hd-result-row{display:grid;grid-template-columns:minmax(0,42%) minmax(0,1fr);column-gap:8px;align-items:center;min-width:0}
+        @media (max-width: 760px){
+          .hd-info-panel{left:6px!important;right:auto!important;width:calc(50vw - 9px)!important}
+          .hd-research-panel{right:6px!important;left:auto!important;width:calc(50vw - 9px)!important}
+          .hd-info-panel,.hd-research-panel{top:22%!important;bottom:104px!important;padding:9px!important;border-radius:13px!important}
+        }
+        @media (max-width: 380px){
+          .hd-result-row{grid-template-columns:minmax(0,40%) minmax(0,1fr);column-gap:5px}
+          .hd-info-panel,.hd-research-panel{padding:7px!important}
+        }
         @media (prefers-reduced-motion: reduce){.hd-fly{animation:none!important}}
       `}</style>
 
-      {/* every photo stays mounted so its scanner keeps running; the grid just rearranges them */}
       <div style={{ position: 'absolute', left: 0, right: 0, top: many && open === null ? 64 : 0, bottom: 74, display: 'grid', gridTemplateColumns: open === null ? `repeat(${cols}, minmax(0,1fr))` : 'minmax(0,1fr)', gridTemplateRows: open === null ? `repeat(${rows}, minmax(0,1fr))` : 'minmax(0,1fr)', gap: open === null ? 6 : 0 }}>
         {uris.map((uri, i) => (
           <div key={uri + i} role={many && open === null ? 'button' : undefined} aria-label={many && open === null ? `Open photo ${i + 1}` : undefined}
             onClick={() => { if (many && open === null) setOpen(i); }}
             style={{ position: 'relative', minWidth: 0, minHeight: 0, display: open === null || open === i ? 'block' : 'none', cursor: many && open === null ? 'pointer' : undefined }}>
             <PhotoScanner uri={uri} state={states[i]} compact={open === null} onLoaded={jpeg => read(i, jpeg)} />
-            {open === null && (
-              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 4, textAlign: 'center', pointerEvents: 'none' }}>
-                <span style={{ ...word, fontSize: 12, animation: states[i].status === 'reading' ? 'hdPulse 1s ease-in-out infinite' : undefined }}>
-                  {states[i].status === 'reading' ? 'Reading…' : states[i].status === 'error' ? "Couldn't read" : states[i].menu ? `Menu · ${states[i].menu!.items.length} items` : `${states[i].bottles.filter(b => b.state !== 'unsure').length} read`}
-                </span>
-              </div>
-            )}
+            {open === null && <div style={{ position: 'absolute', left: 0, right: 0, bottom: 4, textAlign: 'center', pointerEvents: 'none' }}><span style={{ ...word, fontSize: 12, whiteSpace: 'nowrap', animation: states[i].status === 'reading' ? 'hdPulse 1s ease-in-out infinite' : undefined }}>{states[i].status === 'reading' ? 'Reading…' : states[i].status === 'error' ? "Couldn't read" : states[i].menu ? `Menu · ${states[i].menu!.items.length} items` : `${states[i].bottles.filter(b => b.state !== 'unsure').length} read`}</span></div>}
           </div>
         ))}
       </div>
 
-      <div style={{ position: 'absolute', left: 16, top: 'max(14px, env(safe-area-inset-top))', ...word, fontSize: 16, cursor: 'pointer', padding: '8px 4px' }} role="button"
-        aria-label={many && open !== null ? 'Back to all photos' : 'Scan again'} onClick={() => (many && open !== null ? setOpen(null) : onClose())}>{many && open !== null ? '‹ All photos' : '‹ Scan again'}</div>
+      <div style={{ position: 'absolute', left: 16, top: 'max(14px, env(safe-area-inset-top))', ...word, fontSize: 16, cursor: 'pointer', padding: '8px 4px' }} role="button" aria-label={many && open !== null ? 'Back to all photos' : 'Scan again'} onClick={() => (many && open !== null ? setOpen(null) : onClose())}>{many && open !== null ? '‹ All photos' : '‹ Scan again'}</div>
       <div style={{ position: 'absolute', left: 0, right: 0, top: 'max(22px, calc(env(safe-area-inset-top) + 8px))', textAlign: 'center', pointerEvents: 'none' }}>
-        <div style={{ ...dim, fontSize: 13, padding: '0 110px', animation: reading ? 'hdPulse 1s ease-in-out infinite' : undefined }}>{status}</div>
-        {showMenu && (
-          <div key={sideKey} style={{ marginTop: 16, animation: 'hdRise .4s ease-out both', padding: '0 20px' }}>
-            <div style={{ ...word, fontSize: 26, lineHeight: 1.15 }}>{cur!.menu!.title || 'Menu'}</div>
-            <div style={{ ...dim, fontSize: 12, marginTop: 6 }}>{cur!.menu!.items.length} items read</div>
-          </div>
-        )}
-        {focus && (
-          <div key={sideKey} style={{ marginTop: 16, animation: 'hdRise .4s ease-out both', padding: '0 20px' }}>
-            <div style={{ ...word, fontSize: 26, lineHeight: 1.15 }}>{nameOf(focus)}</div>
-            <div style={focus.state === 'matched' ? { ...word, fontSize: 12, color: '#7dffb5', textShadow: OK_GLOW, marginTop: 6 } : { ...dim, fontSize: 12, marginTop: 6 }}>{focus.state === 'matched' ? '✓ Matched' : 'Read from the label'}</div>
-          </div>
-        )}
+        <div style={{ ...dim, fontSize: 13, padding: '0 110px', whiteSpace: 'nowrap', animation: reading ? 'hdPulse 1s ease-in-out infinite' : undefined }}>{status}</div>
+        {showMenu && <div key={sideKey} style={{ marginTop: 16, animation: 'hdRise .4s ease-out both', padding: '0 20px' }}><div style={{ ...word, fontSize: 22, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cur!.menu!.title || 'Menu'}</div><div style={{ ...dim, fontSize: 11, marginTop: 6, whiteSpace: 'nowrap' }}>{cur!.menu!.items.length} items read</div></div>}
+        {focus && <div key={sideKey} style={{ marginTop: 16, animation: 'hdRise .4s ease-out both', padding: '0 20px' }}><div style={{ ...word, fontSize: 22, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{nameOf(focus)}</div><div style={focus.state === 'matched' ? { ...word, fontSize: 11, color: '#7dffb5', textShadow: OK_GLOW, marginTop: 6, whiteSpace: 'nowrap' } : { ...dim, fontSize: 11, marginTop: 6, whiteSpace: 'nowrap' }}>{focus.state === 'matched' ? '✓ Matched' : 'Read from the label'}</div></div>}
       </div>
 
-      {facts.length > 0 && (
-        <div key={sideKey} className="hd-info-panel" style={{ position: 'absolute', left: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.82)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '10px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
-          {facts.map(([label, value], i) => (
-            <div key={`${label}-${i}`} style={{ display: 'grid', gridTemplateColumns: '38% minmax(0,1fr)', columnGap: 12, alignItems: 'start', padding: '9px 0', borderBottom: '1px solid rgba(153,180,220,.18)' }}>
-              <div style={{ ...dim, fontSize: 10, letterSpacing: .45, lineHeight: 1.25 }}>{label}</div>
-              <div style={{ ...word, fontSize: 12, lineHeight: 1.3, overflowWrap: 'anywhere', textAlign: 'left' }}>{value}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      {facts.length > 0 && <div key={sideKey} className="hd-info-panel" style={{ ...glassPanel, position: 'absolute', left: 6, top: '22%', bottom: 104, width: 'calc(50vw - 9px)', padding: '10px 9px' }}>
+        {facts.map(([label, value], i) => <div key={`${label}-${i}`} className="hd-result-row" style={{ padding: '8px 0', borderBottom: '1px solid rgba(180,205,245,.2)' }}>
+          <div className="hd-single-line" style={{ ...dim, fontSize: 'clamp(8px, 2.15vw, 10px)', letterSpacing: '.1px', lineHeight: 1.15 }}>{label}</div>
+          <div className="hd-single-line" style={{ ...word, fontSize: 'clamp(9px, 2.5vw, 12px)', lineHeight: 1.15, textAlign: 'left' }}>{value}</div>
+        </div>)}
+      </div>}
 
-      {focus && (
-        <div key={sideKey + '-research'} className="hd-research-panel" style={{ position: 'absolute', right: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.86)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '12px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
-          <div style={{ ...word, fontSize: 15, marginBottom: 4 }}>Research targets</div>
-          <div style={{ ...dim, fontSize: 10, lineHeight: 1.4, marginBottom: 12 }}>{saving ? 'Searching trusted sources and matching the exact expression…' : researchComplete ? 'Research results for this saved bottle' : 'Built from the label read. Research runs when you save.'}</div>
-          {RESEARCH_GROUPS.map(group => {
-            const found = group.fields.filter(([, key]) => !!researchValue(focus, key));
-            return <div key={group.title} style={{ marginBottom: 12 }}>
-              <div style={{ ...dim, fontSize: 10, letterSpacing: .8, marginBottom: 5 }}>{group.title.toUpperCase()} · {found.length}/{group.fields.length}</div>
-              {group.fields.map(([label, key]) => {
-                const value = researchValue(focus, key);
-                const state = value ? 'FOUND' : researchComplete ? 'NOT FOUND' : 'QUEUED';
-                return <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', padding: '5px 0', borderBottom: '1px solid rgba(153,180,220,.12)' }}>
-                  <div style={{ ...dim, fontSize: 10, lineHeight: 1.25 }}>{label}</div>
-                  <div style={{ ...word, color: value ? '#7dffb5' : researchComplete ? '#ffd27a' : '#a9bad7', fontSize: 9, whiteSpace: 'nowrap' }}>{state}</div>
-                </div>;
-              })}
-            </div>;
-          })}
-          {(focus.researchSources || []).length > 0 && <div style={{ borderTop: '1px solid rgba(79,139,255,.35)', paddingTop: 9, marginTop: 6 }}>
-            <div style={{ ...word, fontSize: 11, marginBottom: 6 }}>Sources · {focus.researchSources.length}</div>
-            {focus.researchSources.slice(0, 5).map((source, i) => <div key={source.url || i} style={{ ...dim, fontSize: 9, lineHeight: 1.35, marginBottom: 5 }}>{source.title || source.url}</div>)}
-          </div>}
-        </div>
-      )}
+      {focus && <div key={sideKey + '-research'} className="hd-research-panel" style={{ ...glassPanel, position: 'absolute', right: 6, top: '22%', bottom: 104, width: 'calc(50vw - 9px)', padding: '10px 9px' }}>
+        <div style={{ ...word, fontSize: 'clamp(11px, 2.9vw, 14px)', marginBottom: 5, whiteSpace: 'nowrap' }}>Research targets</div>
+        <div className="hd-single-line" style={{ ...dim, fontSize: 'clamp(8px, 2vw, 10px)', lineHeight: 1.3, marginBottom: 10 }}>{saving ? 'Searching trusted sources and matching the exact expression…' : researchComplete ? 'Research results for this saved bottle' : 'Built from the label read. Research runs when you save.'}</div>
+        {RESEARCH_GROUPS.map(group => {
+          const found = group.fields.filter(([, key]) => !!researchValue(focus, key));
+          return <div key={group.title} style={{ marginBottom: 10 }}>
+            <div className="hd-single-line" style={{ ...dim, fontSize: 'clamp(8px, 2vw, 10px)', letterSpacing: .5, marginBottom: 4 }}>{group.title.toUpperCase()} · {found.length}/{group.fields.length}</div>
+            {group.fields.map(([label, key]) => {
+              const value = researchValue(focus, key);
+              const state = value ? 'FOUND' : researchComplete ? 'NOT FOUND' : 'QUEUED';
+              return <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: 5, alignItems: 'center', padding: '5px 0', borderBottom: '1px solid rgba(180,205,245,.16)', minWidth: 0 }}>
+                <div className="hd-single-line" style={{ ...dim, fontSize: 'clamp(8px, 2vw, 10px)', lineHeight: 1.15, flex: 1 }}>{label}</div>
+                <div style={{ ...word, color: value ? '#7dffb5' : researchComplete ? '#ffd27a' : '#a9bad7', fontSize: 'clamp(7px, 1.8vw, 9px)', whiteSpace: 'nowrap', flexShrink: 0 }}>{state}</div>
+              </div>;
+            })}
+          </div>;
+        })}
+        {(focus.researchSources || []).length > 0 && <div style={{ borderTop: '1px solid rgba(79,139,255,.35)', paddingTop: 8, marginTop: 5 }}>
+          <div style={{ ...word, fontSize: 10, marginBottom: 5, whiteSpace: 'nowrap' }}>Sources · {focus.researchSources.length}</div>
+          {focus.researchSources.slice(0, 5).map((source, i) => <div key={source.url || i} className="hd-single-line" style={{ ...dim, fontSize: 8, lineHeight: 1.3, marginBottom: 4 }}>{source.title || source.url}</div>)}
+        </div>}
+      </div>}
+
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '0 22px max(18px, env(safe-area-inset-bottom))' }}>
-        {note ? <div style={{ ...dim, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>{note}</div> : null}
+        {note ? <div style={{ ...dim, fontSize: 12, textAlign: 'center', marginBottom: 7, whiteSpace: 'nowrap' }}>{note}</div> : null}
         <div style={{ height: 1, background: '#4f8bff', boxShadow: '0 0 8px #2b56f0', opacity: 0.7, marginBottom: 10 }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <div style={{ ...word, fontSize: 17 }}>{[tally.length || !menuItems ? `${tally.length} read` : '', unsure ? `${unsure} unsure` : '', menuItems ? `${menuItems} menu items` : ''].filter(Boolean).join(' · ')}</div>
-          <div style={{ display: 'flex', gap: 18 }}>
-            {menuPages.length > 0 && <div role="button" aria-label="Keep the menu" style={{ ...word, fontSize: 17, cursor: 'pointer', padding: '8px 0' }} onClick={keepMenu}>Keep menu</div>}
-            {tally.length > 0 && <div role="button" aria-label="Review bottles" style={{ ...word, fontSize: 17, cursor: 'pointer', padding: '8px 0' }} onClick={() => setReview(true)}>Review</div>}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <div style={{ ...word, fontSize: 14, whiteSpace: 'nowrap' }}>{[tally.length || !menuItems ? `${tally.length} read` : '', unsure ? `${unsure} unsure` : '', menuItems ? `${menuItems} menu items` : ''].filter(Boolean).join(' · ')}</div>
+          <div style={{ display: 'flex', gap: 14 }}>
+            {menuPages.length > 0 && <div role="button" aria-label="Keep the menu" style={{ ...word, fontSize: 14, cursor: 'pointer', padding: '8px 0', whiteSpace: 'nowrap' }} onClick={keepMenu}>Keep menu</div>}
+            {tally.length > 0 && <div role="button" aria-label="Review bottles" style={{ ...word, fontSize: 14, cursor: 'pointer', padding: '8px 0', whiteSpace: 'nowrap' }} onClick={() => setReview(true)}>Review</div>}
           </div>
         </div>
       </div>
 
-      {review && (
-        <div style={{ ...fill, background: 'rgba(4,10,40,.9)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          <div style={{ padding: 'max(22px, env(safe-area-inset-top)) 22px 40px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div style={{ ...word, fontSize: 24 }}>Bottles read</div>
-              <div role="button" style={{ ...word, fontSize: 15, cursor: 'pointer', padding: 8 }} onClick={() => setReview(false)}>Back</div>
-            </div>
-            <div style={{ marginTop: 14 }}>
-              {tally.map(b => (
-                <div key={keyOf(b)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: '1px solid rgba(79,139,255,.45)' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ ...word, fontSize: 16 }}>{nameOf(b)}</div>
-                    <div style={{ ...dim, fontSize: 12, marginTop: 3 }}>{[CATEGORY[b.category], text(b.details?.vintage), text(b.details?.classification), b.proof].filter(Boolean).join(' · ') || 'Read from the label'}</div>
-                  </div>
-                  <div role="button" aria-label={`Remove ${nameOf(b)}`} style={{ ...word, fontSize: 22, cursor: 'pointer', padding: '4px 10px' }} onClick={() => setRemoved(prev => ({ ...prev, [keyOf(b)]: true }))}>×</div>
-                </div>
-              ))}
-            </div>
-            <input value={venue} onChange={e => setVenue(e.target.value)} maxLength={120} placeholder="Where are you? The Dove Bar" aria-label="Venue name"
-              style={{ ...word, fontSize: 16, width: '100%', marginTop: 24, padding: '10px 0', background: 'transparent', border: 'none', borderBottom: '1px solid #4f8bff', outline: 'none', borderRadius: 0, boxSizing: 'border-box' }} />
-            <div role="button" style={{ ...word, fontSize: 20, marginTop: 26, cursor: 'pointer', opacity: tally.length && !saving ? 1 : 0.45, padding: '8px 0' }} onClick={save}>
-              {saving ? 'Saving…' : `Save ${tally.length} bottle${tally.length === 1 ? '' : 's'}`}
-            </div>
-          </div>
+      {review && <div style={{ ...fill, background: 'rgba(4,10,40,.9)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <div style={{ padding: 'max(22px, env(safe-area-inset-top)) 22px 40px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><div style={{ ...word, fontSize: 22 }}>Bottles read</div><div role="button" style={{ ...word, fontSize: 14, cursor: 'pointer', padding: 8 }} onClick={() => setReview(false)}>Back</div></div>
+          <div style={{ marginTop: 14 }}>{tally.map(b => <div key={keyOf(b)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid rgba(79,139,255,.45)' }}>
+            <div style={{ flex: 1, minWidth: 0 }}><div className="hd-single-line" style={{ ...word, fontSize: 15 }}>{nameOf(b)}</div><div className="hd-single-line" style={{ ...dim, fontSize: 11, marginTop: 3 }}>{[CATEGORY[b.category], text(b.details?.vintage), text(b.details?.classification), b.proof].filter(Boolean).join(' · ') || 'Read from the label'}</div></div>
+            <div role="button" aria-label={`Remove ${nameOf(b)}`} style={{ ...word, fontSize: 20, cursor: 'pointer', padding: '4px 10px' }} onClick={() => setRemoved(prev => ({ ...prev, [keyOf(b)]: true }))}>×</div>
+          </div>)}</div>
+          <input value={venue} onChange={e => setVenue(e.target.value)} maxLength={120} placeholder="Where are you? The Dove Bar" aria-label="Venue name" style={{ ...word, fontSize: 15, width: '100%', marginTop: 22, padding: '10px 0', background: 'transparent', border: 'none', borderBottom: '1px solid #4f8bff', outline: 'none', borderRadius: 0, boxSizing: 'border-box' }} />
+          <div role="button" style={{ ...word, fontSize: 18, marginTop: 24, cursor: 'pointer', opacity: tally.length && !saving ? 1 : 0.45, padding: '8px 0' }} onClick={save}>{saving ? 'Saving…' : `Save ${tally.length} bottle${tally.length === 1 ? '' : 's'}`}</div>
         </div>
-      )}
+      </div>}
     </div>
   );
 }
