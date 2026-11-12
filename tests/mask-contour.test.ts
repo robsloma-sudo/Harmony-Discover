@@ -47,7 +47,7 @@ describe('mask-derived bottle contours', () => {
   it('rejects empty, malformed, and tiny masks', () => {
     expect(extractMaskContour(new Uint8Array(36), 6, 6)).toBeNull();
     expect(extractMaskContour(new Uint8Array(4), 6, 6)).toBeNull();
-    expect(extractMaskContour(binaryMask(6, 6, [[2, 2]]), 6, 6)).toBeNull();
+    expect(extractMaskContour(binaryMask(100, 100, [[50, 50]]), 100, 100)).toBeNull();
   });
 
   it('respects confidence threshold and maximum point budget', () => {
