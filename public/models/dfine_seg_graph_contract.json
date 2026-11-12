@@ -1,0 +1,102 @@
+{
+  "graph_name": "main_graph",
+  "ir_version": 10,
+  "opsets": [
+    {
+      "domain": "",
+      "version": 19
+    }
+  ],
+  "inputs": [
+    {
+      "name": "input",
+      "shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "element_type": "FLOAT"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "labels",
+      "shape": [
+        1,
+        300
+      ],
+      "element_type": "INT64"
+    },
+    {
+      "name": "boxes",
+      "shape": [
+        1,
+        300,
+        4
+      ],
+      "element_type": "FLOAT"
+    },
+    {
+      "name": "scores",
+      "shape": [
+        1,
+        300
+      ],
+      "element_type": "FLOAT"
+    },
+    {
+      "name": "masks",
+      "shape": [
+        1,
+        300,
+        160,
+        160
+      ],
+      "element_type": "FLOAT"
+    }
+  ],
+  "runtime_smoke_test": {
+    "provider": "CPUExecutionProvider",
+    "input_shape": [
+      1,
+      3,
+      640,
+      640
+    ],
+    "output_names": [
+      "labels",
+      "boxes",
+      "scores",
+      "masks"
+    ],
+    "output_shapes": [
+      [
+        1,
+        300
+      ],
+      [
+        1,
+        300,
+        4
+      ],
+      [
+        1,
+        300
+      ],
+      [
+        1,
+        300,
+        160,
+        160
+      ]
+    ],
+    "output_dtypes": [
+      "int64",
+      "float32",
+      "float32",
+      "float32"
+    ],
+    "status": "passed"
+  }
+}
