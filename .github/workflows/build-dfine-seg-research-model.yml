@@ -177,7 +177,7 @@ jobs:
         if: ${{ inputs.model_size == '' || inputs.model_size == 'n' }}
         run: |
           set -euo pipefail
-          npm install onnxruntime-web@latest --save --package-lock-only --no-audit --no-fund
+          npm install onnxruntime-web@latest --save-exact --package-lock-only --no-audit --no-fund
           node <<'JS'
           const fs = require('node:fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
