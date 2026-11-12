@@ -1,21 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { isRequestBodyWithinLimit } from "../supabase/functions/_shared/requestLimits";
+import { readUtf8RequestBodyWithinLimit } from "../supabase/functions/_shared/requestLimits";
 
-describe("request body byte limits", () => {
-  it("accepts payloads at or below the byte limit", () => {
-    expect(isRequestBodyWithinLimit("abcd", 4)).toBe(true);
-    expect(isRequestBodyWithinLimit("abc", 4)).toBe(true);
+const post = (body: string) => new Request("https://discover.test/frame", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body,
+});
+
+describe("streamed request body byte limits", () => {
+  it("accepts payloads at or below the UTF-8 byte limit", async () => {
+    const result = await readUtf8RequestBodyWithinLimit(post('{"ok":true}'), 11);
+    expect(result).toEqual({ body: '{"ok":true}', tooLarge: false });
   });
 
-  it("rejects UTF-8 payloads whose byte size exceeds the limit", () => {
-    // JavaScript string length is one UTF-16 code unit here, but UTF-8 uses two bytes.
-    expect("é".length).toBe(1);
-    expect(isRequestBodyWithinLimit("é", 1)).toBe(false);
-    expect(isRequestBodyWithinLimit("é", 2)).toBe(true);
+  it("rejects multi-byte UTF-8 content by byte size, not JS string length", async () => {
+    const body = '{"label":"é"}';
+    expect(body.length).toBeLessThan(new TextEncoder().encode(body).byteLength);
+    const result = await readUtf8RequestBodyWithinLimit(post(body), body.length);
+    expect(result).toEqual({ body: "", tooLarge: true });
   });
 
-  it("fails closed for invalid limits", () => {
-    expect(isRequestBodyWithinLimit("x", -1)).toBe(false);
-    expect(isRequestBodyWithinLimit("x", Number.NaN)).toBe(false);
+  it("stops reading once the streamed byte budget is exceeded", async () => {
+    const result = await readUtf8RequestBodyWithinLimit(post("x".repeat(100_000)), 100);
+    expect(result.tooLarge).toBe(true);
+    expect(result.body).toBe("");
+  });
+
+  it("fails closed for invalid limits", async () => {
+    expect(await readUtf8RequestBodyWithinLimit(post("x"), -1)).toEqual({ body: "", tooLarge: true });
+    expect(await readUtf8RequestBodyWithinLimit(post("x"), Number.NaN)).toEqual({ body: "", tooLarge: true });
   });
 });
