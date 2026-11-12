@@ -210,7 +210,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         if (dirty) ctx.putImageData(out, 0, 0, 0, a, EW, b - a + 1);
         lastRow = row;
         const working = readingRef.current || (state.scanStage >= 1 && state.scanStage <= 5 && shownCount < EH);
-        if (lineRef.current) lineRef.current.style.opacity = state.status === 'reading' && state.scanStage === 0 ? '1' : '0';
+        if (lineRef.current) lineRef.current.style.opacity = state.status === 'reading' && (state.scanStage === 0 || state.scanStage === 5) ? '1' : '0';
         if (working) raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -227,7 +227,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         <div style={{ ...fill, background: 'rgba(5,10,40,.28)' }} />
         {state.scanStage >= 1 && state.scanStage <= 5 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 1px rgba(79,139,255,.55)) drop-shadow(0 0 3px rgba(43,86,240,.3))' }} />}
         {state.scanStage === 4 && <div aria-hidden style={{ position: 'absolute', left: '50%', top: '12%', transform: 'translateX(-50%)', padding: '5px 9px', border: '1px solid rgba(169,212,255,.45)', borderRadius: 6, background: 'rgba(5,12,30,.58)', color: 'rgba(225,239,255,.9)', fontSize: 10, letterSpacing: 1.4, whiteSpace: 'nowrap', textShadow: '0 0 4px rgba(79,139,255,.35)' }}>FINE-PRINT EXTRACTION</div>}
-        {state.scanStage === 0 && <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />}
+        {(state.scanStage === 0 || state.scanStage === 5) && <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />}
         {state.bottles.map((b, i) => {
           const cx = ((b.box.x0 + b.box.x1) / 2) * 100, top = Math.max(compact ? 10 : 6, b.box.y0 * 100 - 2), isUnsure = b.state === 'unsure';
           return <div key={`${keyOf(b) || 'u'}-${i}`} style={{ position: 'absolute', left: `${cx}%`, top: `${top}%`, transform: 'translate(-50%,-100%)', textAlign: 'center', pointerEvents: 'none', animation: 'hdRise .35s ease-out both', animationDelay: `${i * 0.12}s`, maxWidth: '46%' }}>
@@ -274,7 +274,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         patch(i, { scanStage: 4 });
         const fineReads = await Promise.all(result.bottles.slice(0, 4).map(async bottle => {
           try {
-            const crop = await makeFinePrintCrop(uris[i], bottle.label_box || null);
+            const crop = await makeFinePrintCrop(uris[i], bottle.label_box || bottle.box);
             if (!crop) return [];
             patch(i, { scanStage: 5 });
             const variants = await makeFinePrintVariants(crop);
