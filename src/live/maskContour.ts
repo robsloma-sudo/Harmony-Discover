@@ -49,6 +49,7 @@ export function extractMaskContour(
     bounds?: NormalizedBounds;
     maxPoints?: number;
     minimumArea?: number;
+    minimumPixels?: number;
   } = {},
 ): MaskContour | null {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 2 || height < 2 || mask.length !== width * height) return null;
@@ -56,19 +57,22 @@ export function extractMaskContour(
   const bounds = options.bounds ?? { x: 0, y: 0, width: 1, height: 1 };
   const maxPoints = Math.max(4, Math.floor(options.maxPoints ?? 96));
   const minimumArea = options.minimumArea ?? 0.001;
+  const minimumPixels = Math.max(1, Math.floor(options.minimumPixels ?? 4));
   const foreground = (x: number, y: number) => Number(mask[y * width + x]) >= threshold;
   const edges: Edge[] = [];
+  let foregroundPixels = 0;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (!foreground(x, y)) continue;
+      foregroundPixels++;
       if (y === 0 || !foreground(x, y - 1)) edges.push({ ax: x, ay: y, bx: x + 1, by: y, direction: 0 });
       if (x === width - 1 || !foreground(x + 1, y)) edges.push({ ax: x + 1, ay: y, bx: x + 1, by: y + 1, direction: 1 });
       if (y === height - 1 || !foreground(x, y + 1)) edges.push({ ax: x + 1, ay: y + 1, bx: x, by: y + 1, direction: 2 });
       if (x === 0 || !foreground(x - 1, y)) edges.push({ ax: x, ay: y + 1, bx: x, by: y, direction: 3 });
     }
   }
-  if (edges.length < 4) return null;
+  if (edges.length < 4 || foregroundPixels < minimumPixels) return null;
 
   const outgoing = new Map<string, number[]>();
   edges.forEach((edge, index) => {
