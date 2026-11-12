@@ -478,7 +478,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self.trackingMisses.removeValue(forKey: trackID)
         }
       }
-      for staleID in self.activeTrackingRequests.keys where !incomingIDs.contains(staleID) {
+      for staleID in Array(self.activeTrackingRequests.keys).filter({ !incomingIDs.contains($0) }) {
         self.activeTrackingRequests.removeValue(forKey: staleID)
         self.trackingMisses.removeValue(forKey: staleID)
       }
@@ -503,7 +503,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation,
             !self.activeTrackingRequests.isEmpty else { return }
       var output: [[String: Double]] = []
-      for (trackID, request) in self.activeTrackingRequests {
+      for (trackID, request) in Array(self.activeTrackingRequests) {
         do {
           try VNSequenceRequestHandler().perform([request], on: pixelBuffer, orientation: orientation)
           guard let observation = request.results?.first as? VNDetectedObjectObservation,
@@ -770,6 +770,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   public func sessionWasInterrupted(_ session: ARSession) {
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      self.recognitionGeneration += 1
+      self.visionQueue.async { [weak self] in self?.clearLocalTrackingState() }
       self.previousCandidates.removeAll()
       self.rectangleOverlay.path = nil
       self.lastVisionFrameTime = 0
