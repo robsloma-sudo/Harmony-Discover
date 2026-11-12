@@ -412,7 +412,7 @@ Deno.serve(async (req: Request) => {
     if (queueError) console.log(JSON.stringify({ evt: "bottle_research_enqueue_error", msg: clean(queueError.message, 160) }));
     if (!queueError && jobs.length) {
       const workerSecret = Deno.env.get("DISCOVER_RESEARCH_WORKER_SECRET");
-      const workerUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\\/$/, "") + "/functions/v1/discover-research-worker";
+      const workerUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "") + "/functions/v1/discover-research-worker";
       if (workerSecret && workerUrl.startsWith("https://")) {
         EdgeRuntime.waitUntil(fetch(workerUrl, {
           method: "POST",
