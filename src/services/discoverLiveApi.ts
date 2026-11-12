@@ -34,7 +34,7 @@ async function call(body: Record<string, unknown>) {
   return json;
 }
 
-export type MenuGlimpse = { visible: boolean; title: string; items: Array<{ name: string; price: string; type: string }> };
+export type MenuGlimpse = { visible: boolean; title: string; box?: { x0: number; y0: number; x1: number; y1: number } | null; items: Array<{ name: string; price: string; type: string }> };
 export type LiveRead = { bottles: BottleRead[]; menu: MenuGlimpse; diagnostics: { version: string; model: string; providerMs: number; bottlesReturned: number; bottlesConfident: number; bottlesMatched: number } };
 
 /** One camera frame (JPEG, base64) in; every readable bottle label and any menu in view out. Nothing is stored. */
