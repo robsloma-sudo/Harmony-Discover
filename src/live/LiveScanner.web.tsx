@@ -344,12 +344,8 @@ export default function LiveScanner({ photos, onClose, onJourneyItems, source = 
         const result = await readLiveFrame(jpeg);
         // Three distinct visual passes: bottle silhouette, paper/foil/sticker label,
         // then fine image details inside the bottle region. Keep text data hidden until all finish.
-        patch(i, { visualBottles: result.bottles, visualMenu: result.menu.visible ? result.menu : null, scanStage: 1 });
-        await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
-        patch(i, { scanStage: 2 });
-        await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
-        patch(i, { scanStage: 3 });
-        await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
+        // 12 Nov audit: no fixed waits. The first read is shown as soon as it arrives; stages advance with the real work.
+        patch(i, { visualBottles: result.bottles, visualMenu: result.menu.visible ? result.menu : null, scanStage: 3 });
         // Pass 4 magnifies each label. Pass 5 keeps sweeping while local enhancement
         // variants are generated and the strongest candidates are sent for fine-print OCR.
         patch(i, { scanStage: 4 });
