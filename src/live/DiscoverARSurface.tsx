@@ -248,7 +248,7 @@ function WebLiveCamera(props: NativeProps) {
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })));
+        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
         const instances = await segmentationPromise;
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
           const segmented = associateInstanceMasks(
