@@ -76,7 +76,11 @@ async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Pro
 
 type EnhancementVariant = { name: string; jpeg: string; score: number };
 
-/** Generate a bounded set of local-only label enhancements; original pixels remain untouched. */
+/**
+ * Browser restoration stage. Every output is a derivative of the immutable source crop.
+ * These are evidence-preserving visibility transforms, not generative super-resolution:
+ * they must never be treated as proof of a character that is absent from the source.
+ */
 async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant[]> {
   const image = new Image();
   await new Promise<void>((resolve, reject) => {
@@ -85,70 +89,115 @@ async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant
     image.src = `data:image/jpeg;base64,${base64}`;
   });
   const width = image.naturalWidth, height = image.naturalHeight;
-  const source = document.createElement('canvas');
-  source.width = width; source.height = height;
-  const sourceContext = source.getContext('2d', { willReadFrequently: true });
+  if (!width || !height || width * height > 4_000_000) return [{ name: 'original', jpeg: base64, score: 0 }];
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = width; sourceCanvas.height = height;
+  const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
   if (!sourceContext) return [{ name: 'original', jpeg: base64, score: 0 }];
   sourceContext.drawImage(image, 0, 0);
   const original = sourceContext.getImageData(0, 0, width, height);
-  const recipes = [
-    { name: 'shadow-lift', exposure: 1.28, contrast: 1.22, gamma: 0.78, saturation: 1.05, red: 1.08 },
-    { name: 'highlight-control', exposure: 0.92, contrast: 1.38, gamma: 1.08, saturation: 1.12, red: 1.18 },
-    { name: 'red-ink-separation', exposure: 1.08, contrast: 1.28, gamma: 0.92, saturation: 1.65, red: 1.42 },
-    { name: 'luminance-detail', exposure: 1.12, contrast: 1.55, gamma: 0.88, saturation: 0, red: 1 },
-    { name: 'dark-label-recovery', exposure: 1.48, contrast: 1.34, gamma: 0.68, saturation: 1.22, red: 1.12 },
-    { name: 'fine-print-neutral', exposure: 1.02, contrast: 1.72, gamma: 0.96, saturation: 0.82, red: 1 },
-  ];
+  const src = original.data;
+  const count = width * height;
+  const luminance = new Float32Array(count);
+  for (let i = 0, p = 0; i < count; i++, p += 4) luminance[i] = 0.2126 * src[p] + 0.7152 * src[p + 1] + 0.0722 * src[p + 2];
+
+  // Estimate illumination at a wider scale. The blurred field is used only to
+  // separate slow lighting changes from local ink/edge detail.
+  const blurCanvas = document.createElement('canvas');
+  blurCanvas.width = width; blurCanvas.height = height;
+  const blurContext = blurCanvas.getContext('2d', { willReadFrequently: true });
+  let localLight = luminance;
+  if (blurContext) {
+    blurContext.filter = `blur(${Math.max(3, Math.round(Math.min(width, height) * 0.035))}px)`;
+    blurContext.drawImage(sourceCanvas, 0, 0);
+    blurContext.filter = 'none';
+    const blurred = blurContext.getImageData(0, 0, width, height).data;
+    localLight = new Float32Array(count);
+    for (let i = 0, p = 0; i < count; i++, p += 4) localLight[i] = 0.2126 * blurred[p] + 0.7152 * blurred[p + 1] + 0.0722 * blurred[p + 2];
+  }
+
   const variants: EnhancementVariant[] = [{ name: 'original', jpeg: base64, score: 0 }];
-  for (const recipe of recipes) {
+  const render = (name: string, transform: (r: number, g: number, b: number, y: number, i: number) => [number, number, number]) => {
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) continue;
-    const frame = context.createImageData(width, height);
-    const src = original.data, dst = frame.data;
-    const count = Math.max(1, width * height);
+    if (!context) return;
+    const frame = context.createImageData(width, height), dst = frame.data;
     let clipped = 0;
-    for (let p = 0; p < src.length; p += 4) {
-      const r0 = src[p], g0 = src[p + 1], b0 = src[p + 2];
-      const lum = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
-      const gamma = (v: number) => 255 * Math.pow(Math.max(0, Math.min(1, v / 255 * recipe.exposure)), recipe.gamma);
-      let r = gamma(r0), g = gamma(g0), b = gamma(b0);
-      r = (r - 128) * recipe.contrast + 128;
-      g = (g - 128) * recipe.contrast + 128;
-      b = (b - 128) * recipe.contrast + 128;
-      if (recipe.saturation === 0) r = g = b = (lum - 128) * recipe.contrast + 128;
-      else {
-        const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        r = y + (r - y) * recipe.saturation;
-        g = y + (g - y) * recipe.saturation;
-        b = y + (b - y) * recipe.saturation;
-      }
-      r = Math.max(0, Math.min(255, r * recipe.red));
-      g = Math.max(0, Math.min(255, g));
-      b = Math.max(0, Math.min(255, b));
+    for (let i = 0, p = 0; i < count; i++, p += 4) {
+      const rgb = transform(src[p], src[p + 1], src[p + 2], luminance[i], i);
+      const r = Math.max(0, Math.min(255, rgb[0]));
+      const g = Math.max(0, Math.min(255, rgb[1]));
+      const b = Math.max(0, Math.min(255, rgb[2]));
       dst[p] = r; dst[p + 1] = g; dst[p + 2] = b; dst[p + 3] = src[p + 3];
-      if (r < 3 || r > 252 || g < 3 || g > 252 || b < 3 || b > 252) clipped += 1;
+      if (r < 2 || r > 253 || g < 2 || g > 253 || b < 2 || b > 253) clipped++;
     }
-    // Score local edge energy rather than global contrast: text strokes create
-    // compact gradients, while flat exposure changes and clipped highlights do not.
     context.putImageData(frame, 0, 0);
-    const enhanced = context.getImageData(0, 0, width, height).data;
-    let edgeEnergy = 0, edgeSamples = 0;
-    const luminance = (x: number, y: number) => {
+    const output = context.getImageData(0, 0, width, height).data;
+    // OCR-oriented proxy: reward compact, stroke-like gradients and penalize
+    // saturation/clipping. It is a ranking heuristic, not a readability claim.
+    let gradient = 0, coherent = 0, samples = 0;
+    const yAt = (x: number, y: number) => {
       const p = (y * width + x) * 4;
-      return 0.2126 * enhanced[p] + 0.7152 * enhanced[p + 1] + 0.0722 * enhanced[p + 2];
+      return 0.2126 * output[p] + 0.7152 * output[p + 1] + 0.0722 * output[p + 2];
     };
     for (let y = 1; y < height - 1; y += 2) for (let x = 1; x < width - 1; x += 2) {
-      const gx = -luminance(x-1,y-1) - 2*luminance(x-1,y) - luminance(x-1,y+1) + luminance(x+1,y-1) + 2*luminance(x+1,y) + luminance(x+1,y+1);
-      const gy = -luminance(x-1,y-1) - 2*luminance(x,y-1) - luminance(x+1,y-1) + luminance(x-1,y+1) + 2*luminance(x,y+1) + luminance(x+1,y+1);
-      edgeEnergy += Math.min(255, Math.hypot(gx, gy) / 4);
-      edgeSamples += 1;
+      const gx = yAt(x + 1, y) - yAt(x - 1, y);
+      const gy = yAt(x, y + 1) - yAt(x, y - 1);
+      const magnitude = Math.hypot(gx, gy);
+      if (magnitude > 18 && magnitude < 210) { gradient += Math.min(100, magnitude); coherent++; }
+      samples++;
     }
-    const clippingPenalty = (clipped / count) * 180;
-    const score = edgeSamples ? edgeEnergy / edgeSamples - clippingPenalty : 0;
-    variants.push({ name: recipe.name, jpeg: canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '', score });
-  }
+    const edgeDensity = samples ? coherent / samples : 0;
+    const clippingPenalty = clipped / count;
+    const score = (samples ? gradient / samples : 0) - clippingPenalty * 220 + Math.min(edgeDensity, 0.16) * 18;
+    variants.push({ name, jpeg: canvas.toDataURL('image/jpeg', 0.94).split(',')[1] || '', score });
+  };
+
+  // 1. Locally adaptive shadow recovery. The local illumination estimate avoids
+  // lifting the entire label uniformly and retains the original color ratios.
+  render('adaptive-shadow-recovery', (r, g, b, y, i) => {
+    const base = localLight[i];
+    const gain = 1.0 + Math.max(0, 118 - base) / 118 * 0.82;
+    const lifted = base + (y - base) * gain + Math.max(0, 92 - base) * 0.34;
+    const mapped = 255 * Math.pow(Math.max(0, Math.min(1, lifted / 255)), 0.88);
+    const scale = y > 3 ? mapped / y : 1;
+    return [r * scale, g * scale, b * scale];
+  });
+
+  // 2. Highlight compression with a gentle shadow toe: useful for foil/glass
+  // reflections while avoiding aggressive clipping of small printed strokes.
+  render('highlight-shadow-balance', (r, g, b, y) => {
+    const lifted = y + (255 - y) * Math.pow(Math.max(0, y / 255), 3) * -0.34 + Math.max(0, 82 - y) * 0.28;
+    const mapped = 255 * (lifted / (lifted + 48)) * (303 / 255);
+    const scale = y > 3 ? mapped / y : 1;
+    return [r * scale, g * scale, b * scale];
+  });
+
+  // 3. Luminance-only local detail enhancement. Chroma is preserved as a ratio,
+  // which helps retain red ink and colored label cues without inventing color.
+  render('local-detail-recovery', (r, g, b, y, i) => {
+    const detail = y - localLight[i];
+    const enhanced = y + detail * 0.72;
+    const scale = y > 3 ? enhanced / y : 1;
+    return [r * scale, g * scale, b * scale];
+  });
+
+  // 4. Red-ink separation: red-channel-weighted luminance can reveal red print
+  // on dark stock, but it remains a separate candidate rather than replacing RGB.
+  render('red-ink-separation', (r, g, b, y) => {
+    const weighted = 0.48 * r + 0.38 * g + 0.14 * b;
+    const mapped = Math.max(0, Math.min(255, (weighted - 104) * 1.42 + 132));
+    return [mapped, mapped, mapped];
+  });
+
+  // 5. Neutral high-frequency candidate for tiny type and fine linework.
+  render('fine-print-grayscale', (r, g, b, y, i) => {
+    const local = localLight[i];
+    const enhanced = Math.max(0, Math.min(255, (y - local) * 1.35 + local * 1.04));
+    return [enhanced, enhanced, enhanced];
+  });
+
   return variants.filter(v => !!v.jpeg).sort((a, b) => b.score - a.score);
 }
 
