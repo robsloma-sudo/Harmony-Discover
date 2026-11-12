@@ -20,12 +20,13 @@ export function mergeTrackedBottleCandidates<T>(
   previous: TrackedBottleRecord<T>[],
   candidates: BottleTrackCandidate<T>[],
 ): TrackedBottleRecord<T>[] {
-  const previousById = new Map(previous.map(record => [record.trackId, record.bottle]));
+  const previousById = new Map(previous.map(record => [record.trackId, record]));
   const next: TrackedBottleRecord<T>[] = [];
   for (const candidate of candidates) {
-    const bottle = candidate.bottle ?? previousById.get(candidate.trackId);
+    const previousRecord = previousById.get(candidate.trackId);
+    const bottle = candidate.bottle ?? previousRecord?.bottle;
     if (!bottle) continue;
-    next.push({ ...candidate, bottle });
+    next.push({ ...candidate, bottle, contour: candidate.contour ?? previousRecord?.contour });
   }
   return next;
 }
