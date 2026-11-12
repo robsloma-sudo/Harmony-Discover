@@ -7,7 +7,7 @@
 // 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { isRequestBodyWithinLimit } from "../_shared/requestLimits.ts";
+import { readUtf8RequestBodyWithinLimit } from "../_shared/requestLimits.ts";
 import { hasStrongProductIdentity } from "../_shared/bottleIdentity.ts";
 
 const VERSION = "0.3.8";
@@ -258,8 +258,9 @@ Deno.serve(async (req: Request) => {
   const subject = auth.user.id;
 
   if (Number(req.headers.get("content-length") || "0") > MAX_BODY_BYTES) return reply({ error: "payload_too_large" }, 413, origin);
-  const raw = await req.text();
-  if (!isRequestBodyWithinLimit(raw, MAX_BODY_BYTES)) return reply({ error: "payload_too_large" }, 413, origin);
+  const bodyRead = await readUtf8RequestBodyWithinLimit(req, MAX_BODY_BYTES);
+  if (bodyRead.tooLarge) return reply({ error: "payload_too_large" }, 413, origin);
+  const raw = bodyRead.body;
   let body: Record<string, unknown>;
   try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
   catch { return reply({ error: "invalid_json" }, 400, origin); }
