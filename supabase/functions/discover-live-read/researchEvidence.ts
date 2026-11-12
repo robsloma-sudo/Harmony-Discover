@@ -7,7 +7,7 @@ export function normalizeResearchUrl(value: unknown): string {
     const parsed = new URL(String(value ?? ""));
     if (parsed.protocol !== "https:" || parsed.username || parsed.password) return "";
     parsed.hash = ""; parsed.search = "";
-    return parsed.toString().replace(/\/$/, "").toLowerCase();
+    return parsed.toString().replace(/\/$/, "");
   } catch { return ""; }
 }
 
