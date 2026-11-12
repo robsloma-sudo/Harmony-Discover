@@ -317,7 +317,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
-                  <Text style={s.liveDetectionConfidence}>{Math.round(tracked.confidence * 100)}% · LIVE</Text>
+                  <Text style={s.liveDetectionConfidence}>{Math.round(record.confidence * 100)}% · LIVE</Text>
                   <Text style={s.liveDetectionConfidence}>TRACK · {record.trackId}</Text>
                   {!!(labelSignalsByBottle[index]?.text.length || labelSignalsByBottle[index]?.barcodes.length) && <Text numberOfLines={2} style={s.liveDetectionConfidence}>{[...(labelSignalsByBottle[index]?.text || []).slice(0, 2), ...(labelSignalsByBottle[index]?.barcodes || []).map(code => `BAR ${code}`)].join(' · ')}</Text>}
                 </View>
