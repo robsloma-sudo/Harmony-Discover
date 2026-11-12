@@ -12,9 +12,12 @@ export type ARTrackingUpdate = {
 
 export type ARViewEvent = { nativeEvent: { state?: string; reason?: string; message?: string } };
 
-export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
+export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraRayBasis?: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
+
+export type NativeSpatialAnchor = { physicalObjectId: string; x: number; y: number; z: number; state: 'confirmed' | 'potential' | 'occluded' };
 
 type NativeProps = ViewProps & {
+  spatialAnchors?: NativeSpatialAnchor[];
   active?: boolean;
   recognitionEnabled?: boolean;
   captureRequestId?: number;
@@ -26,6 +29,7 @@ type NativeProps = ViewProps & {
   onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
+  onSpatialAnchorStatus?: (event: { nativeEvent: { activeCount: number } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
 
