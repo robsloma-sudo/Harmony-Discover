@@ -21,4 +21,4 @@ This change connects the verified browser D-FINE ONNX/WASM provider to the exist
 
 ## Scope
 
-This is the browser WASM path. It does not add native iOS segmentation, metric depth, or a 3D bottle mesh. Simulator compilation does not replace physical iPhone Safari testing. Model license/provenance review and a held-out bottle mask evaluation remain release gates.
+This is the browser WASM path. It does not add native iOS segmentation, metric depth, or a 3D bottle mesh. D-FINE currently refines cloud-seeded bottle tracks; it does not independently create bottle tracks or perform per-bottle high-resolution label OCR. The pinned upstream commit states that COCO instance-segmentation weights are Apache-2.0; checkpoint and ONNX hashes are recorded in the model metadata. A held-out bottle-mask evaluation and physical iPhone Safari testing remain release gates. Simulator compilation does not replace physical-device acceptance.
