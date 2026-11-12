@@ -21,7 +21,8 @@ export type SpatialTrack = {
 };
 export type SpatialTrackUpdate = {
   tracks: SpatialTrack[];
-  observed: SpatialTrack[];
+  /** Same order and length as input observations; null means no defensible 3D location. */
+  observed: Array<SpatialTrack | null>;
 };
 
 export type SpatialTrackerOptions = {
@@ -42,12 +43,13 @@ const distance = (a: WorldPoint, b: WorldPoint) =>
 export class SpatialBottleTracker {
   private tracks: SpatialTrack[] = [];
   private nextId = 1;
+  private lastUpdateAt = Number.NEGATIVE_INFINITY;
   private readonly options: Required<SpatialTrackerOptions>;
 
   constructor(options: SpatialTrackerOptions = {}) {
     this.options = {
       confirmationHits: options.confirmationHits ?? 2,
-      maxAssociationDistanceMeters: options.maxAssociationDistanceMeters ?? 0.38,
+      maxAssociationDistanceMeters: options.maxAssociationDistanceMeters ?? 0.22,
       occlusionGraceMs: options.occlusionGraceMs ?? 2500,
       lostRetentionMs: options.lostRetentionMs ?? 12000,
       minimumConfidence: options.minimumConfidence ?? 0.65,
@@ -55,10 +57,19 @@ export class SpatialBottleTracker {
   }
 
   update(observations: SpatialObservation[], now: number): SpatialTrackUpdate {
+    if (!Number.isFinite(now) || now <= this.lastUpdateAt) {
+      return { tracks: this.tracks.map(track => ({ ...track })), observed: observations.map(() => null) };
+    }
+    this.lastUpdateAt = now;
     const used = new Set<string>();
-    const observed: SpatialTrack[] = [];
+    const observed: Array<SpatialTrack | null> = [];
 
     for (const observation of observations) {
+      const point = observation.worldPoint;
+      if (!point || ![point.x, point.y, point.z, observation.confidence].every(Number.isFinite)) {
+        observed.push(null);
+        continue;
+      }
       let match: SpatialTrack | undefined;
       let bestDistance = this.options.maxAssociationDistanceMeters;
       if (observation.worldPoint) {
@@ -121,7 +132,7 @@ export class SpatialBottleTracker {
         return [track];
       }
       track.state = 'lost';
-      return [track];
+      return [];
     });
 
     return { tracks: this.tracks.map(track => ({ ...track })), observed };
@@ -130,5 +141,6 @@ export class SpatialBottleTracker {
   reset(): void {
     this.tracks = [];
     this.nextId = 1;
+    this.lastUpdateAt = Number.NEGATIVE_INFINITY;
   }
 }
