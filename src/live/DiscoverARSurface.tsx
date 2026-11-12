@@ -211,7 +211,7 @@ function WebLiveCamera(props: NativeProps) {
         latestGrayFrame = frame;
         if (!webTracks.length) return;
         webTracks = webTracks
-          .map(track => propagateMotionTrack(track, frame))
+          .map(track => ({ ...propagateMotionTrack(track, frame), id: track.id, lastSeenAt: track.lastSeenAt }))
           .filter(track => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
