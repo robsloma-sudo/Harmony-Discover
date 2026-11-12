@@ -16,6 +16,14 @@ on:
   push:
     branches:
       - fix/spatial-frame-sync-2026-11-12
+    paths:
+      - "app/**"
+      - "src/**"
+      - "modules/discover-arkit/**"
+      - "package.json"
+      - "package-lock.json"
+      - "app.json"
+      - "eas.json"
   workflow_dispatch:
 
 permissions:
