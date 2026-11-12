@@ -5,6 +5,8 @@ import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { grayscaleFrame, propagateMotionTrack, seedMotionFeatures, type GrayFrame, type MotionTrack } from './patchMotionTracker';
+import { associateInstanceMasks, SegmentationRunner } from './segmentationEngine';
+import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -103,6 +105,24 @@ function WebLiveCamera(props: NativeProps) {
     }
 
     let disposed = false;
+    let segmentationRunner: SegmentationRunner | null = null;
+    let segmentationLoading: Promise<void> | null = null;
+    let segmentationLoadFailed = false;
+    const ensureSegmentationRunner = () => {
+      if (segmentationRunner || segmentationLoading || segmentationLoadFailed || disposed) return segmentationLoading;
+      segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5 }).then(provider => {
+        if (disposed) { void provider.dispose?.(); return; }
+        segmentationRunner = new SegmentationRunner(provider, {
+          minimumIntervalMs: 2200,
+          maximumFrameAgeMs: 1600,
+          maximumTracksPerFrame: 8,
+        });
+      }).catch(error => {
+        segmentationLoadFailed = true;
+        console.warn('[Discover] D-FINE segmentation unavailable:', error instanceof Error ? error.message : error);
+      }).finally(() => { segmentationLoading = null; });
+      return segmentationLoading;
+    };
     let stream: MediaStream | null = null;
     let frameCheck = 0;
     let recognitionTimer = 0;
@@ -135,6 +155,17 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
+    const transformContour = (
+      points: Array<{ x: number; y: number }>,
+      from: { x: number; y: number; width: number; height: number },
+      to: { x: number; y: number; width: number; height: number },
+    ) => {
+      if (from.width <= 0 || from.height <= 0) return points;
+      return points.map(point => ({
+        x: to.x + ((point.x - from.x) / from.width) * to.width,
+        y: to.y + ((point.y - from.y) / from.height) * to.height,
+      }));
+    };
     const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead; contour?: Array<{ x: number; y: number }> }>, seedFrame: GrayFrame | null = latestGrayFrame) => {
       const now = Date.now();
       const used = new Set<number>();
@@ -154,28 +185,32 @@ function WebLiveCamera(props: NativeProps) {
         if (bestIndex >= 0) used.add(bestIndex);
         const blend = previous ? 0.38 : 1;
         const id = previous?.id ?? nextWebTrackId++;
-        const track: WebTrack = {
-          id,
-          trackId: id,
+        const bounds = {
           x: previous ? previous.x * (1 - blend) + detection.x * blend : detection.x,
           y: previous ? previous.y * (1 - blend) + detection.y * blend : detection.y,
           width: previous ? previous.width * (1 - blend) + detection.width * blend : detection.width,
           height: previous ? previous.height * (1 - blend) + detection.height * blend : detection.height,
+        };
+        const track: WebTrack = {
+          id,
+          trackId: id,
+          ...bounds,
           confidence: detection.confidence,
           lastSeenAt: now,
           misses: 0,
           features: [],
           bottle: detection.bottle,
+          contour: previous?.contour ? transformContour(previous.contour, previous, bounds) : undefined,
         };
         if (seedFrame) track.features = seedMotionFeatures(seedFrame, track);
         next.push(track);
-        return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence };
+        return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour };
       });
       webTracks.forEach((track, index) => {
         if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
-      return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour }));
+      return output;
     };
 
     const captureTrackingFrameFromCanvas = (source: HTMLCanvasElement): GrayFrame | null => {
@@ -229,7 +264,9 @@ function WebLiveCamera(props: NativeProps) {
         webTracks = webTracks
           .map((track): WebTrack => {
             const propagated = propagateMotionTrack(track, frame);
-            return { ...track, ...propagated, id: track.id, lastSeenAt: propagated.misses === 0 ? Date.now() : track.lastSeenAt };
+            const nextTrack: WebTrack = { ...track, ...propagated, id: track.id, lastSeenAt: propagated.misses === 0 ? Date.now() : track.lastSeenAt };
+            if (track.contour) nextTrack.contour = transformContour(track.contour, track, nextTrack);
+            return nextTrack;
           })
           .filter((track): track is WebTrack => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
@@ -257,6 +294,7 @@ function WebLiveCamera(props: NativeProps) {
     // server's 30/minute limit even when inference is fast.
     const scheduleRecognition = (delay = recognitionIntervalMs) => {
       if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled) return;
+      void ensureSegmentationRunner();
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
     };
@@ -294,10 +332,18 @@ function WebLiveCamera(props: NativeProps) {
         const context = recognitionContext;
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        const frameTimestamp = Date.now();
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        // Seed local motion features from the exact cropped image sent to cloud
-        // recognition, not a later camera frame captured after the response.
+        // Seed local motion features and segmentation from the exact same crop
+        // sent to cloud recognition, never from a later camera frame.
         const seedFrame = captureTrackingFrameFromCanvas(canvas);
+        const segmentationFrame = context.getImageData(0, 0, canvas.width, canvas.height);
+        const segmentationPromise = segmentationRunner
+          ? segmentationRunner.runInference(segmentationFrame, frameTimestamp).catch(error => {
+              console.warn('[Discover] D-FINE frame inference failed:', error instanceof Error ? error.message : error);
+              return [];
+            })
+          : Promise.resolve([]);
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
         const result = await readLiveFrame(jpeg);
         const decodedBarcodes = await barcodePromise;
@@ -306,9 +352,37 @@ function WebLiveCamera(props: NativeProps) {
         if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })), seedFrame);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', candidates: trackedCandidates } });
+
+        const instances = await segmentationPromise;
+        if (instances.length && Date.now() - frameTimestamp <= 3000 && !disposed) {
+          const seeds = trackedCandidates.map(track => ({
+            trackId: track.trackId,
+            bounds: { x: track.x, y: track.y, width: track.width, height: track.height },
+            detectionConfidence: track.confidence,
+            sourceTimestampMs: frameTimestamp,
+          }));
+          const segmented = associateInstanceMasks(seeds, instances, {
+            minimumIoU: 0.35,
+            minimumMaskPixels: 12,
+            minimumMaskArea: 0.001,
+            maxContourPoints: 96,
+          });
+          if (segmented.length) {
+            const byTrack = new Map(segmented.map(item => [item.trackId, item]));
+            webTracks = webTracks.map(track => {
+              const mask = byTrack.get(track.id);
+              return mask ? { ...track, contour: mask.contour.points } : track;
+            });
+            const maskCandidates = webTracks.map(track => ({
+              trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height,
+              confidence: track.confidence, bottle: track.bottle, contour: track.contour,
+            }));
+            callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, source: 'local', candidates: maskCandidates } });
+          }
+        }
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
@@ -427,6 +501,7 @@ function WebLiveCamera(props: NativeProps) {
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       if (depthTimer) window.clearInterval(depthTimer);
       stopLocalTracking();
+      if (segmentationRunner) void segmentationRunner.dispose();
       depthEstimator?.dispose();
       if (recognitionCanvas) { recognitionCanvas.width = 0; recognitionCanvas.height = 0; }
       if (trackingCanvas) { trackingCanvas.width = 0; trackingCanvas.height = 0; }
