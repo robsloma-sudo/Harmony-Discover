@@ -112,6 +112,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private struct RetainedTrackingFrame { let pixelBuffer: CVPixelBuffer; let orientation: CGImagePropertyOrientation; let generation: Int }
   private var retainedTrackingFrames: [TimeInterval: RetainedTrackingFrame] = [:] // accessed only on visionQueue
   private var activeTrackingRequests: [Int: VNTrackObjectRequest] = [:] // accessed only on visionQueue
+  private var localTrackingSequenceHandler = VNSequenceRequestHandler()
   private var trackingMisses: [Int: Int] = [:] // accessed only on visionQueue
   private var lastLocalTrackingFrameTime: TimeInterval = 0
   private let rectangleOverlay = CAShapeLayer()
@@ -438,6 +439,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     for frame in retainedTrackingFrames.values { CVPixelBufferRelease(frame.pixelBuffer) }
     retainedTrackingFrames.removeAll()
     activeTrackingRequests.removeAll()
+    localTrackingSequenceHandler = VNSequenceRequestHandler()
     trackingMisses.removeAll()
   }
 
@@ -467,7 +469,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         let request = VNTrackObjectRequest(detectedObjectObservation: observation)
         request.trackingLevel = .accurate
         do {
-          try VNSequenceRequestHandler().perform([request], on: source.pixelBuffer, orientation: source.orientation)
+          try self.localTrackingSequenceHandler.perform([request], on: source.pixelBuffer, orientation: source.orientation)
           if let seeded = request.results?.first as? VNDetectedObjectObservation {
             request.inputObservation = seeded
             self.activeTrackingRequests[trackID] = request
@@ -505,7 +507,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       var output: [[String: Double]] = []
       for (trackID, request) in Array(self.activeTrackingRequests) {
         do {
-          try VNSequenceRequestHandler().perform([request], on: pixelBuffer, orientation: orientation)
+          try self.localTrackingSequenceHandler.perform([request], on: pixelBuffer, orientation: orientation)
           guard let observation = request.results?.first as? VNDetectedObjectObservation,
                 observation.confidence >= 0.25 else {
             let misses = (self.trackingMisses[trackID] ?? 0) + 1
