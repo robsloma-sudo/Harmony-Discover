@@ -11,6 +11,33 @@ import { createDfineSegOnnxProvider, type DfineOrtRuntime } from './dfineSegOnnx
 type DfineBrowserWindow = Window & { ort?: DfineOrtRuntime };
 let dfineOrtRuntimePromise: Promise<DfineOrtRuntime> | null = null;
 
+const D-FINE_MODEL_SHA256 = '999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30';
+
+async function loadDfineModelBytes(): Promise<ArrayBuffer> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45_000);
+  try {
+    const response = await fetch('/models/dfine_seg_n_coco.onnx', {
+      cache: 'force-cache',
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error('D-FINE model request failed: HTTP ' + response.status);
+    const declaredLength = Number(response.headers.get('content-length') ?? 0);
+    if (declaredLength > 32 * 1024 * 1024) throw new Error('D-FINE model exceeds the 32 MB safety limit.');
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength === 0 || bytes.byteLength > 32 * 1024 * 1024) {
+      throw new Error('D-FINE model size is invalid.');
+    }
+    if (!window.crypto?.subtle) throw new Error('SHA-256 model integrity verification is unavailable in this browser.');
+    const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+    const actual = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+    if (actual !== D-FINE_MODEL_SHA256) throw new Error('D-FINE model SHA-256 integrity check failed.');
+    return bytes;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 /** Load the UMD browser build as a static asset; Metro cannot parse ORT's ESM dynamic import. */
 function loadDfineBrowserRuntime(): Promise<DfineOrtRuntime> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -342,9 +369,11 @@ function WebLiveCamera(props: NativeProps) {
       try {
         const ort = await loadDfineBrowserRuntime();
         if (disposed) return;
+        const modelBytes = await loadDfineModelBytes();
+        if (disposed) return;
         const provider = await createDfineSegOnnxProvider(
           ort as unknown as DfineOrtRuntime,
-          '/models/dfine_seg_n_coco.onnx',
+          modelBytes,
           { inputSize: 640, minimumScore: 0.5 },
         );
         const runner = new SegmentationRunner(provider, {
