@@ -419,27 +419,39 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 }
 
 export function DiscoverARSurface(props: NativeProps) {
+  const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
-  return <NativeARView {...props} onFrame={event => {
-    if (nativeFrameReadBusy) return;
-    nativeFrameReadBusy = true;
-    const frame = event.nativeEvent;
-    void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
-      props.onRecognitionUpdate?.({ nativeEvent: {
-        text: result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean),
-        barcodes: [],
-        classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
-        frameTimestamp: Date.now(),
-        bottles: result.bottles,
-        menu: result.menu,
-        diagnostics: result.diagnostics,
-        barcodeStatus: 'unsupported',
-      } });
-      const tracked = trackNativeBottleReads(result.bottles);
-      props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
-    }).catch(error => {
-      props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
-    }).finally(() => { nativeFrameReadBusy = false; });
-  }} />
+  return <NativeARView {...props}
+    onRecognitionUpdate={event => {
+      const value = event.nativeEvent;
+      nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], timestamp: value.frameTimestamp || Date.now() };
+      props.onRecognitionUpdate?.({ nativeEvent: { ...value, barcodeStatus: 'available' } });
+    }}
+    onFrame={event => {
+      if (nativeFrameReadBusy) return;
+      nativeFrameReadBusy = true;
+      const frame = event.nativeEvent;
+      void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
+        const signals = nativeVisionSignals.current;
+        const signalsAreFresh = !!signals && Date.now() - signals.timestamp < 3500;
+        const cloudText = result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean);
+        const mergedText = Array.from(new Set([...cloudText, ...(signalsAreFresh ? signals!.text : [])]));
+        props.onRecognitionUpdate?.({ nativeEvent: {
+          text: mergedText,
+          barcodes: signalsAreFresh ? signals!.barcodes : [],
+          classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
+          frameTimestamp: Date.now(),
+          bottles: result.bottles,
+          menu: result.menu,
+          diagnostics: result.diagnostics,
+          barcodeStatus: 'available',
+        } });
+        const tracked = trackNativeBottleReads(result.bottles);
+        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
+      }).catch(error => {
+        props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
+      }).finally(() => { nativeFrameReadBusy = false; });
+    }}
+  />;
 }
