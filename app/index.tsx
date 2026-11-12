@@ -71,7 +71,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     return () => clearTimeout(staleTimer);
   }, [liveReadAt]);
   useEffect(() => {
-    if (liveTracking.state !== 'normal') {
+    if (liveTracking.state === 'limited') {
+      // Brief ARKit tracking limitations should occlude, not destroy, physical IDs.
+      setLiveSpatialAnchors(previous => previous.map(anchor => ({ ...anchor, state: 'occluded' })));
+      return;
+    }
+    if (liveTracking.state === 'paused' || liveTracking.state === 'interrupted' || liveTracking.state === 'not_available') {
       physicalBottleTrackerRef.current.reset();
       setLiveSpatialAnchors([]);
       setLivePhysicalIds([]);
@@ -111,7 +116,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         height: bottle.box.y1 - bottle.box.y0,
       });
       const located = projection.status === 'located';
-      const visualKey = bottle.category.trim().toLowerCase() || undefined;
+      const visualKey = [bottle.category, bottle.match?.brand || bottle.brand || '', bottle.product || ''].filter(Boolean).join(':').trim().toLowerCase() || undefined;
       return {
         worldPoint: located ? projection.worldPoint : undefined,
         confidence: bottle.confidence,
