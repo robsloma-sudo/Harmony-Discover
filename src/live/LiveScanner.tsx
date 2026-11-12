@@ -13,8 +13,21 @@ const nameOf = (b: BottleRead) => [b.match?.brand || b.brand,b.product].filter(B
 const keyOf = (b: BottleRead) => nameOf(b).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 function factsOf(b: BottleRead): Array<[string,string]> {
  const d=b.details||{};
- const rows: Array<[string,string]> = [['Brand',b.match?.brand||b.brand],['Expression',b.product],['Type',CATEGORY[b.category]||''],['Producer',clean(d.producer)],['Vintage',clean(d.vintage)],['Appellation',clean(d.appellation)],['Region',clean(d.region)||b.origin||clean(d.country)],['Grapes',clean(d.grapes)],['Class',clean(d.classification)],['Age',clean(d.age_statement)],['Finish',clean(d.cask_finish)],['Flavour',clean(d.flavor)],['Strength',b.proof],['Size',b.size],['Batch',clean(d.batch)],['Certified',clean(d.certifications)]];
- return rows.filter(([,v])=>!!v).slice(0,12);
+ const rows: Array<[string,string]> = [
+  ['Brand',b.match?.brand||b.brand],['Producer',clean(d.producer)],['Distillery',clean(d.distillery)],['Winery / estate',clean(d.winery)||clean(d.estate)],
+  ['Bottler',clean(d.bottler)],['Brand owner',clean(d.brand_owner)],['Product expression',b.product],['Category',CATEGORY[b.category]||b.category],
+  ['Class / designation',clean(d.classification)||clean(d.label_designation)],['Style',clean(d.style)],['Subcategory',clean(d.subcategory)],
+  ['Origin',b.origin||clean(d.country)],['Region',clean(d.region)],['Subregion / AVA',clean(d.subregion)],['Appellation',clean(d.appellation)],['Appellation level',clean(d.appellation_level)],
+  ['Vineyard',clean(d.vineyard)],['Grapes',clean(d.grapes)],['Vintage',clean(d.vintage)],['Harvest',clean(d.harvested_on)],
+  ['Proof / ABV',b.proof],['Bottle size',b.size||clean(d.net_contents)],['Package type',clean(d.package_type)],['Package material',clean(d.package_material)],
+  ['SKU',clean(d.sku)],['UPC / EAN',clean(d.upc_ean)],['Age statement',clean(d.age_statement)],['Mash bill',clean(d.mash_bill)],['Grain',clean(d.grain)],['Agave',clean(d.agave_type)],
+  ['Production method',clean(d.production_method)],['Distillation',clean(d.distillation)],['Cask type',clean(d.cask_type)],['Cask finish',clean(d.cask_finish)],
+  ['Barrel number',clean(d.barrel_number)],['Batch',clean(d.batch)],['Lot code',clean(d.lot_code)],['Distilled on',clean(d.distilled_on)],['Bottled on',clean(d.bottled_on)],
+  ['Disgorged on',clean(d.disgorged_on)],['Dosage',clean(d.dosage)],['Residual sugar',clean(d.residual_sugar)],['Flavor',clean(d.flavor)],
+  ['Importer',clean(d.importer)],['Certifications',clean(d.certifications)],['Organic claim',clean(d.organic_claim)],['Awards',clean(d.awards)]
+ ];
+ const seen=new Set<string>();
+ return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;});
 }
 function makeSession() {
  try { if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID(); } catch {}
