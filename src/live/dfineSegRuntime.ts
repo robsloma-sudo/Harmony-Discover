@@ -1,7 +1,5 @@
 import type { DfineOnnxProviderOptions, DfineSegOnnxProvider } from "./dfineSegOnnxProvider";
 
-export { DFINE_SEG_MODEL_URL, DFINE_SEG_MODEL_SHA256, verifyDfineModelBytes } from "./dfineModelIntegrity";
-
 /**
  * Native platforms intentionally do not load the browser ONNX Runtime.
  * Discover's current live segmentation engine is web-first; native inference
