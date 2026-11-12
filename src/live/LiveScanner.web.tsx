@@ -113,7 +113,8 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const gy = -gray[i - EW - 1] - 2 * gray[i - EW] - gray[i - EW + 1] + gray[i + EW - 1] + 2 * gray[i + EW] + gray[i + EW + 1];
         const m = Math.abs(gx) + Math.abs(gy);
         const nx = x / EW, ny = y / EH;
-        const threshold = state.scanStage === 3 ? 42 : state.scanStage === 2 ? 58 : 72;\n        alpha[i] = m < threshold ? 0 : Math.min(170, (m - threshold) * 0.9);
+        const threshold = state.scanStage === 3 ? 42 : state.scanStage === 2 ? 58 : 72;
+        alpha[i] = m < threshold ? 0 : Math.min(170, (m - threshold) * 0.9);
       }
       const canvas = canvasRef.current; if (!canvas) return;
       if (canvas.width !== EW) canvas.width = EW; if (canvas.height !== EH) canvas.height = EH;
