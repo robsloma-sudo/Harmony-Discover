@@ -75,10 +75,10 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
       .map(point => ({ trackId: point.trackId as number, point: point.world, confidence: 1 }));
     worldTracksRef.current = updateWorldSpatialTracks(worldTracksRef.current, updates, Date.now());
   }, [depthFrame?.timestamp, bottles, candidates, tracking.state]);
-  const persistentWorldPoints = worldTracksRef.current.map(track => {
+  const persistentWorldPoints = worldTracksRef.current.flatMap(track => {
     const source = spatialPoints.find(point => point.trackId === track.trackId);
-    return source ? { ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt } : null;
-  }).filter((point): point is NonNullable<typeof point> => point !== null);
+    return source ? [{ ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt }] : [];
+  });
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
 
   return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
