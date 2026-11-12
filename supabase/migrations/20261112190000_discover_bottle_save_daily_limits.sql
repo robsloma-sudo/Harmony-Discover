@@ -30,7 +30,7 @@ declare
   v_user integer;
   v_all bigint;
 begin
-  if p_subject is null or p_user_max < 1 or p_global_max < 1 then
+  if p_subject is null or coalesce(p_user_max, 0) < 1 or coalesce(p_global_max, 0) < 1 then
     return false;
   end if;
 
