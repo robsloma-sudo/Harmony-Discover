@@ -1,4 +1,4 @@
-import type { SegmentationInstance, SegmentationProvider, SegmentationSeed } from './segmentationEngine';
+import type { SegmentationInstance, SegmentationProvider } from './segmentationEngine';
 import { adaptDfineSegOnnxOutput } from './dfineSegAdapter';
 
 export type DfineOrtTensor = {
@@ -83,10 +83,8 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
     }
   }
 
-  async infer(frame: ImageData, seeds: SegmentationSeed[]): Promise<SegmentationInstance[]> {
-    if (this.disposed || seeds.length === 0) return [];
-    const timestamp = seeds[0]!.sourceTimestampMs;
-    if (!Number.isFinite(timestamp) || seeds.some(seed => Math.abs(seed.sourceTimestampMs - timestamp) > 200)) return [];
+  async infer(frame: ImageData, timestamp: number): Promise<SegmentationInstance[]> {
+    if (this.disposed || !Number.isFinite(timestamp)) return [];
 
     const input = preprocessDfineImage(frame, this.inputSize);
     const tensor = this.tensorFactory('float32', input, [1, 3, this.inputSize, this.inputSize]);
