@@ -243,7 +243,7 @@ begin
   if second_claimed.locked_by <> 'smoke-worker-2' or second_claimed.status <> 'processing' then
     raise exception 'second worker lock ownership was not recorded';
   end if;
-end $;
+end $$;
 
 -- Expired locks are reclaimable; a worker cannot claim an active lock twice.
 do $$
