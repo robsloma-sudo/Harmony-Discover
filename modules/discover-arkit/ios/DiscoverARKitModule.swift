@@ -39,9 +39,12 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
+      }
+      Prop("captureRequestId") { (view: DiscoverARView, requestId: Int) in
+        view.captureFrame(requestId)
       }
       AsyncFunction("pause") { (view: DiscoverARView) in
         view.setActive(false)
@@ -77,6 +80,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onRecognitionUpdate = EventDispatcher()
   let onDepthEstimate = EventDispatcher()
   let onDepthStatus = EventDispatcher()
+  let onCapturedImage = EventDispatcher()
+  private var lastCaptureRequestId = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
@@ -130,6 +135,37 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
     sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     onARReady(["state": "starting"])
+  }
+
+  /// Captures the current ARKit camera image from the same session used for tracking.
+  func captureFrame(_ requestId: Int) {
+    guard requestId > 0, requestId != lastCaptureRequestId else { return }
+    lastCaptureRequestId = requestId
+    guard isActive, let frame = sceneView.session.currentFrame else {
+      onARError(["message": "The shared AR camera is not ready to capture."])
+      return
+    }
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    let image = CIImage(cvPixelBuffer: frame.capturedImage).oriented(orientation)
+    let context = CIContext()
+    guard let cgImage = context.createCGImage(image, from: image.extent),
+          let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.88) else {
+      onARError(["message": "Could not encode the current AR camera frame."])
+      return
+    }
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("discover-camera-\(UUID().uuidString).jpg")
+    do {
+      try jpeg.write(to: url, options: .atomic)
+      onCapturedImage([
+        "uri": url.absoluteString,
+        "width": cgImage.width,
+        "height": cgImage.height,
+        "timestamp": frame.timestamp
+      ])
+    } catch {
+      onARError(["message": "Could not save the captured camera frame: \(error.localizedDescription)"])
+    }
   }
 
   public func session(_ session: ARSession, didUpdate frame: ARFrame) {
