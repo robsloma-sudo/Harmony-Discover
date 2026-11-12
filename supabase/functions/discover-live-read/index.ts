@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.7";
+const VERSION = "0.3.8";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
@@ -90,6 +90,23 @@ function headers(origin: string | null): Headers {
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
+const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+function hasUnmodeledSkuDifferentiator(b: Record<string, unknown>): boolean {
+  const details = (b.details && typeof b.details === "object" ? b.details : {}) as Record<string, unknown>;
+  // product_index cannot distinguish these package/release-level variants safely.
+  return [b.proof, b.size, details.vintage, details.package_size, details.sku,
+    details.barcode, details.upc_ean, details.batch, details.lot_code]
+    .some((value) => clean(value, 80).length > 0);
+}
+function hasStrongProductIdentity(b: Record<string, unknown>, match: { id: string | null; brand: string | null; product: string | null; category: string | null; score: number | null } | undefined): boolean {
+  const confidence = (b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : b.field_confidence) as Record<string, unknown> | undefined;
+  return !!match?.id && !!match.brand && !!match.product && !!match.category &&
+    (match.score ?? 0) >= 0.90 &&
+    unit(confidence?.brand) >= 0.90 && unit(confidence?.product) >= 0.90 &&
+    normalizeIdentity(match.brand) === normalizeIdentity(b.brand) &&
+    normalizeIdentity(match.product) === normalizeIdentity(b.product) &&
+    !hasUnmodeledSkuDifferentiator(b);
+}
 
 type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
 function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
@@ -313,7 +330,7 @@ Deno.serve(async (req: Request) => {
           }
           for (const key of ["brand", "product", "category", "proof", "size", "origin", ...DETAIL_KEYS]) {
             const value = key === "brand" ? b.brand : key === "product" ? b.product : key === "category" ? b.category : key === "proof" ? b.proof : key === "size" ? b.size : key === "origin" ? b.origin : (pickDetails(b)[key]);
-            if (value && out[key] === undefined) out[key] = unit(b.confidence);
+            if (value && out[key] === undefined && key !== "brand" && key !== "product") out[key] = unit(b.confidence);
           }
           return out;
         })(),
@@ -321,14 +338,13 @@ Deno.serve(async (req: Request) => {
     }).filter((b) => b.box.x1 > b.box.x0 && b.box.y1 > b.box.y0);
     const queries = list.map((b) => clean(`${b.brand} ${b.product}`, 120) || b.words.slice(0, 3).join(" "));
     const found = queries.length ? await match(queries) : [];
-    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      // A fuzzy result is not an identity proof. Require the returned catalogue brand
-      // to agree with the printed brand and require a real product/SKU row.
-      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
-        ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
+      // Brand-only or fuzzy expression similarity is retrieval evidence, not identity.
+      // Require independent high-confidence reads of brand + expression and an exact
+      // normalized match. Unmodeled SKU/package differentiators force a candidate state.
+      const hit = hasStrongProductIdentity(b, m)
+        ? { id: m!.id!, brand: m!.brand!, product: m!.product!, score: Math.round((m!.score ?? 0) * 100) / 100 }
         : null;
       const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
       return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
@@ -388,8 +404,7 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
+      const hit = hasStrongProductIdentity(b, m);
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
