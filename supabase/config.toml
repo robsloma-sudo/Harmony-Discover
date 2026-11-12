@@ -8,3 +8,7 @@ verify_jwt = false
 
 [functions.discover-live-read]
 verify_jwt = true
+
+[functions.discover-research-worker]
+# Authenticated by a dedicated server-only shared secret header.
+verify_jwt = false
