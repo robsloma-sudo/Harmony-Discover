@@ -68,3 +68,4 @@ jobs:
           test -s dist/index.html
           test -s dist/ort/ort-wasm-simd-threaded.wasm
           test -s dist/ort/ort-wasm-simd-threaded.mjs
+          grep -R -q --include='*.js' '/models/dfine_seg_n_coco.onnx' dist
