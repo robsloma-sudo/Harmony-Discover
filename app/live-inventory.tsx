@@ -35,7 +35,7 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
         <Pressable accessibilityRole="button" accessibilityLabel="Close inventory panel" onPress={onClose} style={s.close}><Text style={s.closeText}>×</Text></Pressable>
       </View>
       <View style={s.status}>
-        <View style={s.dot}/>
+        <View style={[s.dot,{backgroundColor:tracking?.state==='normal'?C.green:C.amber}]}/>
         <View style={{flex:1}}>
           <Text style={s.statusTitle}>SHARED CAMERA · {tracking?.state?.toUpperCase().replace('_',' ') || 'STARTING'}</Text>
           <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}{depthFrame ? ` · ${metricDepthSamples} metric depth samples` : ''}</Text>
