@@ -7,7 +7,7 @@ export type DiscoverVenue = {
   postal_code: string|null; latitude: number; longitude: number; distance_miles: number;
   hero_image_url: string|null; website_url: string|null; phone: string|null; verification_status: string;
 };
-export type VenueRadius = 1|5|10|25;
+export type VenueRadius = number;
 
 export async function findNearbyVenues(latitude:number, longitude:number, radius:VenueRadius, venueType?:string|null) {
   if (!DISCOVER_API_URL) throw new Error('Discover API is not configured.');
