@@ -45,6 +45,7 @@ export type SpatialTrack = {
   /** Most recent detector ID, retained for joining current-frame UI metadata. */
   sourceTrackId?: number;
   identityKey?: string;
+  categoryKey?: string;
   box?: ImageBox;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
@@ -224,6 +225,7 @@ export type WorldSpatialDetection = {
   confidence: number;
   /** Stable product/category evidence when available; normalized by caller. */
   identityKey?: string;
+  categoryKey?: string;
   /** Current normalized image-space box, used only as a weak tie-breaker. */
   box?: ImageBox;
 };
@@ -262,7 +264,7 @@ export function updateWorldSpatialTracks(
     let prior = activePrevious.find(track =>
       track.trackId === detection.trackId
       && !used.has(track.trackId)
-      && !(track.identityKey && detection.identityKey && track.identityKey !== detection.identityKey)
+      && !(track.categoryKey && detection.categoryKey && track.categoryKey !== detection.categoryKey)
     );
 
     // Detector IDs are only temporal 2D IDs. If they change, reassociate by
@@ -271,7 +273,7 @@ export function updateWorldSpatialTracks(
       let bestScore = Number.POSITIVE_INFINITY;
       for (const candidate of activePrevious) {
         if (used.has(candidate.trackId)) continue;
-        if (candidate.identityKey && detection.identityKey && candidate.identityKey !== detection.identityKey) continue;
+        if (candidate.categoryKey && detection.categoryKey && candidate.categoryKey !== detection.categoryKey) continue;
         const elapsed = Math.max(0, Math.min(2, (now - candidate.lastSeenAt) / 1000));
         const predicted = {
           x: candidate.position.x + candidate.velocity.x * elapsed,
@@ -285,10 +287,11 @@ export function updateWorldSpatialTracks(
         );
         if (distance > reassociationMeters) continue;
         const identityBonus = candidate.identityKey && candidate.identityKey === detection.identityKey ? 0.08 : 0;
+        const identityPenalty = candidate.identityKey && detection.identityKey && candidate.identityKey !== detection.identityKey ? 0.035 : 0;
         const boxPenalty = candidate.box && detection.box
           ? 0.04 * (1 - boxIoU(candidate.box, detection.box))
           : 0.02;
-        const score = distance - identityBonus + boxPenalty;
+        const score = distance - identityBonus + identityPenalty + boxPenalty;
         if (score < bestScore) {
           bestScore = score;
           prior = candidate;
@@ -306,6 +309,7 @@ export function updateWorldSpatialTracks(
         trackId: stableTrackId,
         sourceTrackId: detection.trackId,
         identityKey: detection.identityKey,
+        categoryKey: detection.categoryKey,
         box: detection.box,
         position: { x: detection.point.x, y: detection.point.y, z: detection.point.z },
         velocity: { x: 0, y: 0, z: 0 },
@@ -343,6 +347,7 @@ export function updateWorldSpatialTracks(
       trackId: prior.trackId,
       sourceTrackId: detection.trackId,
       identityKey: detection.identityKey ?? prior.identityKey,
+      categoryKey: detection.categoryKey ?? prior.categoryKey,
       box: detection.box ?? prior.box,
       position,
       velocity,
