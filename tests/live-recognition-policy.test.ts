@@ -21,6 +21,12 @@ describe("live recognition policy", () => {
     expect(shouldEnableLiveRecognition({ ...base, activePanel: "lidar" })).toBe(true);
   });
 
+  it("does not start live reads for the LiDAR panel on the web (LiDAR is native-only)", () => {
+    expect(shouldEnableLiveRecognition({ ...base, activePanel: "lidar", platform: "web" })).toBe(false);
+    expect(shouldEnableLiveRecognition({ ...base, activePanel: "lidar", platform: "ios" })).toBe(true);
+    expect(shouldEnableLiveRecognition({ ...base, activePanel: "lidar", platform: "web", scanMode: "bottle" })).toBe(true);
+  });
+
   it("stops recognition when camera permission is absent or a capture is under review", () => {
     expect(shouldEnableLiveRecognition({ ...base, cameraGranted: false, scanMode: "bottle" })).toBe(false);
     expect(shouldEnableLiveRecognition({ ...base, reviewingCapture: true, scanMode: "bottle" })).toBe(false);
