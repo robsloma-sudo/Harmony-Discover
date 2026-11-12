@@ -118,7 +118,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       }
       const canvas = canvasRef.current; if (!canvas) return;
       if (canvas.width !== EW) canvas.width = EW; if (canvas.height !== EH) canvas.height = EH;
-      const ctx = canvas.getContext('2d')!, out = ctx.createImageData(EW, EH), o = out.data;
+      const ctx = canvas.getContext('2d')!, out = ctx.createImageData(EW, EH), o = out.data;\n      // Carry the previously revealed passes forward instead of clearing their traces.\n      o.set(ctx.getImageData(0, 0, EW, EH).data);
       const shown = new Uint8Array(EH); let lastRow = -1, shownCount = 0; const t0 = performance.now();
       const tick = (now: number) => {
         if (!alive) return;
