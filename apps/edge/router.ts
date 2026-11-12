@@ -84,11 +84,11 @@ export async function handle(req: Request, deps: EdgeDeps): Promise<Response> {
     if (!atlas && !learning && !account && !observation) return fail(404, 'not_found');
 
     const subject = await deps.identify(req.headers.get('authorization') ?? undefined);
-    const limiter = atlas ? deps.atlas?.limiter : learning ? deps.learning.limiter : account ? deps.account.limiter : deps.observations?.limiter;
+    if (atlas && !deps.atlas) return fail(503, 'atlas_bridge_not_configured');
+    const limiter = atlas ? deps.atlas!.limiter : learning ? deps.learning.limiter : account ? deps.account.limiter : deps.observations?.limiter;
     if (!limiter || !(await limiter.allow(subject))) return fail(limiter ? 429 : 503, limiter ? 'rate_limited' : 'unavailable');
 
     if (atlas) {
-      if (!deps.atlas) return fail(503, 'atlas_bridge_not_configured');
       const url = new URL(req.url);
       const latitude = Number(url.searchParams.get('latitude'));
       const longitude = Number(url.searchParams.get('longitude'));
