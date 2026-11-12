@@ -60,3 +60,37 @@ export async function fetchPhgAtlasDataset(
   if(!payload||payload.dataset!==dataset||!Array.isArray(payload.records)) throw new Error('PHG Atlas bridge returned an invalid response.');
   return payload as PhgAtlasPage;
 }
+
+
+/** Convert PHG license and brewery records into the existing Atlas map model. */
+export async function findNearbyPhgAtlasVenues(latitude:number,longitude:number,radius:VenueRadius,venueType?:string|null):Promise<DiscoverVenue[]> {
+  const latDelta=radius/69;
+  const lngDelta=radius/(69*Math.max(Math.cos(latitude*Math.PI/180),0.15));
+  const bounds={minLat:Math.max(-90,latitude-latDelta),maxLat:Math.min(90,latitude+latDelta),minLng:Math.max(-180,longitude-lngDelta),maxLng:Math.min(180,longitude+lngDelta)};
+  const datasets:PhgAtlasDataset[] = venueType==='brewery'?['breweries']:venueType==='bar'||venueType==='cocktail_bar'||venueType==='restaurant'?['licenses']:['licenses','breweries'];
+  const pages=await Promise.all(datasets.map(dataset=>fetchPhgAtlasDataset(dataset,{limit:250,bounds})));
+  const result:DiscoverVenue[]=[];
+  for(const page of pages){
+    for(const row of page.records){
+      const isLicense=page.dataset==='licenses';
+      const lat=Number(isLicense?row.latitude:row.latitude);
+      const lng=Number(row.longitude);
+      if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat < bounds.minLat||lat > bounds.maxLat||lng < bounds.minLng||lng > bounds.maxLng) continue;
+      if(isLicense && row.on_premise!==true) continue;
+      const name=String(isLicense?row.business_name??'Unnamed license':row.name??'Unnamed brewery');
+      const type:DiscoverVenue['venue_type']=isLicense?(String(row.license_type||'').toLowerCase().includes('restaurant')?'restaurant':'bar'):'brewery';
+      if(venueType && venueType!==type && !(venueType==='cocktail_bar'&&type==='bar')) continue;
+      const miles=111*Math.sqrt((latitude-lat)**2+Math.pow((longitude-lng)*Math.cos(latitude*Math.PI/180),2));
+      result.push({
+        id:`${page.dataset}:${String(isLicense?row.state+'-'+row.license_no:row.obdb_id)}`,
+        name,venue_type:type,description:isLicense?String(row.license_type||'Liquor license'):String(row.brewery_type||'Brewery'),
+        address_line:isLicense?String(row.address||''):String(row.street||''),
+        locality:String(row.city||''),region:String(row.state||''),postal_code:String(row.zip||row.postal_code||''),
+        latitude:lat,longitude:lng,distance_miles:Number(miles.toFixed(2)),
+        hero_image_url:null,website_url:isLicense?null:String(row.website_url||'')||null,
+        phone:isLicense?null:String(row.phone||'')||null,verification_status:isLicense?String(row.status||'unknown'):'source-listed'
+      });
+    }
+  }
+  return result.sort((a,b)=>a.distance_miles-b.distance_miles).slice(0,250);
+}
