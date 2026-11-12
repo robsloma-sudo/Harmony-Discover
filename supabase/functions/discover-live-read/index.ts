@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.4";
+const VERSION = "0.3.5";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
@@ -142,6 +142,64 @@ async function readFrame(key: string, model: string, b64: string) {
   return { ok: r.ok, status: r.status, j };
 }
 
+
+const ENRICHMENT_TOOL = {
+  name: "bottle_enrichment",
+  description: "Return only missing product facts supported by the web search results for the exact beverage expression.",
+  input_schema: {
+    type: "object", required: ["fields", "sources"],
+    properties: {
+      fields: { type: "object", description: "Only missing fields supported by the sources. Use field names from DETAILS. Never overwrite a value read from the physical label.", additionalProperties: { type: "string" } },
+      field_confidence: { type: "object", description: "0 to 1 confidence for each researched field, considering exact expression match and source quality.", additionalProperties: { type: "number" } },
+      sources: { type: "array", maxItems: 8, items: { type: "object", required: ["url","title","supports"], properties: {
+        url: { type: "string" }, title: { type: "string" }, supports: { type: "array", items: { type: "string" } }, source_type: { type: "string", enum: ["manufacturer","distillery","winery","brand_owner","regulator","gs1","retailer","reference"] }
+      } } }
+    }
+  }
+};
+
+async function researchBottle(key: string, model: string, bottle: Record<string, unknown>) {
+  const details = (bottle.details && typeof bottle.details === "object" ? bottle.details : {}) as Record<string, unknown>;
+  const known = {
+    brand: bottle.brand, product: bottle.product, category: bottle.category, proof: bottle.proof,
+    size: bottle.size, origin: bottle.origin, ...details
+  };
+  const missing = DETAIL_KEYS.filter(k => !clean(details[k], 80));
+  if (!clean(bottle.brand,80) || !missing.length) return { details: {}, fieldConfidence: {}, sources: [] };
+  const query = [bottle.brand, bottle.product, bottle.category, bottle.proof, bottle.size].filter(Boolean).join(" ");
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model, max_tokens: 2600,
+      system: "You are a product research assistant for a beverage catalog. Use live web search. Find the exact product expression, not merely the brand or a similar SKU. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources. Use retailers and reference sources only as secondary corroboration. Never invent facts. Never return a field unless a source explicitly supports it for this exact product. Do not overwrite facts already read from the physical label. If identity is ambiguous, return empty fields. Preserve source URLs and map each field to its supporting sources. Product marketing copy is not technical fact.",
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }, ENRICHMENT_TOOL],
+      tool_choice: { type: "tool", name: "bottle_enrichment" },
+      messages: [{ role: "user", content: "Research missing product facts for this exact bottle.\nIDENTITY: " + JSON.stringify(known) + "\nMISSING FIELDS: " + missing.join(", ") + "\nSearch query: " + query + "\nReturn only exact-expression facts with source URLs and field confidence. If exact match cannot be proven, leave fields empty." }]
+    })
+  });
+  const j = await response.json().catch(() => ({}));
+  if (!response.ok) return { details: {}, fieldConfidence: {}, sources: [] };
+  const block = (Array.isArray(j.content) ? j.content : []).find((x: Record<string, unknown>) => x.type === "tool_use" && x.name === "bottle_enrichment");
+  const input = (block?.input && typeof block.input === "object" ? block.input : {}) as Record<string, unknown>;
+  const rawFields = (input.fields && typeof input.fields === "object" ? input.fields : {}) as Record<string, unknown>;
+  const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
+  const allowed = new Set(missing);
+  const enriched: Record<string,string> = {};
+  const scores: Record<string,number> = {};
+  for (const [field,value] of Object.entries(rawFields)) {
+    const score = unit(rawScores[field]);
+    const v = clean(value, 240);
+    if (allowed.has(field) && v && score >= 0.78) { enriched[field] = v; scores[field] = score; }
+  }
+  const sources = (Array.isArray(input.sources) ? input.sources : []).slice(0,8).map((s: Record<string,unknown>) => ({
+    url: clean(s.url,500), title: clean(s.title,180),
+    supports: (Array.isArray(s.supports) ? s.supports : []).map(x=>clean(x,80)).filter(Boolean).slice(0,12),
+    source_type: clean(s.source_type,30)
+  })).filter(s => /^https:\/\//.test(s.url));
+  return { details: enriched, fieldConfidence: scores, sources };
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin");
   if (!originAllowed(origin)) return reply({ error: "origin_not_allowed" }, 403);
@@ -226,8 +284,19 @@ Deno.serve(async (req: Request) => {
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
       const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
-      return { ...b, match: hit, state };
+      return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
     });
+    await Promise.all(bottles.map(async (b) => {
+      if (b.state === "unsure" || !b.brand) return;
+      try { b.research = await researchBottle(anthropicKey, model, b); }
+      catch { b.research = { details: {}, fieldConfidence: {}, sources: [] }; }
+    }));
+    for (const b of bottles) {
+      if (!b.research) continue;
+      b.details = { ...b.details, ...b.research.details };
+      b.fieldConfidence = { ...b.fieldConfidence, ...b.research.fieldConfidence };
+      (b as Record<string, unknown>).research_sources = b.research.sources;
+    }
     const mraw = (input?.menu && typeof input.menu === "object" ? input.menu : {}) as Record<string, unknown>;
     const items = (Array.isArray(mraw.items) ? mraw.items as Array<Record<string, unknown>> : []).slice(0, 40)
       .map((x) => ({ name: clean(x.name, 120), price: clean(x.price, 30), type: clean(x.type, 20) || "other" })).filter((x) => x.name);
@@ -271,7 +340,7 @@ Deno.serve(async (req: Request) => {
       const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
-        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
+        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: (b as Record<string, unknown>).research_sources || [] }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
     const { error } = await db.from("bottle_sightings").insert(rows);
