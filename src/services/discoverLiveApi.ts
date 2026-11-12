@@ -38,8 +38,8 @@ export type MenuGlimpse = { visible: boolean; title: string; box?: { x0: number;
 export type LiveRead = { bottles: BottleRead[]; menu: MenuGlimpse; diagnostics: { version: string; model: string; providerMs: number; bottlesReturned: number; bottlesConfident: number; bottlesMatched: number } };
 
 /** One camera frame (JPEG, base64) in; every readable bottle label and any menu in view out. Nothing is stored. */
-export async function readLiveFrame(jpegBase64: string): Promise<LiveRead> {
-  const result = await call({ action: 'frame', image: jpegBase64 });
+export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fine_print' = 'standard'): Promise<LiveRead> {
+  const result = await call({ action: 'frame', image: jpegBase64, focus });
   const menu = result.menu && typeof result.menu === 'object' ? result.menu as MenuGlimpse : { visible: false, title: '', items: [] };
   const bottles = Array.isArray(result.bottles) ? result.bottles.map((b: Record<string, unknown>) => ({ ...b, researchSources: Array.isArray(b.research_sources) ? b.research_sources : [] })) as BottleRead[] : [];
   const d = result.diagnostics && typeof result.diagnostics === 'object' ? result.diagnostics : {};
