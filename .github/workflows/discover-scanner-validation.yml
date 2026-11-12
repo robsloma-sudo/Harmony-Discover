@@ -18,6 +18,7 @@ on:
     branches:
       - release/scanner-settings-mainline-2026-11-11
       - fix/spatial-frame-sync-2026-11-12
+      - feat/phase4-web-camera-segmentation
   workflow_dispatch:
 
 permissions:
@@ -56,7 +57,7 @@ jobs:
         run: npm run typecheck
 
       - name: Run scanner unit tests
-        run: npx vitest run tests/live-recognition-policy.test.ts tests/overlay-track-association.test.ts tests/spatial-bottle-tracker.test.ts tests/patch-motion-tracker.test.ts tests/tracked-bottle-registry.test.ts tests/mask-contour.test.ts tests/contour-geometry.test.ts tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts tests/bottle-identity-gate.test.ts
+        run: npx vitest run tests/live-recognition-policy.test.ts tests/overlay-track-association.test.ts tests/spatial-bottle-tracker.test.ts tests/patch-motion-tracker.test.ts tests/tracked-bottle-registry.test.ts tests/mask-contour.test.ts tests/contour-geometry.test.ts tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts tests/dfine-seg-runtime.test.ts tests/bottle-identity-gate.test.ts
 
       - name: Export web build
         run: npm run build:web
