@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.6";
+const VERSION = "0.3.7";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
@@ -116,6 +116,13 @@ const TOOL = {
         properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } } },
       label_box: { type: "object", description: "tight box around the main paper, foil, or sticker label on this bottle, as fractions of the full image (0 to 1); omit if no label boundary is visible",
         properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } } },
+      edge_paths: { type: "array", maxItems: 48, description: "Visible edge polylines for this bottle, in normalized full-image coordinates. Trace observed image boundaries only; do not invent hidden edges. Classify hard structural boundaries, paper/label boundaries, and fine printed strokes separately. Points should follow the visible contour in order.", items: {
+        type: "object", required: ["kind","points","confidence"], properties: {
+          kind: { type: "string", enum: ["hard","label","print"] },
+          points: { type: "array", minItems: 2, maxItems: 32, items: { type: "object", required: ["x","y"], properties: { x: { type: "number" }, y: { type: "number" } } } },
+          confidence: { type: "number", description: "0 to 1 confidence that this edge is visibly present in the image" }
+        }
+      } },
       label_words: { type: "array", maxItems: 8, items: { type: "string" }, description: "the main words printed on the label, largest first, exactly as printed" },
       brand: { type: "string", description: "brand name exactly as printed on the label; empty if it cannot be read" },
       product: { type: "string", description: "expression or product name as printed (e.g. Blanco, Reposado, Single Barrel); empty if none" },
@@ -130,7 +137,7 @@ const TOOL = {
     } } } },
   },
 };
-const SYSTEM = "You read one photo taken in a bar, shop or restaurant: bottle labels (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true, return a tight box around the visible paper/menu card when its boundary is visible, and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. For each bottle with a visible label return a tight box around the whole bottle, a separate tight label_box around the paper/foil/sticker label if its boundary is visible, and ONLY what is printed on that label. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Return an independent field_confidence score for every populated field; a low-confidence value must be left empty rather than guessed. Distinguish exact product expression from brand, producer, distillery, bottler, category, legal class, style, appellation, region, origin, package size and SKU/barcode. Extract all legible label and package facts, including bottling/distillation/harvest/disgorgement dates, mash bill/grain/agave, cask/barrel, lot/batch, vineyard/estate, dosage/residual sugar, importer, awards, organic claims and package material when printed or visibly identifiable. Do not infer a SKU or barcode from a product match. Skip glasses, glassware, taps, people, tables, shelves, background objects and bottles facing away. Never return boxes for anything except a bottle and its own label. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. If no labelled bottle is visible return an empty bottles list. Always call the bottles tool.";
+const SYSTEM = "You read one photo taken in a bar, shop or restaurant: bottle labels (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true, return a tight box around the visible paper/menu card when its boundary is visible, and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. For each bottle with a visible label return a tight box around the whole bottle, a separate tight label_box around the paper/foil/sticker label if its boundary is visible, and ONLY what is printed on that label. Also return edge_paths: short ordered polylines following ONLY visible image edges, with normalized full-image x/y coordinates and a confidence score. Use kind=hard for glass/wood/metal/container silhouette and other strong structural boundaries, kind=label for paper/foil/sticker boundaries and fine material edges, and kind=print for visible fine text strokes. Split paths at occlusions or uncertain gaps. Never draw an edge merely because a bottle is expected to be symmetrical; do not invent hidden or obscured geometry. A line should track a visible intensity/color boundary, not a conceptual object outline. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Return an independent field_confidence score for every populated field; a low-confidence value must be left empty rather than guessed. Distinguish exact product expression from brand, producer, distillery, bottler, category, legal class, style, appellation, region, origin, package size and SKU/barcode. Extract all legible label and package facts, including bottling/distillation/harvest/disgorgement dates, mash bill/grain/agave, cask/barrel, lot/batch, vineyard/estate, dosage/residual sugar, importer, awards, organic claims and package material when printed or visibly identifiable. Do not infer a SKU or barcode from a product match. Skip glasses, glassware, taps, people, tables, shelves, background objects and bottles facing away. Never return boxes for anything except a bottle and its own label. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. If no labelled bottle is visible return an empty bottles list. Always call the bottles tool.";
 
 async function readFrame(key: string, model: string, b64: string, focus: string = "standard") {
   const instruction = focus === "fine_print"
@@ -259,6 +266,14 @@ Deno.serve(async (req: Request) => {
       return {
         box: { x0: unit(bx.x0), y0: unit(bx.y0), x1: unit(bx.x1), y1: unit(bx.y1) },
         label_box: Number.isFinite(Number(lb.x0)) && Number.isFinite(Number(lb.y0)) && Number.isFinite(Number(lb.x1)) && Number.isFinite(Number(lb.y1)) ? { x0: unit(lb.x0), y0: unit(lb.y0), x1: unit(lb.x1), y1: unit(lb.y1) } : null,
+        edgePaths: (() => {
+          const paths = Array.isArray(b.edge_paths) ? b.edge_paths.slice(0,48) : [];
+          return paths.map((path: Record<string, unknown>) => {
+            const kind = ["hard","label","print"].includes(String(path.kind)) ? String(path.kind) : "";
+            const points = (Array.isArray(path.points) ? path.points : []).slice(0,32).map((p: Record<string,unknown>) => ({ x: unit(p.x), y: unit(p.y) }));
+            return { kind, points, confidence: unit(path.confidence) };
+          }).filter((path: {kind:string;points:Array<{x:number;y:number}>;confidence:number}) => path.kind && path.points.length >= 2 && path.confidence >= 0.45);
+        })(),
         words: (Array.isArray(b.label_words) ? b.label_words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8),
         brand: clean(b.brand, 80), product: clean(b.product, 80),
         category: CATEGORIES.includes(String(b.category)) ? String(b.category) : "other",
