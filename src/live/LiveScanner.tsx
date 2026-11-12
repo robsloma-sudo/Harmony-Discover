@@ -95,35 +95,7 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
   {waitingForRead&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:waitingBeamY}]}]}/>}
   {showTrace&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:beamY}]}]}/>}
   {showTrace&&edgeSegments.map(segment=><View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',opacity:segment.inferred?0.72:0.96,borderStyle:segment.inferred?'dashed':'solid'}]}/>)}
-  {showTrace&&<>
-   <View pointerEvents="none" style={[s.bottleTrace,bottleFrame]}>
-    <Animated.View style={[s.traceNeckTop,{opacity:hardProgress.interpolate({inputRange:[0,.10,.18,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.traceNeckLeft,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.08,.20,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceNeckRight,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.08,.20,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceShoulderLeft,{transform:[{scaleX:hardProgress.interpolate({inputRange:[0,.18,.36,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceShoulderRight,{transform:[{scaleX:hardProgress.interpolate({inputRange:[0,.30,.48,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceBodyLeft,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.38,.62,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceBodyRight,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.50,.74,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceBase,{transform:[{scaleX:hardProgress.interpolate({inputRange:[0,.68,.88,1],outputRange:[0,0,1,1]})}]}]}/>
-   </View>
-   {showLabel&&<View pointerEvents="none" style={[s.labelTrace,{left:(x0*100+width*18)+'%',top:(y0*100+height*39)+'%',width:(width*64)+'%',height:(height*31)+'%'}]}>
-    <Animated.View style={[s.labelTop,{transform:[{scaleX:labelProgress.interpolate({inputRange:[0,.05,.30,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.labelRight,{transform:[{scaleY:labelProgress.interpolate({inputRange:[0,.25,.52,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.labelBottom,{transform:[{scaleX:labelProgress.interpolate({inputRange:[0,.48,.76,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.labelLeft,{transform:[{scaleY:labelProgress.interpolate({inputRange:[0,.70,.96,1],outputRange:[0,0,1,1]})}]}]}/>
-   </View>}
-   {showPrint&&<View pointerEvents="none" style={[s.printTrace,{left:(x0*100+width*19)+'%',top:(y0*100+height*43)+'%',width:(width*62)+'%'}]}>
-    <Animated.View style={[s.printLine,{opacity:printProgress.interpolate({inputRange:[0,.10,.34,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.printLine,{opacity:printProgress.interpolate({inputRange:[0,.36,.62,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.printLine,{opacity:printProgress.interpolate({inputRange:[0,.64,.90,1],outputRange:[0,0,1,1]})}]}/>
-   </View>}
-   {stage===4&&<View pointerEvents="none" style={[s.closureTrace,bottleFrame]}>
-    <Animated.View style={[s.closeNeckShoulder,{opacity:closeProgress.interpolate({inputRange:[0,.18,.40,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.closeShoulderBody,{opacity:closeProgress.interpolate({inputRange:[0,.34,.58,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.closeBaseJoin,{opacity:closeProgress.interpolate({inputRange:[0,.54,.78,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.closeLabelJoin,{opacity:closeProgress.interpolate({inputRange:[0,.72,.94,1],outputRange:[0,0,1,1]})}]}/>
-   </View>}
-  </>}
+  {showTrace&&edgeSegments.map(segment=><View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',opacity:segment.inferred?0.72:0.96,borderStyle:segment.inferred?'dashed':'solid'}]}/>)}
 
   <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING FINE PRINT':stage===4?'4 · CLOSING BOTTLE GEOMETRY':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
