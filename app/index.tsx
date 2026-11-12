@@ -1,11 +1,14 @@
 import { useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
+import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
+import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
+import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
 import { MartyPanel } from '../src/home-panels/MartyPanel';
@@ -17,7 +20,6 @@ import { PreviewPanel } from './preview';
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
 export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'settings'|'collection'|'taste' } = {}) {
-  const camera = useRef<CameraView>(null);
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const { addPages, appendPages, pages } = useScan();
@@ -25,7 +27,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
   const [capturing, setCapturing] = useState(false);
-  const [flashEnabled, setFlashEnabled] = useState(false);
+  const [captureRequestId, setCaptureRequestId] = useState(0);
+  const pendingCapture = useRef<'scan'|'menu_page'|null>(null);
+  const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
+  const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
+  const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
+  const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
+  const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
+  const [liveReadAt, setLiveReadAt] = useState<number | null>(null);
   const [cameraMessage, setCameraMessage] = useState('');
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
@@ -81,11 +91,24 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const addMenuPages = async () => {
     const remaining = Math.max(0, 12 - pages.length);
     if (!remaining) { setCameraMessage('This menu scan has reached the 12-page limit.'); return; }
-    try {
-      const photo = await camera.current?.takePictureAsync({ quality: 0.88 });
-      if (photo?.uri) appendPages([photo.uri], 'camera');
-      else setCameraMessage('The viewfinder could not capture another menu page.');
-    } catch { setCameraMessage('Could not capture another menu page. Please try again.'); }
+    pendingCapture.current = 'menu_page';
+    setCaptureRequestId(value => value + 1);
+  };
+
+  const handleCapturedImage = (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => {
+    const uri = event.nativeEvent.uri;
+    const kind = pendingCapture.current;
+    pendingCapture.current = null;
+    setCapturing(false);
+    if (!uri || !kind) return;
+    if (kind === 'menu_page') {
+      appendPages([uri], 'camera');
+      setCameraMessage('MENU PAGE CAPTURED');
+      return;
+    }
+    if (scanMode === 'menu') addPages([uri], 'camera');
+    setScanSource('camera');
+    setScanPhotos([uri]);
   };
 
   const capture = async () => {
@@ -96,14 +119,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       if (!result.granted) setCameraMessage('Camera access is needed to capture.');
       return;
     }
-    try {
-      setCapturing(true);
-      setCameraMessage('');
-      const photo = await camera.current?.takePictureAsync({ quality: 0.85 });
-      if (photo?.uri) { if (scanMode === 'menu') addPages([photo.uri], 'camera'); setScanSource('camera'); setScanPhotos([photo.uri]); }
-      else setCameraMessage('The camera did not return an image. Try again.');
-    } catch { setCameraMessage('Could not capture this image. Please try again.'); }
-    finally { setCapturing(false); }
+    setCapturing(true);
+    setCameraMessage('');
+    pendingCapture.current = 'scan';
+    setCaptureRequestId(value => value + 1);
   };
 
   const openGallery = async () => {
@@ -122,7 +141,22 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   return (
     <View style={s.root}>
       {permission.granted ? (
-        <CameraView ref={camera} style={StyleSheet.absoluteFill} facing="back" flash={flashEnabled ? "on" : "off"} />
+        <DiscoverARSurface
+          style={StyleSheet.absoluteFill}
+          active={!!permission.granted && !scanPhotos}
+          captureRequestId={captureRequestId}
+          onCapturedImage={handleCapturedImage}
+          onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
+          onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
+          onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
+          onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates)}
+          onRecognitionUpdate={event => {
+            const value = event.nativeEvent;
+            if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
+            if (value.menu) setLiveMenu(value.menu);
+          }}
+          onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
+        />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.permissionFallback]}>
           <View style={s.permissionCard}>
@@ -150,7 +184,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <View style={s.centerControls}>
             <Pressable accessibilityRole="button" accessibilityLabel="Choose photos from gallery" style={[s.primaryControl, s.primaryControlHalf]} onPress={openGallery}><Ionicons name="images-outline" size={compactDock ? 11 : 12} color={C.ivory} /></Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel={capturing ? 'Capturing scan' : scanMode === 'menu' ? 'Capture menu page' : scanMode === 'bottle' ? 'Capture bottle' : 'Capture scan'} disabled={capturing} style={[s.shutterOuter, compactDock && s.shutterOuterCompact, capturing && s.shutterBusy]} onPress={capture}><View style={[s.shutterInner, compactDock && s.shutterInnerCompact]}>{capturing && <Text style={s.shutterBusyText}>…</Text>}</View></Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={flashEnabled ? 'Turn flash off' : 'Turn flash on'} style={[s.primaryControl, s.primaryControlHalf, flashEnabled && s.primaryControlActive]} onPress={() => setFlashEnabled(v => !v)}><Ionicons name="flash" size={compactDock ? 11 : 12} color={flashEnabled ? C.brass : C.ivory} /></Pressable>
+
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => setSettingsOpen(v => !v)}><Ionicons name="settings-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
@@ -158,7 +192,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       </View>
       {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} mode={scanMode} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
       {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
-      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
+      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} menu={liveMenu} lastReadAt={liveReadAt} /></View>}
       {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:31,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:activePanel==='lidar'?'86%':undefined,maxHeight:activePanel==='lidar'?'88%':'78%',padding:activePanel==='lidar'?12:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
@@ -167,7 +201,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
           {activePanel!=='lidar' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='nearby'?'Discover places around you':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
-          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)}/> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
           {activePanel==='marty' && martyConsentOpen && <>
             <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
             <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
