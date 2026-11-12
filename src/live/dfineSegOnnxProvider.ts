@@ -139,3 +139,34 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
     await this.session.release?.();
   }
 }
+
+
+export type DfineOrtRuntime = {
+  Tensor: new (type: 'float32', data: Float32Array, dims: number[]) => unknown;
+  InferenceSession: {
+    create(
+      model: string | ArrayBuffer | Uint8Array,
+      options: { executionProviders: string[] },
+    ): Promise<DfineOrtSession>;
+  };
+};
+
+/**
+ * Creates a WASM-first provider from an injected ONNX Runtime Web module and
+ * a model URL or byte buffer. The app is responsible for loading the runtime
+ * module and fetching/verifying model bytes before calling this function.
+ */
+export async function createDfineSegOnnxProvider(
+  runtime: DfineOrtRuntime,
+  model: string | ArrayBuffer | Uint8Array,
+  options: DfineOnnxProviderOptions = {},
+): Promise<DfineSegOnnxProvider> {
+  const session = await runtime.InferenceSession.create(model, {
+    executionProviders: ['wasm'],
+  });
+  return new DfineSegOnnxProvider(
+    session,
+    (type, data, dims) => new runtime.Tensor(type, data, dims),
+    options,
+  );
+}
