@@ -185,6 +185,7 @@ jobs:
             echo "Model asset already current; no commit needed."
           else
             git commit -m "chore(discover): add D-FINE-seg N prototype model"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
