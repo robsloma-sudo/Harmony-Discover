@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
-import { CameraView, type BarcodeScanningResult } from 'expo-camera';
+import { CameraView, type CameraViewRef } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
@@ -16,6 +16,8 @@ export type ARKitDepthFrame = { width: number; height: number; sourceWidth: numb
 
 type NativeProps = ViewProps & {
   active?: boolean;
+  captureRequestId?: number;
+  onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
@@ -41,10 +43,29 @@ if (Platform.OS === 'ios') {
  * video frame is playing.
  */
 function WebLiveCamera(props: NativeProps) {
-  const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError } = props;
+  const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus };
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage };
+
+  useEffect(() => {
+    if (!captureRequestId || !active) return;
+    const video = videoRef.current;
+    if (!video || video.videoWidth < 2 || video.videoHeight < 2) {
+      callbacksRef.current.onARError?.({ nativeEvent: { message: 'The live camera is not ready to capture yet.' } });
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      callbacksRef.current.onARError?.({ nativeEvent: { message: 'The camera frame could not be captured.' } });
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    callbacksRef.current.onCapturedImage?.({ nativeEvent: { uri: canvas.toDataURL('image/jpeg', 0.88), width: canvas.width, height: canvas.height, timestamp: Date.now() } });
+  }, [captureRequestId, active]);
 
   useEffect(() => {
     if (!active) {
@@ -273,8 +294,26 @@ function WebLiveCamera(props: NativeProps) {
   );
 }
 
+function FallbackNativeCamera(props: NativeProps) {
+  const cameraRef = useRef<CameraView>(null);
+  const lastRequest = useRef(0);
+  useEffect(() => {
+    if (!props.active || !props.captureRequestId || props.captureRequestId === lastRequest.current) return;
+    lastRequest.current = props.captureRequestId;
+    let cancelled = false;
+    void cameraRef.current?.takePictureAsync({ quality: 0.88 }).then(photo => {
+      if (!cancelled && photo?.uri) props.onCapturedImage?.({ nativeEvent: { uri: photo.uri, width: photo.width, height: photo.height, timestamp: Date.now() } });
+      else if (!cancelled) props.onARError?.({ nativeEvent: { message: 'The camera did not return an image.' } });
+    }).catch(error => {
+      if (!cancelled) props.onARError?.({ nativeEvent: { message: error instanceof Error ? error.message : 'Camera capture failed.' } });
+    });
+    return () => { cancelled = true; };
+  }, [props.active, props.captureRequestId]);
+  return <CameraView ref={cameraRef} style={props.style} facing="back" />;
+}
+
 export function DiscoverARSurface(props: NativeProps) {
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
-  if (!NativeARView) return <View {...props} />;
+  if (!NativeARView) return <FallbackNativeCamera {...props} />;
   return <NativeARView {...props} />;
 }
