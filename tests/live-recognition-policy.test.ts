@@ -4,8 +4,8 @@ import { shouldEnableLiveRecognition } from "../src/live/recognitionPolicy";
 describe("live recognition policy", () => {
   const base = { cameraGranted: true, reviewingCapture: false, scanMode: "auto" as const, activePanel: null };
 
-  it("does not send paid recognition frames for a camera preview alone", () => {
-    expect(shouldEnableLiveRecognition(base)).toBe(false);
+  it("starts guarded live recognition automatically on the camera viewfinder", () => {
+    expect(shouldEnableLiveRecognition(base)).toBe(true);
   });
 
   it("enables recognition after an explicit bottle scan selection", () => {
@@ -16,9 +16,14 @@ describe("live recognition policy", () => {
     expect(shouldEnableLiveRecognition({ ...base, scanMode: "menu" })).toBe(true);
   });
 
-  it("enables recognition while inventory or LiDAR diagnostics are open", () => {
+  it("keeps recognition on for inventory and native LiDAR diagnostics", () => {
     expect(shouldEnableLiveRecognition({ ...base, activePanel: "inventory" })).toBe(true);
-    expect(shouldEnableLiveRecognition({ ...base, activePanel: "lidar" })).toBe(true);
+    expect(shouldEnableLiveRecognition({ ...base, activePanel: "lidar", platform: "ios" })).toBe(true);
+  });
+
+  it("pauses background recognition while unrelated utility panels are open", () => {
+    expect(shouldEnableLiveRecognition({ ...base, activePanel: "nearby" })).toBe(false);
+    expect(shouldEnableLiveRecognition({ ...base, activePanel: "settings" })).toBe(false);
   });
 
   it("does not start live reads for the LiDAR panel on the web (LiDAR is native-only)", () => {
