@@ -30,7 +30,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   /** Web only: enable relative depth inference only on screens that consume it. */
   browserDepth?: boolean;
@@ -219,6 +219,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter((track): track is WebTrack => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
+          source: 'local',
           candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })),
         } });
       } catch {
@@ -289,7 +290,7 @@ function WebLiveCamera(props: NativeProps) {
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, candidates: trackedCandidates } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', candidates: trackedCandidates } });
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
@@ -606,7 +607,7 @@ export function DiscoverARSurface(props: NativeProps) {
         } });
         const tracked = trackNativeBottleReads(result.bottles);
         setTrackingSeeds(tracked.map((track, index) => ({ ...track, sourceTimestamp: frame.timestamp })));
-        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
+        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, source: 'cloud', candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
       }).catch(error => {
         props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
       }).finally(() => { nativeFrameReadBusy = false; });
