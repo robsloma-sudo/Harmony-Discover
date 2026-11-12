@@ -14,7 +14,7 @@ export type LiveRecognitionIntent = {
  */
 export function shouldEnableLiveRecognition(intent: LiveRecognitionIntent): boolean {
   if (!intent.cameraGranted || intent.reviewingCapture) return false;
-  if (intent.activePanel === 'lidar' && intent.platform === 'web') return false;
-  if (intent.activePanel && intent.activePanel !== 'inventory') return false;
+  if (intent.activePanel === 'lidar' && intent.platform === 'web') return intent.scanMode !== 'auto';
+  if (intent.activePanel && intent.activePanel !== 'inventory' && intent.activePanel !== 'lidar' && intent.scanMode === 'auto') return false;
   return true;
 }
