@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.5";
+const VERSION = "0.3.6";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
@@ -286,17 +286,6 @@ Deno.serve(async (req: Request) => {
       const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
       return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
     });
-    await Promise.all(bottles.map(async (b) => {
-      if (b.state === "unsure" || !b.brand) return;
-      try { b.research = await researchBottle(anthropicKey, model, b); }
-      catch { b.research = { details: {}, fieldConfidence: {}, sources: [] }; }
-    }));
-    for (const b of bottles) {
-      if (!b.research) continue;
-      b.details = { ...b.details, ...b.research.details };
-      b.fieldConfidence = { ...b.fieldConfidence, ...b.research.fieldConfidence };
-      (b as Record<string, unknown>).research_sources = b.research.sources;
-    }
     const mraw = (input?.menu && typeof input.menu === "object" ? input.menu : {}) as Record<string, unknown>;
     const items = (Array.isArray(mraw.items) ? mraw.items as Array<Record<string, unknown>> : []).slice(0, 40)
       .map((x) => ({ name: clean(x.name, 120), price: clean(x.price, 30), type: clean(x.type, 20) || "other" })).filter((x) => x.name);
@@ -331,10 +320,26 @@ Deno.serve(async (req: Request) => {
         proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {}, research_sources: Array.isArray(b.research_sources) ? b.research_sources : [] }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
-    const queries = incoming.map((b) => clean(`${b.brand} ${b.product}`, 120));
+    // Research only on an explicit save, never on every live camera frame.
+    // Cap per-save research to keep latency and third-party search spend predictable.
+    const enriched = await Promise.all(incoming.map(async (b, index) => {
+      if (index >= 5 || !b.brand) return b;
+      try {
+        const research = await researchBottle(anthropicKey, MODEL, b);
+        return {
+          ...b,
+          details: { ...b.details, ...research.details },
+          field_confidence: { ...(b.field_confidence as Record<string,number> || {}), ...research.fieldConfidence },
+          research_sources: research.sources,
+        };
+      } catch {
+        return b;
+      }
+    }));
+    const queries = enriched.map((b) => clean(`${b.brand} ${b.product}`, 120));
     const found = await match(queries);   // matched again on the server; the browser's ids are never trusted
     const venue = clean(body.venue_name, 120) || null;
-    const rows = incoming.map((b, i) => {
+    const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
       const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
       const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
