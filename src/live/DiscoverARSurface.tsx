@@ -4,6 +4,7 @@ import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
+import { sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -97,6 +98,9 @@ function WebLiveCamera(props: NativeProps) {
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
+    let lastSentFrameSignature: Uint8Array | null = null;
+    let lastLiveReadAt = 0;
+    const unchangedFrameHeartbeatMs = 30_000;
     let pageVisible = document.visibilityState === 'visible';
     const handleVisibilityChange = () => {
       pageVisible = document.visibilityState === 'visible';
@@ -206,9 +210,15 @@ function WebLiveCamera(props: NativeProps) {
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        const frameSignature = sampleLumaGrid(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        const now = Date.now();
+        const sceneChanged = shouldReadChangedFrame(lastSentFrameSignature, frameSignature);
+        if (!sceneChanged && now - lastLiveReadAt < unchangedFrameHeartbeatMs) return;
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
         const result = await readLiveFrame(jpeg);
+        lastSentFrameSignature = frameSignature;
+        lastLiveReadAt = Date.now();
         const decodedBarcodes = await barcodePromise;
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
