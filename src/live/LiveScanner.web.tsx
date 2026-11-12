@@ -83,12 +83,12 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
   const lineRef = useRef<HTMLDivElement | null>(null);
   const [ratio, setRatio] = useState(0);
   const readingRef = useRef(true);
-  const boxesRef = useRef<BottleRead['box'][]>([]);
+  const boxesRef = useRef<Array<{ box: BottleRead['box']; labelBox: BottleRead['label_box'] }>>([]);
   useEffect(() => { readingRef.current = state.status === 'reading'; }, [state.status]);
   useEffect(() => {
     // Only confidently detected bottle regions are eligible for edge tracing.
     // Glassware, tables and background details outside those boxes are excluded.
-    boxesRef.current = (state.visualBottles.length ? state.visualBottles : state.bottles).filter(b => b.state !== 'unsure').map(b => b.box);
+    boxesRef.current = (state.visualBottles.length ? state.visualBottles : state.bottles).filter(b => b.state !== 'unsure').map(b => ({ box: b.box, labelBox: b.label_box || null }));
   }, [state.bottles, state.visualBottles]);
 
   useEffect(() => {
@@ -113,10 +113,10 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const gy = -gray[i - EW - 1] - 2 * gray[i - EW] - gray[i - EW + 1] + gray[i + EW - 1] + 2 * gray[i + EW] + gray[i + EW + 1];
         const m = Math.abs(gx) + Math.abs(gy);
         const nx = x / EW, ny = y / EH;
-        alpha[i] = m < 65 ? 0 : Math.min(150, (m - 65) * 0.85);
+        const threshold = state.scanStage === 3 ? 42 : state.scanStage === 2 ? 58 : 72;\n        alpha[i] = m < threshold ? 0 : Math.min(170, (m - threshold) * 0.9);
       }
       const canvas = canvasRef.current; if (!canvas) return;
-      canvas.width = EW; canvas.height = EH;
+      if (canvas.width !== EW) canvas.width = EW; if (canvas.height !== EH) canvas.height = EH;
       const ctx = canvas.getContext('2d')!, out = ctx.createImageData(EW, EH), o = out.data;
       const shown = new Uint8Array(EH); let lastRow = -1, shownCount = 0; const t0 = performance.now();
       const tick = (now: number) => {
@@ -131,7 +131,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
           shown[y] = 1; shownCount += 1; dirty = true;
           for (let x = 0; x < EW; x += 1) {
             const i = y * EW + x, k = i * 4, nx = x / EW, ny = y / EH;
-            const relevant = boxesRef.current.some(box => nx >= box.x0 && nx <= box.x1 && ny >= box.y0 && ny <= box.y1);
+            const relevant = boxesRef.current.some(item => { const region = state.scanStage === 1 ? item.box : item.labelBox || item.box; return nx >= region.x0 && nx <= region.x1 && ny >= region.y0 && ny <= region.y1; });
             o[k] = 226; o[k + 1] = 238; o[k + 2] = 255; o[k + 3] = relevant ? alpha[i] : 0;
           }
         }
@@ -153,7 +153,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       <div style={{ position: 'relative', aspectRatio: ratio ? String(ratio) : undefined, maxWidth: '100%', maxHeight: '100%', width: ratio >= 1 ? '100%' : undefined, height: ratio && ratio < 1 ? '100%' : undefined, overflow: 'hidden' }}>
         <img src={uri} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
         <div style={{ ...fill, background: 'rgba(5,10,40,.28)' }} />
-        {state.scanStage === 3 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 1px rgba(79,139,255,.55)) drop-shadow(0 0 3px rgba(43,86,240,.3))' }} />}
+        {state.scanStage >= 1 && state.scanStage <= 3 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 1px rgba(79,139,255,.55)) drop-shadow(0 0 3px rgba(43,86,240,.3))' }} />}
         {state.scanStage === 4 && <div aria-hidden style={{ position: 'absolute', left: '50%', top: '12%', transform: 'translateX(-50%)', padding: '5px 9px', border: '1px solid rgba(169,212,255,.45)', borderRadius: 6, background: 'rgba(5,12,30,.58)', color: 'rgba(225,239,255,.9)', fontSize: 10, letterSpacing: 1.4, whiteSpace: 'nowrap', textShadow: '0 0 4px rgba(79,139,255,.35)' }}>FINE-PRINT EXTRACTION</div>}
         {state.scanStage === 0 && <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />}
         {state.bottles.map((b, i) => {
