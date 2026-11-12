@@ -1,12 +1,12 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {useWindowDimensions} from 'react-native';
-import {ActivityIndicator,Linking,Platform,Pressable,ScrollView,Text,TextInput,View} from 'react-native';
+import {ActivityIndicator,Linking,Platform,Pressable,ScrollView,Text,TextInput,View,PanResponder} from 'react-native';
 import {colors} from '../ui';
 import {findNearbyPhgAtlasVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
 import {AtlasMap} from './AtlasMap';
 import type {JourneyScanItem} from './JourneyPlayerOverlay';
 
-const radii:VenueRadius[]=[1,5,10,25];
+const radii:VenueRadius[]=[1,5,10,15,25];
 const filters=[{label:'All',value:''},{label:'Bars',value:'bar'},{label:'Cocktail bars',value:'cocktail_bar'},{label:'Restaurants',value:'restaurant'},{label:'Breweries',value:'brewery'},{label:'Wineries',value:'winery'},{label:'Distilleries',value:'distillery'}];
 type NearbyCommand = { id:number; action:'set_radius'|'set_category'|'search'|'recenter'|'configure'; radius_miles?:number; category?:string; search?:string };
 
@@ -18,23 +18,23 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
   setLocating(true);setError('');
   navigator.geolocation.getCurrentPosition(p=>{setCoords({latitude:p.coords.latitude,longitude:p.coords.longitude});setLocating(false);resolve('Atlas recentered on your current location.');},e=>{const message=e.code===1?'Location access is blocked. Enable it in browser settings.':e.code===3?'Location request timed out. Try again.':'Could not determine your location.';setError(message);setLocating(false);resolve(message);},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
  }),[]);
- const lastCommandId=useRef<number|null>(null);
+ const sliderWidth=useRef(1);\n const sliderResponder=useMemo(()=>PanResponder.create({onStartShouldSetPanResponder:()=>true,onMoveShouldSetPanResponder:()=>true,onPanResponderGrant:(e)=>{const w=Math.max(1,sliderWidth.current);setRadius(Math.round((1+24*Math.max(0,Math.min(1,e.nativeEvent.locationX/w)))*2)/2);},onPanResponderMove:(e)=>{const w=Math.max(1,sliderWidth.current);setRadius(Math.round((1+24*Math.max(0,Math.min(1,e.nativeEvent.locationX/w)))*2)/2);}}),[]);\n useEffect(()=>{const timer=setTimeout(()=>setSettledRadius(radius),500);return()=>clearTimeout(timer);},[radius]);\n const lastCommandId=useRef<number|null>(null);
  useEffect(()=>{if(!command||lastCommandId.current===command.id)return;lastCommandId.current=command.id;void(async()=>{
   if(command.action==='recenter'){onCommandResult?.(command.id,await locate());return;}
   const applied:string[]=[];
-  if(command.action==='set_radius'||command.action==='configure'){if(command.radius_miles&&radii.includes(command.radius_miles as VenueRadius)){setRadius(command.radius_miles as VenueRadius);applied.push('radius');}}
+  if(command.action==='set_radius'||command.action==='configure'){if(command.radius_miles&&command.radius_miles>=1&&command.radius_miles<=25){setRadius(command.radius_miles as VenueRadius);setSettledRadius(command.radius_miles as VenueRadius);applied.push('radius');}}
   if(command.action==='set_category'||command.action==='configure'){if(typeof command.category==='string'&&filters.some(f=>f.value===command.category)){setCategory(command.category);applied.push('category');}}
   if(command.action==='search'||command.action==='configure'){if(typeof command.search==='string'&&command.search.trim()){setQuery(command.search.trim());applied.push('search');}}
   onCommandResult?.(command.id,applied.length?('Applied Nearby Atlas '+applied.join(', ')+'.'):'I need a valid radius, category, or search phrase to do that.');
  })();},[command,locate,onCommandResult]);
- useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyPhgAtlasVenues(coords.latitude,coords.longitude,radius,category||null).then(rows=>{if(active){setVenues(rows);if(selectedVenue&&!rows.some(v=>v.id===selectedVenue))setSelectedVenue(null);}}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,radius,category]);
+ useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyPhgAtlasVenues(coords.latitude,coords.longitude,settledRadius,category||null).then(rows=>{if(active){setVenues(rows);if(selectedVenue&&!rows.some(v=>v.id===selectedVenue))setSelectedVenue(null);}}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,settledRadius,category]);
  const filtered=useMemo(()=>venues.filter(v=>v.name.toLowerCase().includes(query.trim().toLowerCase())||(v.locality||'').toLowerCase().includes(query.trim().toLowerCase())),[venues,query]);
  const selected=filtered.find(v=>v.id===selectedVenue)||null;
  const venuePins=filtered.map(v=>({id:v.id,name:v.name,latitude:v.latitude,longitude:v.longitude}));
  const openVenue=(v:DiscoverVenue)=>{setSelectedVenue(v.id);};
  return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{paddingBottom:10}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
   
-  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
+  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} fitKey={`${settledRadius}-${filtered.length}`} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
   <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginTop:9,marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & LOAD ATLAS'}</Text>}</Pressable>
 
   <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:7}}>
@@ -51,7 +51,7 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
   {journeysOpen&&<Text style={{color:colors.muted,fontSize:9,lineHeight:14,marginTop:8}}>Playback is waiting for Harmony's approved public journey connection. This list reflects the scan only; it does not claim a matching published journey exists.</Text>}
 
   <TextInput value={query} onChangeText={setQuery} placeholder="Search venues or towns" placeholderTextColor={colors.muted} style={{backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border,borderRadius:9,padding:10,color:colors.text,marginTop:8,marginBottom:6}}/>
-  <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{radii.map(n=><Pressable key={n} onPress={()=>setRadius(n)} style={{padding:7,borderRadius:8,backgroundColor:radius===n?colors.accent:colors.panel}}><Text style={{color:radius===n?'#111':colors.text,fontSize:9,fontWeight:'800'}}>{n} MI</Text></Pressable>)}</View>
+  <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{radii.map(n=><Pressable key={n} onPress={()=>setRadius(n)} style={{padding:8,borderRadius:8,backgroundColor:Math.abs(radius-n)<0.01?colors.accent:colors.panel,borderWidth:1,borderColor:Math.abs(radius-n)<0.01?colors.accent:colors.border}}><Text style={{color:Math.abs(radius-n)<0.01?'#111':colors.text,fontSize:10,fontWeight:'900'}}>{n} MI</Text></Pressable>)}</View>\n  <View style={{marginBottom:10,padding:10,borderRadius:10,backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border}}>\n   <View style={{flexDirection:'row',justifyContent:'space-between',marginBottom:8}}><Text style={{color:colors.text,fontSize:10,fontWeight:'900'}}>CUSTOM RADIUS</Text><Text style={{color:colors.accent,fontSize:11,fontWeight:'900'}}>{radius.toFixed(radius%1?1:0)} MILES</Text></View>\n   <View onLayout={e=>{sliderWidth.current=e.nativeEvent.layout.width;}} {...sliderResponder.panHandlers} style={{height:28,justifyContent:'center'}}>\n    <View style={{height:5,borderRadius:4,backgroundColor:colors.border}}/><View style={{position:'absolute',left:0,width:`${((radius-1)/24)*100}%`,height:5,borderRadius:4,backgroundColor:colors.accent}}/><View style={{position:'absolute',left:`${((radius-1)/24)*100}%`,marginLeft:-9,width:18,height:18,borderRadius:9,backgroundColor:colors.accent,borderWidth:2,borderColor:'#F5F7FA'}}/>\n   </View><View style={{flexDirection:'row',justifyContent:'space-between'}}><Text style={{color:colors.muted,fontSize:8}}>1 MI</Text><Text style={{color:colors.muted,fontSize:8}}>25 MI</Text></View>\n  </View>
   <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{padding:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:colors.panel}}><Text style={{color:category===f.value?'#111':colors.text,fontSize:9,fontWeight:'700'}}>{f.label}</Text></Pressable>)}</View>
   <Text style={{color:colors.text,fontSize:10,fontWeight:'900',marginBottom:6}}>{loading?'SEARCHING ATLAS…':filtered.length+' VENUES'}</Text>
   {error?<Text style={{color:'#E6A18F',fontSize:10,marginBottom:6}}>{error}</Text>:null}
