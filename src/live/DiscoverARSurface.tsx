@@ -212,7 +212,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!webTracks.length) return;
         webTracks = webTracks
           .map(track => propagateMotionTrack(track, frame))
-          .filter(track => track.misses < 6 && track.confidence >= 0.12);
+          .filter(track => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
           candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })),
