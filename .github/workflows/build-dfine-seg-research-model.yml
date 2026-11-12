@@ -21,8 +21,12 @@ on:
           - l
           - x
 
+concurrency:
+  group: dfine-seg-research-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   export:
@@ -56,7 +60,7 @@ jobs:
         working-directory: .research/dfine-seg
         run: dfine export
 
-      - name: Inspect exported ONNX graph contract
+      - name: Inspect and execute exported ONNX graph
         working-directory: .research/dfine-seg
         run: |
           set -euo pipefail
@@ -65,10 +69,15 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/model-artifacts"
           python - "$MODEL_PATH" "$GITHUB_WORKSPACE/model-artifacts/dfine_seg_graph_contract.json" <<'PY'
           import json, sys
+          import numpy as np
           import onnx
+          import onnxruntime as ort
           from onnx import TensorProto
+
           model_path, output_path = sys.argv[1:3]
           model = onnx.load(model_path)
+          onnx.checker.check_model(model)
+
           def tensor(value):
               tensor_type = value.type.tensor_type
               dims = [d.dim_value if d.dim_value else (d.dim_param or None) for d in tensor_type.shape.dim]
@@ -77,16 +86,42 @@ jobs:
                   "shape": dims,
                   "element_type": TensorProto.DataType.Name(tensor_type.elem_type),
               }
+
+          session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+          inputs = session.get_inputs()
+          outputs = session.get_outputs()
+          expected = ["labels", "boxes", "scores", "masks"]
+          output_names = [value.name for value in outputs]
+          if len(inputs) != 1 or inputs[0].name != "input":
+              raise SystemExit(f"Unexpected D-FINE input contract: {[x.name for x in inputs]}")
+          if output_names != expected:
+              raise SystemExit(f"Unexpected D-FINE output names: {output_names}")
+          sample = np.zeros((1, 3, 640, 640), dtype=np.float32)
+          values = session.run(None, {"input": sample})
+          shapes = [list(value.shape) for value in values]
+          if len(values) != 4 or shapes[0][0] != 1 or len(shapes[0]) != 2:
+              raise SystemExit(f"Unexpected labels output shape: {shapes}")
+          count = shapes[0][1]
+          if shapes[1] != [1, count, 4] or shapes[2] != [1, count] or len(shapes[3]) != 4 or shapes[3][:2] != [1, count]:
+              raise SystemExit(f"Unexpected D-FINE output tensor shapes: {shapes}")
           contract = {
               "graph_name": model.graph.name,
               "ir_version": model.ir_version,
               "opsets": [{"domain": x.domain, "version": x.version} for x in model.opset_import],
               "inputs": [tensor(x) for x in model.graph.input if x.name not in {i.name for i in model.graph.initializer}],
               "outputs": [tensor(x) for x in model.graph.output],
+              "runtime_smoke_test": {
+                  "provider": "CPUExecutionProvider",
+                  "input_shape": list(sample.shape),
+                  "output_names": output_names,
+                  "output_shapes": shapes,
+                  "output_dtypes": [str(value.dtype) for value in values],
+                  "status": "passed",
+              },
           }
           with open(output_path, "w") as f:
               json.dump(contract, f, indent=2)
-              f.write("\\n")
+              f.write("\n")
           print(json.dumps(contract, indent=2))
           PY
 
@@ -100,29 +135,58 @@ jobs:
           test -n "$MODEL_PATH"
           mkdir -p "$GITHUB_WORKSPACE/model-artifacts"
           DEST="$GITHUB_WORKSPACE/model-artifacts/dfine_seg_${MODEL_SIZE}_coco.onnx"
+          CHECKPOINT="pretrained/dfine_seg_${MODEL_SIZE}_coco.pt"
+          test -f "$CHECKPOINT"
           cp "$MODEL_PATH" "$DEST"
           sha256sum "$DEST" > "$DEST.sha256"
+          sha256sum "$CHECKPOINT" > "$GITHUB_WORKSPACE/model-artifacts/dfine_seg_${MODEL_SIZE}_coco.checkpoint.sha256"
+          cp LICENSE "$GITHUB_WORKSPACE/model-artifacts/dfine-seg-upstream-LICENSE.txt"
           python - <<'PY'
-          import json, os, pathlib, subprocess
+          import hashlib, json, os, pathlib, subprocess
           root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "model-artifacts"
           size = os.environ["MODEL_SIZE"]
           model = root / f"dfine_seg_{size}_coco.onnx"
+          checkpoint = pathlib.Path("pretrained") / f"dfine_seg_{size}_coco.pt"
           upstream = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           version = subprocess.check_output(["dfine", "version"], text=True).strip()
-          checksum = subprocess.check_output(["sha256sum", str(model)], text=True).split()[0]
+          sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
           metadata = {
               "model": f"D-FINE-seg-{size}",
               "task": "COCO instance segmentation",
-              "checkpoint": f"dfine_seg_{size}_coco.pt",
+              "checkpoint": checkpoint.name,
+              "checkpoint_sha256": sha(checkpoint),
               "upstream_repository": "https://github.com/ArgoHA/D-FINE-seg",
               "upstream_commit": upstream,
               "package_version": version,
+              "model_card": "https://huggingface.co/ArgoSA/D-FINE-seg",
               "export": {"format": "ONNX", "precision": "FP32", "input": [1, 3, 640, 640], "dynamic_input": False},
-              "sha256": checksum,
-              "license_review": "research artifact; verify upstream code, weight, and dataset terms before any redistribution or commercial use"
+              "sha256": sha(model),
+              "graph_contract": "dfine_seg_graph_contract.json",
+              "license_review": "research artifact; retain upstream notices and verify code, checkpoint, and dataset terms before redistribution or commercial use"
           }
           (root / f"dfine_seg_{size}_coco.metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
           PY
+
+      - name: Commit N prototype model to Discover static assets
+        if: ${{ inputs.model_size == '' || inputs.model_size == 'n' }}
+        run: |
+          set -euo pipefail
+          mkdir -p public/models
+          cp model-artifacts/dfine_seg_n_coco.onnx public/models/
+          cp model-artifacts/dfine_seg_n_coco.onnx.sha256 public/models/
+          cp model-artifacts/dfine_seg_n_coco.checkpoint.sha256 public/models/
+          cp model-artifacts/dfine_seg_n_coco.metadata.json public/models/
+          cp model-artifacts/dfine_seg_graph_contract.json public/models/
+          cp model-artifacts/dfine-seg-upstream-LICENSE.txt public/models/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/models/
+          if git diff --cached --quiet; then
+            echo "Model asset already current; no commit needed."
+          else
+            git commit -m "chore(discover): add D-FINE-seg N prototype model"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
       - name: Upload research model artifact
         uses: actions/upload-artifact@v4
