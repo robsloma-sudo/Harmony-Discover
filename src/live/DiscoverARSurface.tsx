@@ -425,7 +425,7 @@ export function DiscoverARSurface(props: NativeProps) {
   return <NativeARView {...props}
     onRecognitionUpdate={event => {
       const value = event.nativeEvent;
-      nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], timestamp: value.frameTimestamp || Date.now() };
+      nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], timestamp: Date.now() };
       props.onRecognitionUpdate?.({ nativeEvent: { ...value, barcodeStatus: 'available' } });
     }}
     onFrame={event => {
