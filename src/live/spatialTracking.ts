@@ -181,10 +181,22 @@ export function cameraPointToWorld(
 }
 
 /** Reads the row-major 3x3 intrinsic matrix emitted in depth-grid pixel units. */
-export function intrinsicsFromARKitDepth(frame: Pick<ARKitDepthFrame, 'cameraIntrinsics'>): CameraIntrinsics | null {
+export function intrinsicsFromARKitDepth(frame: { cameraIntrinsics: ArrayLike<number> }): CameraIntrinsics | null {
   const k = frame.cameraIntrinsics;
   if (k.length < 9) return null;
   const [fx, , cx, , fy, cy] = k;
   if (![fx, fy, cx, cy].every(value => Number.isFinite(Number(value))) || !finitePositive(Number(fx)) || !finitePositive(Number(fy))) return null;
   return { fx: Number(fx), fy: Number(fy), cx: Number(cx), cy: Number(cy) };
+}
+
+
+/** Maps CGImagePropertyOrientation raw values emitted by the native module. */
+export function arkitOrientationFromRawValue(value: number): ARKitImageOrientation | null {
+  switch (value) {
+    case 1: return 'up';
+    case 3: return 'down';
+    case 6: return 'right';
+    case 8: return 'left';
+    default: return null;
+  }
 }
