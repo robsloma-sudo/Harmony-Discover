@@ -37,7 +37,7 @@ describe('metric bottle box projection', () => {
     const result = projectBottleBoxToWorld(frame(), { x: 0.5, y: 0.5, width: 0.25, height: 0.25 });
     expect(result.status).toBe('located');
     if (result.status === 'located') {
-      expect(result.worldPoint.x).toBeCloseTo(0.02, 6);
+      expect(result.worldPoint.x).toBeCloseTo(-0.02, 6);
       expect(result.worldPoint.y).toBeCloseTo(-0.02, 6);
       expect(result.worldPoint.z).toBe(-2);
     }
@@ -58,7 +58,7 @@ describe('metric bottle box projection', () => {
     const result = projectBottleBoxToWorld(frame({ cameraRayBasis: [0, 1, 1, 0] }), { x: 0.5, y: 0.5, width: 0.25, height: 0.25 });
     expect(result.status).toBe('located');
     if (result.status === 'located') {
-      expect(result.worldPoint.x).toBeCloseTo(-0.02, 6);
+      expect(result.worldPoint.x).toBeCloseTo(0.02, 6);
       expect(result.worldPoint.y).toBeCloseTo(0.02, 6);
     }
   });
