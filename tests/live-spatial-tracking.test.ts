@@ -5,6 +5,7 @@ import {
   intrinsicsFromARKitDepth,
   sampleBoxDepth,
   unprojectDetection,
+  updateWorldSpatialTracks,
   type CameraSpacePoint,
 } from "../src/live/spatialTracking";
 
@@ -56,5 +57,46 @@ describe("ARKit depth calibration", () => {
 
   it("rejects malformed camera transforms", () => {
     expect(cameraPointToWorld({ x: 0, y: 0, z: 1, depthMetres: 1, sampleCount: 1 }, [1, 2], "up")).toBeNull();
+  });
+});
+
+
+describe("persistent world-space bottle tracks", () => {
+  it("applies camera translation and rotation using the column-major ARKit matrix", () => {
+    const rotatedAndTranslated = [
+      0, 0, 1, 0,
+      0, 1, 0, 0,
+      -1, 0, 0, 0,
+      10, 20, 30, 1,
+    ];
+    const point: CameraSpacePoint = { x: 1, y: 2, z: 3, depthMetres: 3, sampleCount: 4 };
+    expect(cameraPointToWorld(point, rotatedAndTranslated, "up")).toEqual({ x: 13, y: 22, z: 31 });
+  });
+
+  it("smooths a persistent world position and estimates low-pass velocity", () => {
+    const first = updateWorldSpatialTracks([], [{ trackId: 7, point: { x: 1, y: 2, z: 3 }, confidence: 0.9 }], 1000);
+    const next = updateWorldSpatialTracks(first, [{ trackId: 7, point: { x: 1.2, y: 2, z: 3 }, confidence: 0.95 }], 2000);
+    expect(next).toHaveLength(1);
+    expect(next[0].position.x).toBeCloseTo(1.056);
+    expect(next[0].velocity.x).toBeGreaterThan(0);
+    expect(next[0].lastSeenAt).toBe(2000);
+  });
+
+  it("rejects large world-space jumps without refreshing a stale track", () => {
+    const first = updateWorldSpatialTracks([], [{ trackId: 4, point: { x: 0, y: 0, z: 0 }, confidence: 0.8 }], 1000);
+    const rejected = updateWorldSpatialTracks(first, [{ trackId: 4, point: { x: 3, y: 0, z: 0 }, confidence: 0.99 }], 2000);
+    expect(rejected[0].position).toEqual({ x: 0, y: 0, z: 0 });
+    expect(rejected[0].lastSeenAt).toBe(1000);
+    expect(updateWorldSpatialTracks(rejected, [], 9000)).toHaveLength(0);
+  });
+
+  it("expires unseen tracks and ignores duplicate track IDs in one frame", () => {
+    const tracks = updateWorldSpatialTracks([], [
+      { trackId: 2, point: { x: 0, y: 0, z: 1 }, confidence: 0.8 },
+      { trackId: 2, point: { x: 9, y: 9, z: 9 }, confidence: 1 },
+    ], 1000);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].position).toEqual({ x: 0, y: 0, z: 1 });
+    expect(updateWorldSpatialTracks(tracks, [], 9000)).toHaveLength(0);
   });
 });
