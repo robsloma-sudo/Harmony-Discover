@@ -52,6 +52,5 @@ describe('D-FINE instance-mask adapter', () => {
     expect(adaptDfineSegOutput({ ...output, maskWidth: 9 }, 10, 12, 5000)).toEqual([]);
     expect(adaptDfineSegOutput({ ...output, boxes: new Float32Array([NaN, 0, 1, 1, 0, 0, 1, 1]) }, 10, 12, 5000)).toEqual([]);
     expect(adaptDfineSegOutput({ ...output, masks: new Uint8Array(240) }, 10, 12, 5000)).toEqual([]);
-    expect(adaptDfineSegOutput({ ...output, masks: new Uint8Array(240) }, 10, 12, 5000)).toEqual([]);
   });
 });
