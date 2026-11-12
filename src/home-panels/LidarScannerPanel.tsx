@@ -83,9 +83,9 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
       .map(point => ({ trackId: point.trackId as number, point: point.world, confidence: 1 }));
     worldTracksRef.current = updateWorldSpatialTracks(worldTracksRef.current, updates, Date.now());
   }, [depthFrame?.timestamp, bottles, candidates, tracking.state]);
-  const activeWorldTrackIds = new Set(worldTracksRef.current.map(track => track.trackId));
-  for (const trackId of spatialPointMetadataRef.current.keys()) {
-    if (!activeWorldTrackIds.has(trackId)) spatialPointMetadataRef.current.delete(trackId);
+  const activeWorldSourceIds = new Set(worldTracksRef.current.map(track => track.sourceTrackId ?? track.trackId));
+  for (const sourceTrackId of spatialPointMetadataRef.current.keys()) {
+    if (!activeWorldSourceIds.has(sourceTrackId)) spatialPointMetadataRef.current.delete(sourceTrackId);
   }
   const persistentWorldPoints = worldTracksRef.current.flatMap(track => {
     const source = spatialPointMetadataRef.current.get(track.sourceTrackId ?? track.trackId);
