@@ -40,8 +40,10 @@ export async function fetchPhgAtlasDataset(
   dataset:PhgAtlasDataset,
   options:{limit?:number;offset?:number;bounds?:{minLat:number;minLng:number;maxLat:number;maxLng:number}}={}
 ):Promise<PhgAtlasPage>{
-  const base=process.env.EXPO_PUBLIC_PHG_SUPABASE_URL;
-  const key=process.env.EXPO_PUBLIC_PHG_SUPABASE_PUBLISHABLE_KEY;
+  // These are intentionally public client settings (publishable key, never service-role).
+  // Environment overrides remain available for staging or future key rotation.
+  const base=process.env.EXPO_PUBLIC_PHG_SUPABASE_URL || 'https://lqjtwabzmgjcufftuqvu.supabase.co';
+  const key=process.env.EXPO_PUBLIC_PHG_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_nifWfkBSGDpOAbQfmmofzw_C6CKy62T';
   if(!base||!key) throw new Error('PHG Atlas public bridge is not configured in this Discover build.');
   const b=options.bounds;
   const response=await fetch(`${base.replace(/\/$/,'')}/rest/v1/rpc/discover_atlas_data_bridge`,{
