@@ -167,6 +167,25 @@ jobs:
           (root / f"dfine_seg_{size}_coco.metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
           PY
 
+      - name: Set up Node for web runtime
+        if: ${{ inputs.model_size == '' || inputs.model_size == 'n' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Add ONNX Runtime Web and WASM build hook
+        if: ${{ inputs.model_size == '' || inputs.model_size == 'n' }}
+        run: |
+          set -euo pipefail
+          npm install onnxruntime-web@latest --save --package-lock-only --no-audit --no-fund
+          node <<'JS'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.scripts['prebuild:web'] = 'node scripts/copy-ort-wasm.mjs';
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n');
+          JS
+          npm install --package-lock-only --no-audit --no-fund
+
       - name: Commit N prototype model to Discover static assets
         if: ${{ inputs.model_size == '' || inputs.model_size == 'n' }}
         run: |
@@ -180,7 +199,7 @@ jobs:
           cp model-artifacts/dfine-seg-upstream-LICENSE.txt public/models/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/models/
+          git add public/models/ package.json package-lock.json
           if git diff --cached --quiet; then
             echo "Model asset already current; no commit needed."
           else
