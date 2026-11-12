@@ -17,13 +17,14 @@ type Props = {
   depthFrame: ARKitDepthFrame | null;
   candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }>;
   bottles: BottleRead[];
+  onSpatialAnchors?: (anchors: Array<{ physicalObjectId: string; x: number; y: number; z: number; state: 'confirmed' | 'potential' | 'occluded' }>) => void;
 };
 
 /**
  * Diagnostics for the one camera session owned by the home viewfinder.
  * This panel deliberately does not mount a camera or start another AR session.
  */
-export default function LidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, candidates, bottles }: Props) {
+export default function LidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, candidates, bottles, onSpatialAnchors }: Props) {
   const validDepthSamples = depthFrame?.depthMeters.filter(value => Number.isFinite(value) && value > 0).length ?? 0;
   const trackingColor = tracking.state === 'normal' ? green : amber;
   const metricDepth = !!depthFrame && depthFrame.unit === 'meters';
@@ -97,6 +98,15 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
     return source ? [{ ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt }] : [];
   });
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
+  React.useEffect(() => {
+    const anchors = persistentWorldPoints.flatMap(point => {
+      if (!Number.isFinite(point.world.x) || !Number.isFinite(point.world.y) || !Number.isFinite(point.world.z)) return [];
+      const age = point.trackAge;
+      const state = age > 1800 ? 'occluded' : point.confidence >= 0.78 && age >= 900 ? 'confirmed' : 'potential';
+      return [{ physicalObjectId: 'world-track-' + String(point.trackId), x: point.world.x, y: point.world.y, z: point.world.z, state }];
+    });
+    onSpatialAnchors?.(anchors);
+  }, [persistentWorldPoints.length, depthFrame?.timestamp, onSpatialAnchors]);
 
   return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
     <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ gap: 10, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
