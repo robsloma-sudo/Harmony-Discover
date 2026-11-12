@@ -1,8 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
-import { CameraView, type BarcodeScanningResult } from 'expo-camera';
+import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
-import { readLiveFrame } from '../services/discoverLiveApi';
+import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 
 export type ARTrackingUpdate = {
@@ -16,6 +16,9 @@ export type ARKitDepthFrame = { width: number; height: number; sourceWidth: numb
 
 type NativeProps = ViewProps & {
   active?: boolean;
+  captureRequestId?: number;
+  onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
+  onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number } }) => void;
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
@@ -41,10 +44,29 @@ if (Platform.OS === 'ios') {
  * video frame is playing.
  */
 function WebLiveCamera(props: NativeProps) {
-  const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError } = props;
+  const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage };
+
+  useEffect(() => {
+    if (!captureRequestId || !active) return;
+    const video = videoRef.current;
+    if (!video || video.videoWidth < 2 || video.videoHeight < 2) {
+      callbacksRef.current.onARError?.({ nativeEvent: { message: 'The live camera is not ready to capture yet.' } });
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      callbacksRef.current.onARError?.({ nativeEvent: { message: 'The camera frame could not be captured.' } });
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    callbacksRef.current.onCapturedImage?.({ nativeEvent: { uri: canvas.toDataURL('image/jpeg', 0.88), width: canvas.width, height: canvas.height, timestamp: Date.now() } });
+  }, [captureRequestId, active]);
 
   useEffect(() => {
     if (!active) {
@@ -222,7 +244,7 @@ function WebLiveCamera(props: NativeProps) {
           if (disposed) return;
           const current = videoRef.current;
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
-            callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'normal', reason: 'browser_video_frames_verified' } });
+            callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
             scheduleRecognition();
             return;
@@ -273,8 +295,122 @@ function WebLiveCamera(props: NativeProps) {
   );
 }
 
+function FallbackNativeCamera(props: NativeProps) {
+  const cameraRef = useRef<any>(null);
+  const lastRequest = useRef(0);
+  const busy = useRef(false);
+  useEffect(() => {
+    if (!props.active || !props.captureRequestId || props.captureRequestId === lastRequest.current) return;
+    lastRequest.current = props.captureRequestId;
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    const capture = async () => {
+      if (cancelled) return;
+      if (busy.current) { retry = setTimeout(() => { void capture(); }, 100); return; }
+      busy.current = true;
+      try {
+        const photo = await cameraRef.current?.takePictureAsync({ quality: 0.88 });
+        if (!cancelled && photo?.uri) props.onCapturedImage?.({ nativeEvent: { uri: photo.uri, width: photo.width, height: photo.height, timestamp: Date.now() } });
+        else if (!cancelled) props.onARError?.({ nativeEvent: { message: 'The camera did not return an image.' } });
+      } catch (error) {
+        if (!cancelled) props.onARError?.({ nativeEvent: { message: error instanceof Error ? error.message : 'Camera capture failed.' } });
+      } finally { busy.current = false; }
+    };
+    void capture();
+    return () => { cancelled = true; if (retry) clearTimeout(retry); };
+  }, [props.active, props.captureRequestId]);
+  useEffect(() => {
+    if (!props.active) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      if (cancelled || busy.current || !cameraRef.current) return;
+      busy.current = true;
+      try {
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.62, base64: true });
+        if (!cancelled && photo.base64) {
+          const result = await readLiveFrame(`data:image/jpeg;base64,${photo.base64}`);
+          if (!cancelled) {
+            props.onRecognitionUpdate?.({ nativeEvent: {
+              text: result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean),
+              barcodes: [], classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
+              frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics, barcodeStatus: 'unsupported',
+            } });
+          }
+        }
+      } catch (error) {
+        if (!cancelled) props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'fallback_frame_read_failed' } });
+      } finally { busy.current = false; }
+    }, 2500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [props.active]);
+  return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } })} />;
+}
+
+type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number };
+let nativeRecognitionTracks: RecognitionTrack[] = [];
+let nextNativeRecognitionTrackId = 1;
+let nativeFrameReadBusy = false;
+
+function trackNativeBottleReads(bottles: BottleRead[]) {
+  const now = Date.now();
+  const used = new Set<number>();
+  const next: RecognitionTrack[] = [];
+  const tracked = bottles.map(bottle => {
+    const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
+    let bestIndex = -1, bestOverlap = 0;
+    nativeRecognitionTracks.forEach((prior, index) => {
+      if (used.has(index)) return;
+      const left = Math.max(prior.x, box.x), top = Math.max(prior.y, box.y);
+      const right = Math.min(prior.x + prior.width, box.x + box.width), bottom = Math.min(prior.y + prior.height, box.y + box.height);
+      const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+      const union = prior.width * prior.height + box.width * box.height - intersection;
+      const overlap = union > 0 ? intersection / union : 0;
+      if (overlap > bestOverlap) { bestOverlap = overlap; bestIndex = index; }
+    });
+    const prior = bestIndex >= 0 && bestOverlap >= 0.12 ? nativeRecognitionTracks[bestIndex] : null;
+    if (prior && bestIndex >= 0) used.add(bestIndex);
+    const blend = prior ? 0.38 : 1;
+    const track: RecognitionTrack = {
+      trackId: prior?.trackId ?? nextNativeRecognitionTrackId++,
+      x: prior ? prior.x * (1 - blend) + box.x * blend : box.x,
+      y: prior ? prior.y * (1 - blend) + box.y * blend : box.y,
+      width: prior ? prior.width * (1 - blend) + box.width * blend : box.width,
+      height: prior ? prior.height * (1 - blend) + box.height * blend : box.height,
+      confidence: bottle.confidence,
+      lastSeenAt: now,
+    };
+    next.push(track);
+    return track;
+  });
+  nativeRecognitionTracks.forEach((track, index) => {
+    if (!used.has(index) && now - track.lastSeenAt < 1200) next.push(track);
+  });
+  nativeRecognitionTracks = next;
+  return tracked;
+}
+
 export function DiscoverARSurface(props: NativeProps) {
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
-  if (!NativeARView) return <View {...props} />;
-  return <NativeARView {...props} />;
+  if (!NativeARView) return <FallbackNativeCamera {...props} />;
+  return <NativeARView {...props} onFrame={event => {
+    if (nativeFrameReadBusy) return;
+    nativeFrameReadBusy = true;
+    const frame = event.nativeEvent;
+    void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
+      props.onRecognitionUpdate?.({ nativeEvent: {
+        text: result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean),
+        barcodes: [],
+        classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
+        frameTimestamp: frame.timestamp,
+        bottles: result.bottles,
+        menu: result.menu,
+        diagnostics: result.diagnostics,
+        barcodeStatus: 'unsupported',
+      } });
+      const tracked = trackNativeBottleReads(result.bottles);
+      props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
+    }).catch(error => {
+      props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
+    }).finally(() => { nativeFrameReadBusy = false; });
+  }} />
 }
