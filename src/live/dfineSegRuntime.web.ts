@@ -8,8 +8,14 @@ import { DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrit
 
 export { DFINE_SEG_MODEL_URL, DFINE_SEG_MODEL_SHA256, verifyDfineModelBytes } from "./dfineModelIntegrity";
 
+declare global {
+  interface Window {
+    __discoverOrtRuntime?: DfineOrtRuntime;
+  }
+}
+
 let modelBytesPromise: Promise<ArrayBuffer> | null = null;
-let runtimePromise: Promise<typeof import("onnxruntime-web/wasm")> | null = null;
+let runtimePromise: Promise<DfineOrtRuntime> | null = null;
 
 async function loadModelBytes(): Promise<ArrayBuffer> {
   if (!modelBytesPromise) {
@@ -27,9 +33,24 @@ async function loadModelBytes(): Promise<ArrayBuffer> {
   return modelBytesPromise;
 }
 
-async function loadRuntime(): Promise<typeof import("onnxruntime-web/wasm")> {
+async function loadRuntime(): Promise<DfineOrtRuntime> {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    throw new Error("D-FINE browser runtime is only available in a browser.");
+  }
+  if (window.__discoverOrtRuntime) return window.__discoverOrtRuntime;
   if (!runtimePromise) {
-    runtimePromise = import("onnxruntime-web/wasm").catch(error => {
+    runtimePromise = new Promise<DfineOrtRuntime>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.type = "module";
+      script.async = true;
+      script.src = "/ort/ort-loader.js";
+      script.onload = () => {
+        if (window.__discoverOrtRuntime) resolve(window.__discoverOrtRuntime);
+        else reject(new Error("ONNX Runtime browser module loaded without exporting its runtime."));
+      };
+      script.onerror = () => reject(new Error("ONNX Runtime browser module failed to load."));
+      document.head.appendChild(script);
+    }).catch(error => {
       runtimePromise = null;
       throw error;
     });
@@ -37,13 +58,13 @@ async function loadRuntime(): Promise<typeof import("onnxruntime-web/wasm")> {
   return runtimePromise;
 }
 
-/** Load and checksum-verify the bundled model before creating a WASM-only session. */
+/** Load the browser-hosted WASM runtime and checksum-verify the bundled model. */
 export async function loadDfineSegOnnxProvider(
   options: DfineOnnxProviderOptions = {},
 ): Promise<DfineSegOnnxProvider> {
   const [runtime, modelBytes] = await Promise.all([loadRuntime(), loadModelBytes()]);
   return createDfineSegOnnxProvider(
-    runtime as unknown as DfineOrtRuntime,
+    runtime,
     modelBytes,
     { bottleClassIds: [39], minimumScore: 0.5, maskThreshold: 0.5, ...options },
   );
