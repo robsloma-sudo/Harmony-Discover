@@ -18,7 +18,7 @@ import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { associateLabelSignalsToBottles } from '../src/live/labelBottleAssociation';
 import { SpatialBottleTracker } from '../src/live/spatialBottleTracker';
-import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection } from '../src/live/spatialTracking';
+import { projectBottleBoxToWorld } from '../src/live/spatialBottleProjection';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -37,6 +37,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  const depthFramesRef = useRef<ARKitDepthFrame[]>([]);
+  const [liveBottleDepthFrame, setLiveBottleDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  const [liveBottleFrameTimestamp, setLiveBottleFrameTimestamp] = useState<number | null>(null);
   const [liveSpatialAnchors, setLiveSpatialAnchors] = useState<NativeSpatialAnchor[]>([]);
   const physicalBottleTrackerRef = useRef(new SpatialBottleTracker({ confirmationHits: 2, occlusionGraceMs: 2500, lostRetentionMs: 12000, minimumConfidence: 0.65 }));
   const [livePhysicalIds, setLivePhysicalIds] = useState<string[]>([]);
@@ -56,6 +59,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveCandidates([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
+      setLiveTextItems([]);
+      setLiveBarcodeItems([]);
+      setLiveBarcodes([]);
+      setLivePhysicalIds([]);
+      setLiveSpatialAnchors([]);
+      setLiveBottleDepthFrame(null);
+      physicalBottleTrackerRef.current.reset();
     }, 6000);
     return () => clearTimeout(staleTimer);
   }, [liveReadAt]);
@@ -66,32 +76,47 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLivePhysicalIds([]);
       return;
     }
-    if (!liveDepthFrame || liveDepthFrame.unit !== 'meters') return;
-    const orientation = arkitOrientationFromRawValue(liveDepthFrame.imageOrientation);
-    const intrinsics = intrinsicsFromARKitDepth(liveDepthFrame);
-    if (!orientation || !intrinsics) return;
+    if (liveBottleFrameTimestamp === null) return;
+    if (Platform.OS !== 'ios') {
+      setLivePhysicalIds(liveBottles.map(() => ''));
+      setLiveSpatialAnchors([]);
+      return;
+    }
+    // Only update physical identities once per cloud-recognition frame. Never
+    // re-count the same bottle boxes against later depth frames.
+    if (!liveBottleDepthFrame || liveBottleDepthFrame.unit !== 'meters') {
+      const aged = physicalBottleTrackerRef.current.update([], liveBottleFrameTimestamp * 1000);
+      setLivePhysicalIds(liveBottles.map(() => ''));
+      setLiveSpatialAnchors(aged.tracks.flatMap(track => track.worldPoint && track.state !== 'lost'
+        ? [{ physicalObjectId: track.physicalObjectId, x: track.worldPoint.x, y: track.worldPoint.y, z: track.worldPoint.z, state: track.state }]
+        : []));
+      return;
+    }
     const observations = liveBottles.map(bottle => {
-      const point = unprojectDetection(
-        bottle.box,
-        { width: liveDepthFrame.width, height: liveDepthFrame.height, metres: liveDepthFrame.depthMeters, confidence: liveDepthFrame.confidence },
-        intrinsics,
-      );
-      const worldPoint = point ? cameraPointToWorld(point, liveDepthFrame.cameraTransform, orientation) : null;
-      const visualKey = [bottle.category, bottle.match?.brand || bottle.brand || bottle.product || ''].filter(Boolean).join(':').toLowerCase();
+      const projection = projectBottleBoxToWorld(liveBottleDepthFrame, {
+        x: bottle.box.x0,
+        y: bottle.box.y0,
+        width: bottle.box.x1 - bottle.box.x0,
+        height: bottle.box.y1 - bottle.box.y0,
+      });
+      const located = projection.status === 'located';
+      const visualKey = bottle.category.trim().toLowerCase() || undefined;
       return {
-        worldPoint: worldPoint || undefined,
+        worldPoint: located ? projection.worldPoint : undefined,
         confidence: bottle.confidence,
-        geometryComplete: !!point && point.sampleCount >= 4,
-        visualKey: visualKey || undefined,
-        reason: !point ? 'insufficient_depth' as const : point.sampleCount < 4 ? 'incomplete_geometry' as const : undefined,
+        geometryComplete: located,
+        visualKey,
+        reason: located ? undefined : projection.reason === 'insufficient_depth'
+          ? 'insufficient_depth' as const
+          : projection.reason === 'low_depth_confidence' ? 'low_confidence' as const : 'incomplete_geometry' as const,
       };
     });
-    const updated = physicalBottleTrackerRef.current.update(observations, liveDepthFrame.timestamp * 1000);
-    setLivePhysicalIds(updated.observed.map(track => track.physicalObjectId));
+    const updated = physicalBottleTrackerRef.current.update(observations, liveBottleFrameTimestamp * 1000);
+    setLivePhysicalIds(updated.observed.map(track => track?.physicalObjectId || ''));
     setLiveSpatialAnchors(updated.tracks.flatMap(track => track.worldPoint && track.state !== 'lost'
       ? [{ physicalObjectId: track.physicalObjectId, x: track.worldPoint.x, y: track.worldPoint.y, z: track.worldPoint.z, state: track.state }]
       : []));
-  }, [liveDepthFrame?.timestamp, liveBottles, liveTracking.state]);
+  }, [liveBottleFrameTimestamp, liveBottleDepthFrame, liveBottles, liveTracking.state]);
 
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
@@ -214,15 +239,27 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
-          onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
+          onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) { setLiveDepthFrame(value); depthFramesRef.current = [...depthFramesRef.current.filter(frame => value.timestamp - frame.timestamp <= 4 && frame.timestamp <= value.timestamp), value].slice(-16); } }}
           onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates)}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
-            if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
-            if (value.barcodes?.length) setLiveBarcodes(previous => { const merged = [...previous]; value.barcodes!.forEach(barcode => { if (!merged.some(item => item.value === barcode.value)) merged.push(barcode); }); return merged.slice(-12); });
-            if (value.text?.length) setLiveLabelText(previous => Array.from(new Set([...previous, ...value.text!])).slice(-24));
-            if (value.textItems?.length) setLiveTextItems(value.textItems);
-            if (value.barcodeItems?.length) setLiveBarcodeItems(value.barcodeItems);
+            if (value.bottles) {
+              setLiveBottles(value.bottles);
+              setLiveReadAt(Date.now());
+              setLiveBottleFrameTimestamp(value.frameTimestamp);
+              const nearestDepth = depthFramesRef.current.reduce<ARKitDepthFrame | null>((best, frame) => {
+                if (!best) return frame;
+                return Math.abs(frame.timestamp - value.frameTimestamp) < Math.abs(best.timestamp - value.frameTimestamp) ? frame : best;
+              }, null);
+              setLiveBottleDepthFrame(nearestDepth && Math.abs(nearestDepth.timestamp - value.frameTimestamp) <= 0.20 ? nearestDepth : null);
+              // These coordinates are only accepted from the cloud response
+              // carrying the same-frame Vision signals, never from a newer
+              // standalone OCR callback.
+              setLiveBarcodes(value.barcodes || []);
+              setLiveLabelText(value.text || []);
+              setLiveTextItems(value.textItems || []);
+              setLiveBarcodeItems(value.barcodeItems || []);
+            }
             if (value.menu) setLiveMenu(value.menu);
           }}
           onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
