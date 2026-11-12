@@ -237,9 +237,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          self.rectangleOverlay.path = nil
-          self.previousCandidates.removeAll()
-          self.onVisualCandidates(["count": 0, "candidates": []])
           if let cloudFrameBase64 {
             self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
           }
