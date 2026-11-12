@@ -91,9 +91,9 @@ describe('segmentation runner lifecycle', () => {
       infer: vi.fn(() => new Promise<SegmentationInstance[]>(resolve => { resolveInference = resolve; })),
     };
     const runner = new SegmentationRunner(provider, { now: () => now, minimumIntervalMs: 1000 });
-    const pending = runner.runFrame(frame, 2000, [seed()]);
+    const pending = runner.runFrame(frame, 2000, [{ ...seed(), sourceTimestampMs: 2000 }]);
     expect(await runner.runFrame(frame, 2000, [seed()])).toEqual([]);
-    resolveInference?.([instance()]);
+    resolveInference?.([instance({ sourceTimestampMs: 2000 })]);
     expect(await pending).toHaveLength(1);
     expect(await runner.runFrame(frame, 2500, [seed()])).toEqual([]);
     now = 3001;
