@@ -80,5 +80,7 @@ describe('persistent physical bottle tracking', () => {
     expect(retained.tracks[0].state).toBe('occluded');
     const expired = tracker.update([], 2200);
     expect(expired.tracks).toHaveLength(0);
+    const reappeared = tracker.update([{ worldPoint: point(0.01), confidence: 0.9, geometryComplete: true }], 2300);
+    expect(reappeared.observed[0]!.physicalObjectId).not.toBe('physical-1');
   });
 });
