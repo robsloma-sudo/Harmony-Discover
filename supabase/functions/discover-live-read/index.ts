@@ -91,6 +91,16 @@ const reply = (body: unknown, status = 200, origin: string | null = null) => new
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
 
+// product_index cannot currently verify vintage, package size, SKU/barcode,
+// batch/lot, or a proof/ABV unit. Preserve the sighting but withhold catalog
+// aggregation whenever one of those SKU-level differentiators was read.
+function hasUnmodeledSkuDifferentiator(b: Record<string, unknown>): boolean {
+  const details = (b.details && typeof b.details === "object" ? b.details : b) as Record<string, unknown>;
+  return [details.vintage, details.package_size, details.sku, details.barcode,
+    details.upc_ean, details.batch, details.lot_code, b.size, b.proof]
+    .some((value) => clean(value, 80).length > 0);
+}
+
 type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
 function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
   const additions: EdgePath[] = [];
@@ -335,7 +345,7 @@ Deno.serve(async (req: Request) => {
       // Packaging, shape, closure, category and brand alone never prove an SKU.
       // Require a high-confidence read of both brand and expression plus an
       // exact normalized expression match to a product-level catalogue row.
-      const hit = brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
+      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);\n      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
         !!m?.id && !!m.category && (m.score ?? 0) >= 0.90
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
@@ -405,7 +415,7 @@ Deno.serve(async (req: Request) => {
       const sameExpression = !!m?.product && normalize(m.product) === normalize(b.product);
       // Re-evaluate on the server. Product aggregation requires a strong full
       // expression read and an exact normalized match to a product-level row.
-      const hit = brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
+      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);\n      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
         !!m?.id && !!m.category && (m.score ?? 0) >= 0.90;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
