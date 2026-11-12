@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { verifyDfineModelBytes } from "../src/live/dfineSegRuntime";
+import { verifyDfineModelBytes } from "../src/live/dfineModelIntegrity";
 
 async function sha256(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
