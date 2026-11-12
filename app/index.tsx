@@ -28,6 +28,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [cameraMessage, setCameraMessage] = useState('');
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
+  const [scanMode, setScanMode] = useState<'bottle'|'menu'|'auto'>('auto');
   const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
   const [martyConsentOpen, setMartyConsentOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
@@ -42,9 +43,25 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       const photo = await camera.current?.takePictureAsync({ quality: 0.88 });
       if (!photo?.uri) { setCameraMessage('The viewfinder could not capture this menu page.'); return; }
       addPages([photo.uri], 'camera');
+      setScanMode('menu');
       setScanSource('camera');
       setScanPhotos([photo.uri]);
     } catch { setCameraMessage('Could not capture this menu page. Please try again.'); }
+  };
+
+  const startBottleScan = async () => {
+    setSettingsOpen(false);
+    if (!permission?.granted) {
+      const p = await requestPermission();
+      if (!p.granted) { setCameraMessage('Camera access is needed to scan a bottle.'); return; }
+    }
+    try {
+      const photo = await camera.current?.takePictureAsync({ quality: 0.92 });
+      if (!photo?.uri) { setCameraMessage('The camera could not capture this bottle.'); return; }
+      setScanMode('bottle');
+      setScanSource('camera');
+      setScanPhotos([photo.uri]);
+    } catch { setCameraMessage('Could not capture this bottle. Please try again.'); }
   };
 
   const addMenuPages = async () => {
@@ -69,7 +86,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setCapturing(true);
       setCameraMessage('');
       const photo = await camera.current?.takePictureAsync({ quality: 0.85 });
-      if (photo?.uri) { setScanSource('camera'); setScanPhotos([photo.uri]); }
+      if (photo?.uri) { setScanMode('auto'); setScanSource('camera'); setScanPhotos([photo.uri]); }
       else setCameraMessage('The camera did not return an image. Try again.');
     } catch { setCameraMessage('Could not capture this image. Please try again.'); }
     finally { setCapturing(false); }
@@ -80,6 +97,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     try {
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 6, quality: 0.85 });
       if (result.canceled || !result.assets.length) return;
+      setScanMode('auto');
       setScanSource('gallery');
       setScanPhotos(result.assets.slice(0,6).map(a=>a.uri));
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
@@ -124,7 +142,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
-      {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
+      {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} mode={scanMode} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
       {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
       {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} /></View>}
       {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
@@ -160,6 +178,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <View style={{height:1,backgroundColor:C.line,marginVertical:8}}/>
           <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.4,marginBottom:4}}>ADVANCED SCANNERS</Text>
           <Pressable style={s.menuRow} onPress={startMenuScan}><Ionicons name="document-text-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Read a menu</Text><Text style={s.menuDesc}>Capture menu pages, review extracted items and corrections</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          <Pressable style={s.menuRow} onPress={startBottleScan}><Ionicons name="wine-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Scan a bottle</Text><Text style={s.menuDesc}>Identify labels, products, SKUs, vintages and research details</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('lidar');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           </ScrollView>
