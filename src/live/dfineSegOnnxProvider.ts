@@ -78,8 +78,9 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
     if (!Number.isInteger(this.inputSize) || this.inputSize < 64) {
       throw new Error('D-FINE input size must be an integer of at least 64.');
     }
-    if (!session.inputNames[0] || session.outputNames.length < 4) {
-      throw new Error('D-FINE ONNX graph must expose one input and labels, boxes, scores, masks outputs.');
+    const requiredOutputs = ['labels', 'boxes', 'scores', 'masks'];
+    if (!session.inputNames[0] || requiredOutputs.some(name => !session.outputNames.includes(name))) {
+      throw new Error('D-FINE ONNX graph must expose one input and named labels, boxes, scores, masks outputs.');
     }
   }
 
@@ -91,27 +92,29 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
     const raw = await this.session.run({ [this.session.inputNames[0]!]: tensor });
     if (this.disposed) return [];
 
-    const outputs = this.session.outputNames.map(name => raw[name]);
-    if (outputs.some(value => !value)) throw new Error('D-FINE ONNX output is missing.');
-    const [labels, boxes, scores, masks] = outputs as DfineOrtTensor[];
-    if (labels!.dims.length !== 2 || boxes!.dims.length !== 3 || scores!.dims.length !== 2 || masks!.dims.length !== 4) {
+    const labels = raw.labels;
+    const boxes = raw.boxes;
+    const scores = raw.scores;
+    const masks = raw.masks;
+    if (!labels || !boxes || !scores || !masks) throw new Error('D-FINE ONNX output is missing.');
+    if (labels.dims.length !== 2 || boxes.dims.length !== 3 || scores.dims.length !== 2 || masks.dims.length !== 4) {
       throw new Error('Unexpected D-FINE ONNX output tensor ranks.');
     }
-    const batch = labels!.dims[0];
-    const count = labels!.dims[1];
-    const maskHeight = masks!.dims[2];
-    const maskWidth = masks!.dims[3];
-    if (batch !== 1 || boxes!.dims[0] !== batch || boxes!.dims[1] !== count || boxes!.dims[2] !== 4 ||
-        scores!.dims[0] !== batch || scores!.dims[1] !== count || masks!.dims[0] !== batch || masks!.dims[1] !== count ||
-        labels!.data.length !== count || boxes!.data.length !== count * 4 ||
-        scores!.data.length !== count || masks!.data.length !== count * maskHeight * maskWidth) {
+    const batch = labels.dims[0];
+    const count = labels.dims[1];
+    const maskHeight = masks.dims[2];
+    const maskWidth = masks.dims[3];
+    if (batch !== 1 || boxes.dims[0] !== batch || boxes.dims[1] !== count || boxes.dims[2] !== 4 ||
+        scores.dims[0] !== batch || scores.dims[1] !== count || masks.dims[0] !== batch || masks.dims[1] !== count ||
+        labels.data.length !== count || boxes.data.length !== count * 4 ||
+        scores.data.length !== count || masks.data.length !== count * maskHeight * maskWidth) {
       throw new Error('D-FINE ONNX output tensor dimensions do not match the expected batch-one contract.');
     }
 
-    const labelData = Array.from(labels!.data);
-    const boxData = Array.from(boxes!.data, value => Number(value));
-    const scoreData = Array.from(scores!.data, value => Number(value));
-    const maskData = masks!.data;
+    const labelData = Array.from(labels.data);
+    const boxData = Array.from(boxes.data, value => Number(value));
+    const scoreData = Array.from(scores.data, value => Number(value));
+    const maskData = masks.data;
     if (!(maskData instanceof Float32Array) && !(maskData instanceof Uint8Array)) {
       throw new Error('D-FINE masks must be Float32Array or Uint8Array output.');
     }
