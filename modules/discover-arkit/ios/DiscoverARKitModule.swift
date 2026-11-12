@@ -43,6 +43,9 @@ public class DiscoverARKitModule: Module {
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
+      Prop("recognitionEnabled") { (view: DiscoverARView, enabled: Bool) in
+        view.setRecognitionEnabled(enabled)
+      }
       Prop("captureRequestId") { (view: DiscoverARView, requestId: Int) in
         view.captureFrame(requestId)
       }
@@ -71,6 +74,7 @@ public class DiscoverARKitModule: Module {
 /// separately validated vision/geometry pipeline.
 public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var isActive = false
+  private var isRecognitionEnabled = false
   private var lastTrackingState = ""
 
   let onTrackingUpdate = EventDispatcher()
@@ -114,6 +118,14 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     super.didMoveToWindow()
     if window == nil {
       setActive(false)
+    }
+  }
+
+  func setRecognitionEnabled(_ enabled: Bool) {
+    guard enabled != isRecognitionEnabled else { return }
+    isRecognitionEnabled = enabled
+    if !enabled {
+      onVisualCandidates(["count": 0, "candidates": []])
     }
   }
 
@@ -190,6 +202,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
+    guard isRecognitionEnabled else { return }
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
