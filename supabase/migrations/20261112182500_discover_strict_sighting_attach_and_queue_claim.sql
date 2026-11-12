@@ -28,10 +28,10 @@ begin
 
   details := coalesce(s.label_details, '{}'::jsonb);
   fields := coalesce(details -> '_field_confidence', '{}'::jsonb);
-  if coalesce(fields ->> 'brand', '') ~ '^[0-9]+(\\.[0-9]+)?$' then
+  if coalesce(fields ->> 'brand', '') ~ '^[0-9]+([.][0-9]+)?$' then
     brand_conf := greatest(0, least(1, (fields ->> 'brand')::numeric));
   end if;
-  if coalesce(fields ->> 'product', '') ~ '^[0-9]+(\\.[0-9]+)?$' then
+  if coalesce(fields ->> 'product', '') ~ '^[0-9]+([.][0-9]+)?$' then
     product_conf := greatest(0, least(1, (fields ->> 'product')::numeric));
   end if;
 
