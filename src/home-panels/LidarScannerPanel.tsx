@@ -65,6 +65,10 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
     : [];
 
   const worldTracksRef = React.useRef<SpatialTrack[]>([]);
+  const spatialPointMetadataRef = React.useRef(new Map<number, (typeof spatialPoints)[number]>());
+  for (const point of spatialPoints) {
+    if (point.trackId !== null) spatialPointMetadataRef.current.set(point.trackId, point);
+  }
   React.useEffect(() => {
     if (tracking.state !== 'normal') {
       worldTracksRef.current = [];
@@ -75,8 +79,12 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
       .map(point => ({ trackId: point.trackId as number, point: point.world, confidence: 1 }));
     worldTracksRef.current = updateWorldSpatialTracks(worldTracksRef.current, updates, Date.now());
   }, [depthFrame?.timestamp, bottles, candidates, tracking.state]);
+  const activeWorldTrackIds = new Set(worldTracksRef.current.map(track => track.trackId));
+  for (const trackId of spatialPointMetadataRef.current.keys()) {
+    if (!activeWorldTrackIds.has(trackId)) spatialPointMetadataRef.current.delete(trackId);
+  }
   const persistentWorldPoints = worldTracksRef.current.flatMap(track => {
-    const source = spatialPoints.find(point => point.trackId === track.trackId);
+    const source = spatialPointMetadataRef.current.get(track.trackId);
     return source ? [{ ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt }] : [];
   });
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
