@@ -193,7 +193,7 @@ function WebLiveCamera(props: NativeProps) {
       webTracks = next;
       // Do not expose one-frame guesses as visible bottle tracks. A track must
       // be seen twice and may survive only one missed recognition interval.
-      return next.filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
+      return next.filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
@@ -249,6 +249,12 @@ function WebLiveCamera(props: NativeProps) {
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
+        // Publish model detections immediately; optional local segmentation must
+        // never block the basic bottle boxes from reaching the viewfinder.
+        const immediateCandidates = webTracks
+          .filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
+          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
         const instances = await segmentationPromise;
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
           const segmented = associateInstanceMasks(
@@ -270,7 +276,7 @@ function WebLiveCamera(props: NativeProps) {
           }
         }
         const maskCandidates = webTracks
-          .filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
+          .filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, candidates: maskCandidates } });
 
@@ -494,7 +500,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
       y: prior ? prior.y * (1 - blend) + box.y * blend : box.y,
       width: prior ? prior.width * (1 - blend) + box.width * blend : box.width,
       height: prior ? prior.height * (1 - blend) + box.height * blend : box.height,
-      confidence: bottle.confidence,
+      confidence: bottle.detectionConfidence,
       lastSeenAt: now,
       bottle,
     };
