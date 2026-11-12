@@ -51,7 +51,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveCandidates([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
-    }, 6000);
+      setLiveReadAt(null);
+    }, 12000);
     return () => clearTimeout(staleTimer);
   }, [liveReadAt]);
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
