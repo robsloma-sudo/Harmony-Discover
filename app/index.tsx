@@ -19,7 +19,7 @@ import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { associateLabelSignalsToBottles } from '../src/live/labelBottleAssociation';
 import { SpatialBottleTracker } from '../src/live/spatialBottleTracker';
 import { projectBottleBoxToWorld } from '../src/live/spatialBottleProjection';
-import { matchDetectionToTrack } from '../src/live/overlayTrackAssociation';
+import { matchDetectionsToTracks } from '../src/live/overlayTrackAssociation';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -313,7 +313,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             // Use the tracker's smoothed camera-space rectangle for rendering,
             // not just its ID. Fall back to the latest recognition box when no
             // sufficiently overlapping track can be defended.
-            const track = matchDetectionToTrack({ x, y, width, height }, liveCandidates);
+            const track = overlayTracks[index];
             const renderBox = track ?? { trackId: index + 1, x, y, width, height };
             return (
               <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
