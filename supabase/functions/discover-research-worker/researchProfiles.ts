@@ -1,4 +1,4 @@
-import reference from "../../../docs/research/journeys-research-profiles.reference.json" with { type: "json" };
+import reference from "../_shared/journeysResearchProfiles.json" with { type: "json" };
 
 type Group = { group: string; weight: number; topics: string[]; ask: string };
 type Profile = { label: string; groups: Group[] };
@@ -30,11 +30,11 @@ export function selectResearchProfile(category: string, identity: Record<string,
 export function buildProfilePrompt(category: string, identity: Record<string, unknown>, missing: string[]) {
   const profile=selectResearchProfile(category,identity);
   const groups=[...profile.groups].sort((a,b)=>b.weight-a.weight).slice(0,3);
-  const weighted = groups.map(g=>`- ${g.group} (priority ${g.weight}): ${g.ask} Topics: ${g.topics.join(", ")}`).join("\\n");
+  const weighted = groups.map(g=>`- ${g.group} (priority ${g.weight}): ${g.ask} Topics: ${g.topics.join(", ")}`).join("\n");
   return {
     key: profile.key,
     label: profile.label,
     searchUses: profile.key === "spirit" ? 1 : 2,
-    prompt: `CATEGORY RESEARCH PROFILE: ${profile.label} (Discover adaptation of Harmony Journeys profile ${profile.key}).\\nPrioritize these research dimensions, in order:\\n${weighted}\\nOnly research the missing fields listed below. These are product-identification facts, not editorial storytelling. Never spend searches on founding stories unless the missing field specifically asks for producer history.\\nMISSING FIELDS: ${missing.join(", ")}`
+    prompt: `CATEGORY RESEARCH PROFILE: ${profile.label} (Discover adaptation of Harmony Journeys profile ${profile.key}).\nPrioritize these research dimensions, in order:\n${weighted}\nOnly research the missing fields listed below. These are product-identification facts, not editorial storytelling. Never spend searches on founding stories unless the missing field specifically asks for producer history.\nMISSING FIELDS: ${missing.join(", ")}`
   };
 }
