@@ -59,9 +59,16 @@ jobs:
           model = onnx.load(model_path)
           onnx.checker.check_model(model)
           def describe(value):
-              t = value.type.tensor_type
-              shape = [d.dim_value if d.dim_value else (d.dim_param or None) for d in t.shape.dim]
-              return {"name": value.name, "shape": shape, "element_type": TensorProto.DataType.Name(t.elem_type)}
+              # ONNX Runtime NodeArg exposes shape/type directly; ONNX ValueInfoProto
+              # exposes them under type.tensor_type. Support both representations.
+              if hasattr(value.type, "tensor_type"):
+                  t = value.type.tensor_type
+                  shape = [d.dim_value if d.dim_value else (d.dim_param or None) for d in t.shape.dim]
+                  element_type = TensorProto.DataType.Name(t.elem_type)
+              else:
+                  shape = list(value.shape)
+                  element_type = str(value.type).removeprefix("tensor(").removesuffix(")")
+              return {"name": value.name, "shape": shape, "element_type": element_type}
           session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
           inputs, outputs = session.get_inputs(), session.get_outputs()
           if len(inputs) != 1:
