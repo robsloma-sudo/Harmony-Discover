@@ -250,6 +250,7 @@ do $$
 declare
   stale_id uuid;
   reclaimed record;
+  terminal_status text;
 begin
   update public.discover_enrichment_jobs set status='complete',locked_at=null,locked_by=null
   where job_type='identity_match' and status='queued';
@@ -263,7 +264,16 @@ begin
   );
   if reclaimed.id is distinct from stale_id then raise exception 'stale processing job was not reclaimed'; end if;
   if reclaimed.attempts <> 2 then raise exception 'stale retry attempt counter did not increment'; end if;
-end $$;
+
+  update public.discover_enrichment_jobs
+  set attempts=max_attempts, locked_at=now()-interval '2 hours', status='processing'
+  where id=stale_id;
+  perform * from public.discover_claim_enrichment_jobs(
+    'terminal-worker', 1, 600, array['identity_match']::text[]
+  );
+  select status into terminal_status from public.discover_enrichment_jobs where id=stale_id;
+  if terminal_status <> 'failed' then raise exception 'exhausted stale job must become terminal failed'; end if;
+end $;
 
 -- Existing legacy brand-only "identified" rows must be reconciled, not returned
 -- unchanged by the new idempotency guard.
