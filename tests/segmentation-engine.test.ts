@@ -28,7 +28,7 @@ function instance(overrides: Partial<SegmentationInstance> = {}): SegmentationIn
     height,
     data,
     bounds: { x: 0.2, y: 0.1, width: 0.3, height: 0.7 },
-    confidence: 0.95,
+    detectionConfidence: 0.95,
     sourceTimestampMs: 1000,
     modelId: 'fixture-seg-n',
     ...overrides,
