@@ -8,3 +8,7 @@ verify_jwt = false
 
 [functions.discover-live-read]
 verify_jwt = true
+
+[functions.discover-enrichment-worker]
+# The worker validates a dedicated x-discover-worker-token before any queue access.
+verify_jwt = false
