@@ -1,6 +1,12 @@
 name: Build D-FINE-seg research model
 
 on:
+  push:
+    branches:
+      - fix/spatial-frame-sync-2026-11-12
+    paths:
+      - 'scripts/prepare-dfine-seg-export.py'
+      - '.github/workflows/build-dfine-seg-research-model.yml'
   workflow_dispatch:
     inputs:
       model_size:
