@@ -18,6 +18,7 @@ type NativeProps = ViewProps & {
   active?: boolean;
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
+  onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number } }) => void;
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
@@ -315,5 +316,21 @@ function FallbackNativeCamera(props: NativeProps) {
 export function DiscoverARSurface(props: NativeProps) {
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
-  return <NativeARView {...props} />;
+  return <NativeARView {...props} onFrame={event => {
+    const frame = event.nativeEvent;
+    void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
+      props.onRecognitionUpdate?.({ nativeEvent: {
+        text: result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean),
+        barcodes: [],
+        classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
+        frameTimestamp: frame.timestamp,
+        bottles: result.bottles,
+        menu: result.menu,
+        diagnostics: result.diagnostics,
+        barcodeStatus: 'unsupported',
+      } });
+    }).catch(error => {
+      props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
+    });
+  }} />
 }
