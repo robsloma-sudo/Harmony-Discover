@@ -137,7 +137,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         }
         if (dirty) ctx.putImageData(out, 0, 0, 0, a, EW, b - a + 1);
         lastRow = row;
-        const working = readingRef.current || (state.scanStage === 3 && shownCount < EH);
+        const working = readingRef.current || (state.scanStage >= 1 && state.scanStage <= 3 && shownCount < EH);
         if (lineRef.current) lineRef.current.style.opacity = state.status === 'reading' && state.scanStage === 0 ? '1' : '0';
         if (working) raf = requestAnimationFrame(tick);
       };
