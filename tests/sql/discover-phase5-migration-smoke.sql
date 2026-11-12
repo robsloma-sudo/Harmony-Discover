@@ -51,6 +51,7 @@ create table public.discover_product_evidence (
   id uuid primary key default gen_random_uuid(),
   discover_product_id uuid not null,
   source_type text not null,
+  source_record_id text,
   source_name text,
   observed_value jsonb not null,
   confidence numeric,
@@ -84,6 +85,7 @@ as $$
 $$;
 
 \i supabase/migrations/20261112182500_discover_strict_sighting_attach_and_queue_claim.sql
+\i supabase/migrations/20261112195000_discover_product_evidence_source_record_idempotency.sql
 
 insert into public.product_index(id,brand,product,category)
 values ('10000000-0000-0000-0000-000000000001','Example Spirits','Reposado','tequila');
@@ -190,6 +192,33 @@ begin
     raise exception 'ambiguous catalog candidates must be needs_review';
   end if;
 end $$;
+
+-- Worker evidence source keys are idempotent across retry attempts.
+do $
+declare
+  product_id uuid;
+  evidence_id uuid;
+begin
+  select id into product_id from public.discover_products
+  where brand_name='Example Spirits' and product_name='Reposado'
+  order by created_at limit 1;
+  insert into public.discover_product_evidence(
+    discover_product_id,source_type,source_record_id,source_name,observed_value,confidence,verification_state
+  ) values (
+    product_id,'official_producer','worker:job-1:region','Producer site','{"value":"Highlands"}'::jsonb,0.91,'unreviewed'
+  ) on conflict (discover_product_id,source_record_id)
+  do update set observed_value=excluded.observed_value
+  returning id into evidence_id;
+  insert into public.discover_product_evidence(
+    discover_product_id,source_type,source_record_id,source_name,observed_value,confidence,verification_state
+  ) values (
+    product_id,'official_producer','worker:job-1:region','Producer site','{"value":"Highlands"}'::jsonb,0.91,'unreviewed'
+  ) on conflict (discover_product_id,source_record_id)
+  do update set observed_value=excluded.observed_value;
+  if (select count(*) from public.discover_product_evidence where discover_product_id=product_id and source_record_id='worker:job-1:region') <> 1 then
+    raise exception 'worker retry duplicated source evidence';
+  end if;
+end $;
 
 -- Worker claim is filtered, bounded, and increments attempts/lock ownership.
 do $$
