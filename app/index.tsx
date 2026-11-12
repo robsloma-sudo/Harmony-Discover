@@ -16,6 +16,7 @@ import JourneyPlayerOverlay, { type JourneyScanItem } from '../src/home-panels/J
 import { MartyPanel } from '../src/home-panels/MartyPanel';
 import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
+import { associateLabelSignalsToBottles } from '../src/live/labelBottleAssociation';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -159,6 +160,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
   };
 
+  const labelSignalsByBottle = associateLabelSignalsToBottles(liveBottles.map(bottle => bottle.box), liveTextItems, liveBarcodeItems);
+
   if (!permission) return <View style={s.loading}><Text style={s.loadingText}>DISCOVER</Text></View>;
 
   return (
@@ -222,6 +225,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · LIVE</Text>
+                  {!!(labelSignalsByBottle[index]?.text.length || labelSignalsByBottle[index]?.barcodes.length) && <Text numberOfLines={2} style={s.liveDetectionConfidence}>{[...(labelSignalsByBottle[index]?.text || []).slice(0, 2), ...(labelSignalsByBottle[index]?.barcodes || []).map(code => `BAR ${code}`)].join(' · ')}</Text>}
                 </View>
               </View>
             );
