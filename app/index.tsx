@@ -59,8 +59,6 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     if (!liveReadAt) return;
     const staleTimer = setTimeout(() => {
       setLiveBottles([]);
-      setLiveCandidates([]);
-      setLiveBottleTracks([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
       setLiveTextItems([]);
@@ -88,6 +86,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLivePhysicalIds([]);
       setLiveBottles([]);
       setLiveCandidates([]);
+      setLiveBottleTracks([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
       setLiveTextItems([]);
@@ -267,8 +266,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) { setLiveDepthFrame(value); depthFramesRef.current = [...depthFramesRef.current.filter(frame => value.timestamp - frame.timestamp <= 8 && frame.timestamp <= value.timestamp), value].slice(-20); if (liveBottleFrameTimestamp !== null && Math.abs(value.timestamp - liveBottleFrameTimestamp) <= 0.20) setLiveBottleDepthFrame(current => current ?? value); } }}
           onVisualCandidates={event => {
             const candidates = event.nativeEvent.candidates;
+            if (event.nativeEvent.source !== 'cloud' || candidates.length > 0) {
+              setLiveBottleTracks(previous => mergeTrackedBottleCandidates(previous, candidates));
+            }
             setLiveCandidates(candidates.map(({ trackId, x, y, width, height, confidence }) => ({ trackId, x, y, width, height, confidence })));
-            setLiveBottleTracks(previous => mergeTrackedBottleCandidates(previous, candidates));
           }}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
