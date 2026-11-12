@@ -140,8 +140,8 @@ jobs:
           npx vitest run tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts
           npm run build:web
           test -s dist/index.html
-          find public/ort -maxdepth 1 -name '*.wasm' -print -quit | grep -q .
-          find public/ort -maxdepth 1 -name '*.mjs' -print -quit | grep -q .
+          test -s public/ort/ort-wasm-simd-threaded.wasm
+          test -s public/ort/ort-wasm-simd-threaded.mjs
 
       - name: Commit prototype model and runtime dependency
         run: |
