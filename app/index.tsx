@@ -144,7 +144,7 @@ export default function Home() {
             </View>
           </>}
         </View>
-      </>]}
+      </>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
         <View style={{position:'absolute',zIndex:61,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:screenHeight*0.78,padding:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.99)',borderWidth:1,borderColor:'rgba(198,163,106,0.65)',shadowColor:'#000',shadowOpacity:0.45,shadowRadius:18,shadowOffset:{width:0,height:8},elevation:24}}>
