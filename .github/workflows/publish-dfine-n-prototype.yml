@@ -141,7 +141,8 @@ jobs:
           npm run build:web
           test -s dist/index.html
           test -s public/ort/ort-wasm-simd-threaded.wasm
-          test -s public/ort/ort-wasm-simd-threaded.mjs
+          test -s public/ort/ort.wasm.bundle.min.mjs
+          test -s public/ort/ort-loader.js
 
       - name: Commit prototype model and runtime dependency
         run: |
