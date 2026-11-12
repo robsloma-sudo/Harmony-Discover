@@ -49,6 +49,9 @@ public class DiscoverARKitModule: Module {
       Prop("captureRequestId") { (view: DiscoverARView, requestId: Int) in
         view.captureFrame(requestId)
       }
+      Prop("spatialAnchors") { (view: DiscoverARView, candidates: [[String: Any]]) in
+        view.updateSpatialAnchors(candidates)
+      }
       AsyncFunction("pause") { (view: DiscoverARView) in
         view.setActive(false)
       }
