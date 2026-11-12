@@ -79,13 +79,18 @@ async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Pro
 let activeFinePrintReads = 0;
 const finePrintWaiters: Array<() => void> = [];
 async function withFinePrintSlot<T>(task: () => Promise<T>): Promise<T> {
-  if (activeFinePrintReads >= 2) await new Promise<void>(resolve => finePrintWaiters.push(resolve));
-  activeFinePrintReads += 1;
+  if (activeFinePrintReads >= 2) {
+    // The active slot is handed directly to the next waiter on release.
+    await new Promise<void>(resolve => finePrintWaiters.push(resolve));
+  } else {
+    activeFinePrintReads += 1;
+  }
   try {
     return await task();
   } finally {
-    activeFinePrintReads = Math.max(0, activeFinePrintReads - 1);
-    finePrintWaiters.shift()?.();
+    const next = finePrintWaiters.shift();
+    if (next) next();
+    else activeFinePrintReads = Math.max(0, activeFinePrintReads - 1);
   }
 }
 
