@@ -111,7 +111,7 @@ export class SpatialBottleTracker {
       if (used.has(track.physicalObjectId)) return [track];
       const age = now - track.lastSeenAt;
       track.missedFrames += 1;
-      if (age <= this.options.occlusionGraceMs && track.state !== 'potential') {
+      if (age <= this.options.occlusionGraceMs) {
         track.state = 'occluded';
         track.reason = 'partial_occlusion';
         return [track];
