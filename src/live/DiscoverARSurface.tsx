@@ -53,21 +53,35 @@ function WebLiveCamera(props: NativeProps) {
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
-    const video = videoRef.current;
-    if (!video || video.videoWidth < 2 || video.videoHeight < 2) {
-      callbacksRef.current.onARError?.({ nativeEvent: { message: 'The live camera is not ready to capture yet.' } });
-      return;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext('2d');
-    if (!context) {
-      callbacksRef.current.onARError?.({ nativeEvent: { message: 'The camera frame could not be captured.' } });
-      return;
-    }
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    callbacksRef.current.onCapturedImage?.({ nativeEvent: { uri: canvas.toDataURL('image/jpeg', 0.88), width: canvas.width, height: canvas.height, timestamp: Date.now() } });
+    let attempts = 0;
+    let retryTimer = 0;
+    let cancelled = false;
+    const captureWhenReady = () => {
+      if (cancelled) return;
+      const video = videoRef.current;
+      const ready = !!video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth >= 2 && video.videoHeight >= 2;
+      if (!ready) {
+        attempts += 1;
+        if (attempts < 40) {
+          retryTimer = window.setTimeout(captureWhenReady, 50);
+        } else {
+          callbacksRef.current.onARError?.({ nativeEvent: { message: 'The live camera did not become ready. Please try again.' } });
+        }
+        return;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = video!.videoWidth;
+      canvas.height = video!.videoHeight;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        callbacksRef.current.onARError?.({ nativeEvent: { message: 'The camera frame could not be captured.' } });
+        return;
+      }
+      context.drawImage(video!, 0, 0, canvas.width, canvas.height);
+      callbacksRef.current.onCapturedImage?.({ nativeEvent: { uri: canvas.toDataURL('image/jpeg', 0.88), width: canvas.width, height: canvas.height, timestamp: Date.now() } });
+    };
+    captureWhenReady();
+    return () => { cancelled = true; if (retryTimer) window.clearTimeout(retryTimer); };
   }, [captureRequestId, active]);
 
   useEffect(() => {
@@ -305,19 +319,26 @@ function WebLiveCamera(props: NativeProps) {
 
 function FallbackNativeCamera(props: NativeProps) {
   const cameraRef = useRef<any>(null);
+  const cameraReady = useRef(false);
   const lastRequest = useRef(0);
   const busy = useRef(false);
   useEffect(() => {
     if (!props.active || !props.captureRequestId || props.captureRequestId === lastRequest.current) return;
     lastRequest.current = props.captureRequestId;
     let cancelled = false;
+    let attempts = 0;
     let retry: ReturnType<typeof setTimeout> | null = null;
     const capture = async () => {
       if (cancelled) return;
-      if (busy.current) { retry = setTimeout(() => { void capture(); }, 100); return; }
+      if (!cameraReady.current || !cameraRef.current || busy.current) {
+        attempts += 1;
+        if (attempts < 40) { retry = setTimeout(() => { void capture(); }, 100); return; }
+        props.onARError?.({ nativeEvent: { message: 'The live camera did not become ready. Please try again.' } });
+        return;
+      }
       busy.current = true;
       try {
-        const photo = await cameraRef.current?.takePictureAsync({ quality: 0.88 });
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.88 });
         if (!cancelled && photo?.uri) props.onCapturedImage?.({ nativeEvent: { uri: photo.uri, width: photo.width, height: photo.height, timestamp: Date.now() } });
         else if (!cancelled) props.onARError?.({ nativeEvent: { message: 'The camera did not return an image.' } });
       } catch (error) {
@@ -351,7 +372,7 @@ function FallbackNativeCamera(props: NativeProps) {
     }, 2500);
     return () => { cancelled = true; clearInterval(timer); };
   }, [props.active, props.recognitionEnabled]);
-  return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } })} />;
+  return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => { cameraReady.current = true; props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } }); }} />;
 }
 
 type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number };
