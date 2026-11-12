@@ -181,7 +181,7 @@ function WebLiveCamera(props: NativeProps) {
       // Do not expose one-frame guesses as visible bottle tracks. A track must
       // be seen twice and may survive only one missed recognition interval.
       return next.filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
-        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence }));
+        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour }));
     };
 
     // Keep a single request in flight and pace requests by start time, not by
@@ -234,7 +234,7 @@ function WebLiveCamera(props: NativeProps) {
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })));
         const instances = await segmentationPromise;
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
@@ -260,7 +260,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour }));
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, source: 'local', candidates: maskCandidates } });
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, candidates: trackedCandidates } });
+
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {

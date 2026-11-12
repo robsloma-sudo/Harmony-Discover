@@ -35,7 +35,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;contour?:Array<{x:number;y:number}>}>>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
