@@ -25,3 +25,26 @@ export function contourSegments(points: NormalizedPoint[], viewportWidth: number
   }
   return result;
 }
+
+/**
+ * Map source-image normalized points into a CSS object-fit:cover viewport.
+ * The returned points remain normalized to the viewport for contourSegments.
+ */
+export function mapNormalizedPointsToCover(
+  points: NormalizedPoint[],
+  sourceWidth: number,
+  sourceHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): NormalizedPoint[] {
+  if (sourceWidth <= 0 || sourceHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) return points;
+  const scale = Math.max(viewportWidth / sourceWidth, viewportHeight / sourceHeight);
+  const renderedWidth = sourceWidth * scale;
+  const renderedHeight = sourceHeight * scale;
+  const cropLeft = (renderedWidth - viewportWidth) / 2;
+  const cropTop = (renderedHeight - viewportHeight) / 2;
+  return points.map(point => ({
+    x: (point.x * renderedWidth - cropLeft) / viewportWidth,
+    y: (point.y * renderedHeight - cropTop) / viewportHeight,
+  }));
+}
