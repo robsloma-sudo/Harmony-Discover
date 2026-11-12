@@ -250,6 +250,15 @@ as $function$
   candidates as (
     select j.id from public.discover_enrichment_jobs j cross join limits
     where j.job_type = any(coalesce(p_job_types, array['identity_match']::text[]))
+      and (
+        j.job_type <> 'official_source_lookup'
+        or exists (
+          select 1 from public.discover_products p
+          where p.id = j.discover_product_id
+            and p.status in ('identified', 'verified')
+            and p.identity_payload->>'identity_status' = 'catalog_exact'
+        )
+      )
       and ((j.status in ('queued', 'retry') and j.available_at <= now())
         or (j.status = 'processing' and j.locked_at < now() - limits.stale_after and j.attempts < j.max_attempts))
     order by j.priority asc, j.available_at asc, j.created_at asc
