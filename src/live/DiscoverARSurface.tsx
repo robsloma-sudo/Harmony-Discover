@@ -349,6 +349,7 @@ function FallbackNativeCamera(props: NativeProps) {
 type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number };
 let nativeRecognitionTracks: RecognitionTrack[] = [];
 let nextNativeRecognitionTrackId = 1;
+let nativeFrameReadBusy = false;
 
 function trackNativeBottleReads(bottles: BottleRead[]) {
   const now = Date.now();
@@ -392,6 +393,8 @@ export function DiscoverARSurface(props: NativeProps) {
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
   return <NativeARView {...props} onFrame={event => {
+    if (nativeFrameReadBusy) return;
+    nativeFrameReadBusy = true;
     const frame = event.nativeEvent;
     void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
       props.onRecognitionUpdate?.({ nativeEvent: {
@@ -408,6 +411,6 @@ export function DiscoverARSurface(props: NativeProps) {
       props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
     }).catch(error => {
       props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
-    });
+    }).finally(() => { nativeFrameReadBusy = false; });
   }} />
 }
