@@ -2,6 +2,9 @@ name: Harmony Discover iOS development build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -43,6 +46,16 @@ jobs:
 
       - name: Install EAS CLI
         run: npm install --global eas-cli
+
+      - name: Create and link Harmony Discover EAS project
+        run: eas init --account rsloma --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          CI: "1"
+
+      - name: Show linked EAS project
+        run: |
+          node -e "const c=require('./app.json'); console.log('EAS project ID:', c.expo?.extra?.eas?.projectId || 'NOT WRITTEN')"
 
       - name: Build native iOS development client
         run: eas build --profile development --platform ios --non-interactive
