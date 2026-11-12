@@ -244,7 +244,9 @@ export function updateWorldSpatialTracks(
   const alpha = Math.max(0.05, Math.min(1, options.smoothing ?? 0.28));
   const maxAgeMs = options.maxAgeMs ?? 7000;
   const maxJumpMeters = options.maxJumpMeters ?? 0.65;
-  const reassociationMeters = options.reassociationMeters ?? 0.45;
+  // Bottles on a shelf can be only a few centimetres apart; keep the
+  // default instance-reassociation radius tight to avoid merging neighbours.
+  const reassociationMeters = options.reassociationMeters ?? 0.22;
   const used = new Set<number>();
   const seenSourceIds = new Set<number>();
   const occupiedTrackIds = new Set(previous.map(track => track.trackId));
