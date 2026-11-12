@@ -51,7 +51,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveCandidates([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
-    }, 6000);
+      setLiveReadAt(null);
+    }, 12000);
     return () => clearTimeout(staleTimer);
   }, [liveReadAt]);
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
@@ -196,7 +197,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveBottles.length > 0 && (
         <View pointerEvents="none" style={s.liveDetectionLayer}>
-          {liveCandidates.filter(track => track.bottle && track.bottle.confidence >= 0.58).map(tracked => {
+          {liveCandidates.filter(track => track.bottle && track.confidence >= 0.58).map(tracked => {
             const bottle = tracked.bottle!;
             const left = Math.max(0, Math.min(1, tracked.x));
             const top = Math.max(0, Math.min(1, tracked.y));
@@ -209,7 +210,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                 <View style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
                   <View style={s.liveDetectionLabel}>
                     <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
-                    <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · TRACKED</Text>
+                    <Text style={s.liveDetectionConfidence}>DETECTED · ID {Math.round(bottle.confidence * 100)}%</Text>
                   </View>
                 </View>
               </View>
