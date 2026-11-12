@@ -32,8 +32,8 @@ describe('D-FINE raw ONNX instance-mask adapter', () => {
     const result = adaptDfineSegOnnxOutput(output, 1280, 720, 640, 640, 8000);
     expect(result).toHaveLength(1);
     expect(result[0]?.bounds).toEqual({ x: 0.2, y: 0.1, width: 0.3, height: 0.7 });
-    expect(result[0]?.width).toBe(3);
-    expect(result[0]?.height).toBe(7);
+    expect(result[0]?.width).toBe(384);
+    expect(result[0]?.height).toBe(504);
     expect(result[0]?.sourceTimestampMs).toBe(8000);
   });
 
