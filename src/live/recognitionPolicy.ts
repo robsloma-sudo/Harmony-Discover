@@ -8,11 +8,13 @@ export type LiveRecognitionIntent = {
 };
 
 /**
- * Cloud recognition is deliberately opt-in by screen intent.
- * A camera preview alone must not generate paid recognition frames.
+ * The camera viewfinder is the primary Discover experience, so automatic
+ * bottle recognition starts when that view is open. Detailed capture review
+ * pauses live reads, and utility panels do not silently consume recognition.
  */
 export function shouldEnableLiveRecognition(intent: LiveRecognitionIntent): boolean {
   if (!intent.cameraGranted || intent.reviewingCapture) return false;
-  if (intent.activePanel === 'lidar' && intent.platform === 'web') return intent.scanMode !== 'auto';
-  return intent.scanMode !== 'auto' || intent.activePanel === 'inventory' || intent.activePanel === 'lidar';
+  if (intent.activePanel === 'lidar' && intent.platform === 'web') return false;
+  if (intent.activePanel && intent.activePanel !== 'inventory') return false;
+  return true;
 }
