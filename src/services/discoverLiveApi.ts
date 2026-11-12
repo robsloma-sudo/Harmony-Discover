@@ -16,7 +16,7 @@ export type BottleRead = {
   edgePaths?: BottleEdgePath[];
   words: string[];
   brand: string; product: string; category: string;
-  proof: string; size: string; origin: string; confidence: number;
+  proof: string; size: string; origin: string; confidence: number; detectionConfidence: number;
   fieldConfidence: Record<string, number>;
   researchSources: Array<{ url: string; title: string; supports: string[]; source_type: string }>;
   details: Record<string, string | string[]>;
