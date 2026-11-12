@@ -84,6 +84,7 @@ as $$
 $$;
 
 \i supabase/migrations/20261112182500_discover_strict_sighting_attach_and_queue_claim.sql
+\i supabase/migrations/20261112190000_discover_bottle_save_daily_limits.sql
 
 -- The attachment and queue-claim RPCs must be service-role-only.
 do $phase6$
@@ -295,5 +296,25 @@ begin
   end if;
   if linked_product.identity_payload ->> 'identity_status' <> 'candidate' then
     raise exception 'legacy identity payload was not rewritten to candidate';
+  end if;
+end $$;
+
+-- Daily save quota is separate from the frame quota and enforces both user and project caps.
+do $$
+begin
+  if not public.discover_bottle_save_allow('50000000-0000-0000-0000-000000000001', 2, 3) then
+    raise exception 'first user save should be allowed';
+  end if;
+  if not public.discover_bottle_save_allow('50000000-0000-0000-0000-000000000001', 2, 3) then
+    raise exception 'second user save should be allowed';
+  end if;
+  if public.discover_bottle_save_allow('50000000-0000-0000-0000-000000000001', 2, 3) then
+    raise exception 'per-user daily save cap should reject third save';
+  end if;
+  if not public.discover_bottle_save_allow('50000000-0000-0000-0000-000000000002', 2, 3) then
+    raise exception 'another user should consume the final project slot';
+  end if;
+  if public.discover_bottle_save_allow('50000000-0000-0000-0000-000000000003', 2, 3) then
+    raise exception 'project-wide daily save cap should reject additional users';
   end if;
 end $$;
