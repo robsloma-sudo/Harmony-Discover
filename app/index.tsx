@@ -76,8 +76,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLiveSpatialAnchors([]);
       setLivePhysicalIds([]);
       setLiveBottles([]);
+      setLiveCandidates([]);
+      setLiveBarcodes([]);
+      setLiveLabelText([]);
       setLiveTextItems([]);
       setLiveBarcodeItems([]);
+      setLiveDepthFrame(null);
+      setLiveDepthStatus('waiting_for_depth_provider');
       setLiveBottleDepthFrame(null);
       setLiveBottleFrameTimestamp(null);
       depthFramesRef.current = [];
