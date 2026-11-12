@@ -36,21 +36,51 @@ function makeSession() {
  try { if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID(); } catch {}
  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r.toString(16):(r&3|8).toString(16));});
 }
-function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void}) {
- const sweep=useRef(new Animated.Value(0)).current;
+function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;state:PhotoState;onPress:()=>void;animate?:boolean;onSequenceComplete?:()=>void}) {
+ const progress=useRef(new Animated.Value(0)).current;
+ const [stage,setStage]=useState(0);
+ const [sequenceDone,setSequenceDone]=useState(false);
  useEffect(()=>{
-  if(state.status!=='reading') return;
-  sweep.setValue(0);
-  const loop=Animated.loop(Animated.sequence([Animated.timing(sweep,{toValue:1,duration:2200,useNativeDriver:true}),Animated.timing(sweep,{toValue:0,duration:2200,useNativeDriver:true})]));
-  loop.start();return()=>loop.stop();
- },[state.status,sweep]);
- const translateY=sweep.interpolate({inputRange:[0,1],outputRange:[0,260]});
+  if(!animate||state.status==='error'||(!state.bottles.length&&!state.menu)||sequenceDone)return;
+  let alive=true;
+  const run=(duration:number)=>new Promise<void>(resolve=>{
+   progress.setValue(0);
+   Animated.timing(progress,{toValue:1,duration,useNativeDriver:true}).start(({finished})=>resolve());
+  });
+  void(async()=>{
+   setStage(1);await run(1450);if(!alive)return;
+   setStage(2);await run(1350);if(!alive)return;
+   setStage(3);await run(900);if(!alive)return;
+   setSequenceDone(true);onSequenceComplete?.();
+  })();
+  return()=>{alive=false;progress.stopAnimation();};
+ },[animate,state.status,state.bottles.length,Boolean(state.menu),sequenceDone,progress,onSequenceComplete]);
+ const glow=progress.interpolate({inputRange:[0,1],outputRange:[0.15,1]});
+ const drawScale=progress.interpolate({inputRange:[0,1],outputRange:[0.72,1]});
+ const primary=state.bottles[0];
+ const x0=primary?Math.max(0,Math.min(1,primary.box.x0)):0.25;
+ const y0=primary?Math.max(0,Math.min(1,primary.box.y0)):0.12;
+ const width=primary?Math.max(.08,Math.min(1-x0,primary.box.x1-primary.box.x0)):.5;
+ const height=primary?Math.max(.12,Math.min(1-y0,primary.box.y1-primary.box.y0)):.72;
+ const bottleFrame={left:(x0*100)+'%',top:(y0*100)+'%',width:(width*100)+'%',height:(height*100)+'%'};
+ const showTrace=animate&&!sequenceDone&&stage>0&&state.bottles.length>0;
+ const showLabel=showTrace&&stage===2;
+ const showPrint=showTrace&&stage===3;
+ const revealResults=!animate||sequenceDone;
  return <Pressable onPress={onPress} style={s.photo}>
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
-  <Animated.View pointerEvents="none" style={[s.sweep,{transform:[{translateY}]}]}/>
-  {state.bottles.map((b,i)=><View key={keyOf(b)+i} style={[s.tag,{left:(((b.box.x0+b.box.x1)/2*100)+'%') as `${number}%`,top:(Math.max(8,b.box.y0*100-2)+'%') as `${number}%`}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'Unsure':nameOf(b)||'Bottle'}</Text></View>)}
-  <View style={s.photoStatus}>{state.status==='reading'?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>READING LABELS</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
+  {showTrace&&<>
+   <Animated.View pointerEvents="none" style={[s.bottleTrace,bottleFrame,{opacity:glow,transform:[{scale:drawScale}]}]}>
+    <View style={s.bottleNeck}/>
+    <View style={s.bottleShoulders}/>
+    <View style={s.bottleBody}/>
+   </Animated.View>
+   {showLabel&&<Animated.View pointerEvents="none" style={[s.labelTrace,{left:(x0*100+width*18)+'%',top:(y0*100+height*39)+'%',width:(width*64)+'%',height:(height*31)+'%',opacity:glow,transform:[{scale:drawScale}]}]}/>}
+   {showPrint&&<Animated.View pointerEvents="none" style={[s.printTrace,{left:(x0*100+width*19)+'%',top:(y0*100+height*43)+'%',width:(width*62)+'%',opacity:glow}]}><View/><View/><View/></Animated.View>}
+  </>}
+  {revealResults&&state.bottles.map((b,i)=><View key={keyOf(b)+i} style={[s.tag,{left:(((b.box.x0+b.box.x1)/2*100)+'%') as `${number}%`,top:(Math.max(8,b.box.y0*100-2)+'%') as `${number}%`}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'Unsure':nameOf(b)||'Bottle'}</Text></View>)}
+  <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING PRINT':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
 export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
@@ -63,6 +93,7 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
  const [venue,setVenue]=useState('');
  const [saving,setSaving]=useState(false);
  const [researchComplete,setResearchComplete]=useState(false);
+ const [visualComplete,setVisualComplete]=useState<Record<number,boolean>>({});
  const [note,setNote]=useState('');
  const [removed,setRemoved]=useState<Record<string,boolean>>({});
  const started=useRef<Record<number,boolean>>({});
@@ -108,10 +139,10 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
    <View style={s.headerCenter}><Text style={s.kicker}>HARMONY DISCOVER</Text><Text style={s.headline}>{reading?'READING '+reading+' OF '+uris.length:'SCAN COMPLETE'}</Text></View><View style={{width:78}}/>
   </View>
   {active===-1&&uris.length>1?<View style={s.grid}>{uris.map((uri,i)=><View key={uri+i} style={s.gridCell}><Photo uri={uri} state={states[i]||EMPTY} onPress={()=>setActive(i)}/></View>)}</View>:<>
-   <View style={s.hero}><Photo uri={uris[active]||uris[0]} state={current} onPress={()=>{}}/></View>
+   <View style={s.hero}><Photo uri={uris[active]||uris[0]} state={current} onPress={()=>{}} animate onSequenceComplete={()=>setVisualComplete(old=>({...old,[active]:true}))}/></View>
    {uris.length>1&&<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.thumbs}>{uris.map((uri,i)=><Pressable key={uri+i} onPress={()=>setActive(i)} style={[s.thumb,i===active&&s.thumbOn]}><Image source={{uri}} style={s.thumbImage}/><Text style={s.thumbLabel}>{i+1}</Text></Pressable>)}</ScrollView>}
    <ScrollView style={s.details} contentContainerStyle={s.detailsContent}>
-    {focus?<><Text style={s.product}>{nameOf(focus)||'Bottle read'}</Text><Text style={[s.match,focus.state==='matched'?{color:C.green}:{color:C.muted}]}>{focus.state==='matched'?'✓ CATALOG MATCH':'READ FROM LABEL · NOT CONFIRMED'}</Text></>:current.menu?<><Text style={s.product}>{current.menu.title||'Menu detected'}</Text><Text style={s.match}>{current.menu.items.length+' MENU ITEMS FOUND'}</Text></>:<Text style={s.empty}>{current.status==='reading'?'Tracing label edges and reading printed text…':current.status==='error'?current.note:'No clearly readable bottle or menu on this photo.'}</Text>}
+    {focus&&visualComplete[active]?<><Text style={s.product}>{nameOf(focus)||'Bottle read'}</Text><Text style={[s.match,focus.state==='matched'?{color:C.green}:{color:C.muted}]}>{focus.state==='matched'?'✓ CATALOG MATCH':'READ FROM LABEL · NOT CONFIRMED'}</Text></> :current.menu&&visualComplete[active]?<><Text style={s.product}>{current.menu.title||'Menu detected'}</Text><Text style={s.match}>{current.menu.items.length+' MENU ITEMS FOUND'}</Text></>:<Text style={s.empty}>{current.status==='reading'?'Tracing the bottle, label and printed text…':current.status==='error'?current.note:'No clearly readable bottle or menu on this photo.'}</Text>}
     <View style={s.twoPanels}>
       <View style={s.factPanel}><Text style={s.panelTitle}>DETECTED</Text>{facts.map(([label,value],i)=><View key={label+i} style={s.fact}><Text style={s.factLabel}>{label.toUpperCase()}</Text><Text style={s.factValue}>{value}</Text></View>)}</View>
       {focus&&<View style={s.researchPanel}><Text style={s.panelTitle}>RESEARCHING</Text><Text style={s.researchHint}>{saving?'SEARCHING TRUSTED SOURCES…':researchComplete?'RESEARCH RESULTS':'SEARCH TARGETS · RUN ON SAVE'}</Text>{RESEARCH_FIELDS.map(([label,key])=>{const value=researchValue(focus,key);const status=value?'FOUND':researchComplete?'NOT FOUND':'QUEUED';return <View key={key} style={s.researchRow}><Text style={s.researchLabel}>{label}</Text><Text style={[s.researchStatus,value?{color:C.green}:researchComplete?{color:C.amber}:{color:C.muted}]}>{status}</Text></View>;})}{(focus.researchSources||[]).length>0&&<><Text style={s.panelTitle}>SOURCES · {focus.researchSources.length}</Text>{focus.researchSources.slice(0,4).map((x,i)=><Text key={x.url||i} style={s.sourceText}>{x.title||x.url}</Text>)}</>}</View>}
@@ -131,7 +162,7 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
 }
 const s=StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg,paddingTop:8},header:{height:58,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,borderBottomWidth:1,borderBottomColor:C.line},back:{color:C.blue,fontSize:11,fontWeight:'900',letterSpacing:1.2},headerCenter:{alignItems:'center'},kicker:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:2},headline:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1.4,marginTop:4},
- hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.22)'},sweep:{position:'absolute',left:0,right:0,top:0,height:3,backgroundColor:'#DCEBFF',shadowColor:C.blue,shadowOpacity:1,shadowRadius:12,elevation:9},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
+ hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.12)'},bottleTrace:{position:'absolute',borderColor:'#67B7FF',borderWidth:2,borderRadius:34,shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:14,elevation:12},bottleNeck:{position:'absolute',top:'-1%',left:'38%',width:'24%',height:'19%',borderWidth:2,borderColor:'#A5D7FF',borderBottomWidth:0,borderTopLeftRadius:7,borderTopRightRadius:7,backgroundColor:'transparent'},bottleShoulders:{position:'absolute',top:'13%',left:'8%',right:'8%',height:'17%',borderTopWidth:2,borderColor:'#75C2FF',borderTopLeftRadius:34,borderTopRightRadius:34},bottleBody:{position:'absolute',top:'27%',left:'1%',right:'1%',bottom:'1%',borderWidth:1.5,borderColor:'#4F9FFF',borderRadius:16,shadowColor:'#4F9FFF',shadowOpacity:0.9,shadowRadius:8},labelTrace:{position:'absolute',borderWidth:2,borderColor:'#A8D9FF',borderRadius:5,shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:13,elevation:10},printTrace:{position:'absolute',gap:5},{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
  thumbs:{paddingHorizontal:12,paddingBottom:8,gap:8},thumb:{width:56,height:66,borderWidth:1,borderColor:C.line,borderRadius:8,overflow:'hidden'},thumbOn:{borderColor:C.blue,borderWidth:2},thumbImage:{width:'100%',height:46},thumbLabel:{color:C.muted,textAlign:'center',fontSize:9,paddingTop:2},
  details:{maxHeight:270,borderTopWidth:1,borderTopColor:C.line},detailsContent:{padding:12},product:{color:C.text,fontSize:23,fontWeight:'900',textShadowColor:C.blue,textShadowRadius:10},match:{color:C.green,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginTop:5},empty:{color:C.muted,fontSize:12,lineHeight:18},twoPanels:{flexDirection:'row',gap:10,marginTop:12,alignItems:'flex-start'},factPanel:{flex:1,minWidth:0},researchPanel:{flex:1,minWidth:0,borderLeftWidth:1,borderLeftColor:C.line,paddingLeft:8},panelTitle:{color:C.blue,fontSize:10,fontWeight:'900',letterSpacing:1,marginBottom:8},researchHint:{color:C.muted,fontSize:8,fontWeight:'800',marginBottom:7},fact:{width:'100%',minHeight:38,paddingVertical:7,borderBottomWidth:1,borderBottomColor:C.line},researchRow:{paddingVertical:6,borderBottomWidth:1,borderBottomColor:C.line},researchLabel:{color:C.muted,fontSize:9,lineHeight:12},researchStatus:{fontSize:8,fontWeight:'900',marginTop:3},sourceText:{color:C.muted,fontSize:8,lineHeight:11,marginBottom:5},factLabel:{color:C.blue,fontSize:9,fontWeight:'900',letterSpacing:.6,width:'38%',paddingRight:10},factValue:{color:C.text,fontSize:12,fontWeight:'700',marginTop:0,flex:1},
  note:{color:C.green,fontSize:11,textAlign:'center',paddingVertical:6},footer:{paddingHorizontal:16,paddingTop:10,paddingBottom:24,borderTopWidth:1,borderTopColor:C.line},tally:{color:C.muted,fontSize:9,fontWeight:'900',letterSpacing:1.1},actions:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:8},textAction:{paddingVertical:10},actionText:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1},saveButton:{backgroundColor:C.blue,paddingVertical:12,paddingHorizontal:16,borderRadius:8},saveText:{color:'#061020',fontSize:10,fontWeight:'900',letterSpacing:1},
