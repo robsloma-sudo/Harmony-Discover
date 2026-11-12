@@ -218,11 +218,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
             return (
-              <View key={tracked.trackId} style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
+              <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <MaskContourOverlay points={tracked.contour} color="#55D9FF" strokeWidth={2.2} />
+                <View style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · TRACKED</Text>
+                </View>
                 </View>
               </View>
             );
