@@ -6,7 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
-import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
+import { DiscoverARSurface, type ARTrackingUpdate, type NativeSpatialAnchor } from '../src/live/DiscoverARSurface';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
@@ -34,6 +34,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  const [liveSpatialAnchors, setLiveSpatialAnchors] = useState<NativeSpatialAnchor[]>([]);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
@@ -166,6 +167,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           active={!!permission.granted && !scanPhotos}
           recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel })}
           captureRequestId={captureRequestId}
+          spatialAnchors={liveSpatialAnchors}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
@@ -255,7 +257,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
           {activePanel!=='lidar' && activePanel!=='nearby' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
-          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} onSpatialAnchors={setLiveSpatialAnchors} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
           {activePanel==='marty' && martyConsentOpen && <>
             <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
             <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
