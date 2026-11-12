@@ -9,6 +9,8 @@ export type MetricDepthMap = {
   height: number;
   /** Row-major depth values in metres; invalid samples are 0, NaN, or Infinity. */
   metres: ArrayLike<number>;
+  /** Optional ARKit confidence values: 0=low, 1=medium, 2=high. */
+  confidence?: ArrayLike<number>;
 };
 
 export type CameraIntrinsics = {
@@ -58,6 +60,7 @@ function median(values: number[]): number | null {
 /** Samples the inner 50% of a box to reduce background-edge contamination. */
 export function sampleBoxDepth(depth: MetricDepthMap, box: ImageBox): { metres: number; sampleCount: number } | null {
   if (depth.width < 1 || depth.height < 1 || depth.metres.length < depth.width * depth.height) return null;
+  if (depth.confidence && depth.confidence.length < depth.width * depth.height) return null;
   const left = Math.max(0, Math.min(depth.width - 1, Math.floor((box.x0 * 0.75 + box.x1 * 0.25) * depth.width)));
   const right = Math.max(left + 1, Math.min(depth.width, Math.ceil((box.x0 * 0.25 + box.x1 * 0.75) * depth.width)));
   const top = Math.max(0, Math.min(depth.height - 1, Math.floor((box.y0 * 0.75 + box.y1 * 0.25) * depth.height)));
@@ -65,8 +68,10 @@ export function sampleBoxDepth(depth: MetricDepthMap, box: ImageBox): { metres: 
   const values: number[] = [];
   for (let y = top; y < bottom; y++) {
     for (let x = left; x < right; x++) {
-      const value = Number(depth.metres[y * depth.width + x]);
-      if (finitePositive(value) && value <= 100) values.push(value);
+      const index = y * depth.width + x;
+      const value = Number(depth.metres[index]);
+      const confidence = depth.confidence ? Number(depth.confidence[index]) : 1;
+      if (confidence > 0 && finitePositive(value) && value <= 100) values.push(value);
     }
   }
   const value = median(values);
