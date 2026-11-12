@@ -52,11 +52,19 @@ function loadDfineBrowserRuntime(): Promise<DfineOrtRuntime> {
     script.src = '/ort/ort.min.js';
     script.async = true;
     script.dataset.discoverOrtRuntime = 'true';
+    const timeout = window.setTimeout(() => {
+      script.remove();
+      reject(new Error('ONNX Runtime browser bundle load timed out.'));
+    }, 20_000);
     script.onload = () => {
+      window.clearTimeout(timeout);
       if (browserWindow.ort) resolve(browserWindow.ort);
       else reject(new Error('ONNX Runtime browser bundle loaded without exposing window.ort.'));
     };
-    script.onerror = () => reject(new Error('Unable to load the local ONNX Runtime browser bundle.'));
+    script.onerror = () => {
+      window.clearTimeout(timeout);
+      reject(new Error('Unable to load the local ONNX Runtime browser bundle.'));
+    };
     document.head.appendChild(script);
   }).catch(error => {
     dfineOrtRuntimePromise = null;
