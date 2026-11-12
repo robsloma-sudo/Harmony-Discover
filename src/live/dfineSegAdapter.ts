@@ -168,7 +168,7 @@ export function adaptDfineSegOnnxOutput(
       height: cropped.height,
       data: cropped.data,
       bounds: cropped.bounds,
-      confidence: candidate.score,
+      detectionConfidence: candidate.score,
       sourceTimestampMs,
       modelId,
     });
@@ -249,7 +249,7 @@ export function adaptDfineSegOutput(
         width: width / imageWidth,
         height: height / imageHeight,
       },
-      confidence: score,
+      detectionConfidence: score,
       sourceTimestampMs,
       modelId,
     });
