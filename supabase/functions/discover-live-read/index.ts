@@ -37,6 +37,38 @@ const DETAILS: Record<string, string> = {
   sku: "SKU or item code printed on package",
   barcode: "UPC, EAN or other barcode digits only when decoded from a barcode",
   style: "beverage style as printed (e.g. IPA, lager, stout, brut, rosé)",
+  distillery: "distillery named on the label",
+  winery: "winery or estate named on the label",
+  bottler: "bottler or independent bottler named on the label",
+  brand_owner: "brand owner or parent company when printed",
+  bottling_location: "bottling location as printed",
+  state_or_province: "state, province or territory as printed",
+  subregion: "subregion, AVA, district or island as printed",
+  vineyard: "named vineyard or single-vineyard designation",
+  estate: "estate, château or property name as printed",
+  mash_bill: "grain recipe or mash bill as printed",
+  grain: "grain or cereal type as printed",
+  agave_type: "agave species or source as printed",
+  production_method: "production method or process as printed",
+  distillation: "distillation details or number of distillations as printed",
+  cask_type: "specific cask or barrel type as printed",
+  barrel_number: "barrel number as printed",
+  bottled_on: "bottling date as printed",
+  distilled_on: "distillation date as printed",
+  harvested_on: "harvest year or date as printed",
+  disgorged_on: "disgorgement date as printed",
+  dosage: "dosage as printed for sparkling wine",
+  residual_sugar: "residual sugar as printed",
+  lot_code: "lot or production code as printed",
+  sku: "SKU or item number printed on the package",
+  upc_ean: "UPC or EAN digits only when actually decoded from a barcode",
+  label_designation: "other legally meaningful designation or statement printed on the label",
+  appellation_level: "appellation level or legal designation as printed",
+  organic_claim: "organic, biodynamic or sustainability claim as printed",
+  awards: "medals or awards printed on the label",
+  alcohol_statement: "exact alcohol statement as printed",
+  net_contents: "net contents exactly as printed",
+  package_material: "container material as seen (glass, aluminum, stainless steel, etc.)",
 };
 const DETAIL_KEYS = Object.keys(DETAILS);
 const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
@@ -92,11 +124,12 @@ const TOOL = {
       origin: { type: "string", description: "place of origin as printed; empty if not readable" },
       certifications: { type: "array", maxItems: 6, items: { type: "string" }, description: "certification marks or claims printed (e.g. USDA Organic, Kosher, Biodynamic, Vegan, Gluten Free, Additive Free)" },
       ...Object.fromEntries(DETAIL_KEYS.map((k) => [k, { type: "string", description: DETAILS[k] + "; empty if not printed or not readable" }])),
+      field_confidence: { type: "object", description: "Independent 0-to-1 confidence for each returned field. Include only fields with a value; confidence is based on legibility, not whether the answer seems plausible.", additionalProperties: { type: "number" } },
       confidence: { type: "number", description: "0 to 1: how sure you are the brand was READ from the label, not guessed" },
     } } } },
   },
 };
-const SYSTEM = "You read one photo taken in a bar, shop or restaurant: bottle labels (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. For each bottle with a visible label return its box and ONLY what is printed on that label. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Skip glasses, taps, people and bottles facing away. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. If no labelled bottle is visible return an empty bottles list. Always call the bottles tool.";
+const SYSTEM = "You read one photo taken in a bar, shop or restaurant: bottle labels (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. For each bottle with a visible label return its box and ONLY what is printed on that label. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Return an independent field_confidence score for every populated field; a low-confidence value must be left empty rather than guessed. Distinguish exact product expression from brand, producer, distillery, bottler, category, legal class, style, appellation, region, origin, package size and SKU/barcode. Extract all legible label and package facts, including bottling/distillation/harvest/disgorgement dates, mash bill/grain/agave, cask/barrel, lot/batch, vineyard/estate, dosage/residual sugar, importer, awards, organic claims and package material when printed or visibly identifiable. Do not infer a SKU or barcode from a product match. Skip glasses, taps, people and bottles facing away. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. If no labelled bottle is visible return an empty bottles list. Always call the bottles tool.";
 
 async function readFrame(key: string, model: string, b64: string) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -166,6 +199,19 @@ Deno.serve(async (req: Request) => {
         category: CATEGORIES.includes(String(b.category)) ? String(b.category) : "other",
         proof: clean(b.proof, 30), size: clean(b.size, 30), origin: clean(b.origin, 60), confidence: unit(b.confidence),
         details: pickDetails(b),
+        fieldConfidence: (() => {
+          const raw = (b.field_confidence && typeof b.field_confidence === "object" ? b.field_confidence : {}) as Record<string, unknown>;
+          const out: Record<string, number> = {};
+          for (const [key, value] of Object.entries(raw)) {
+            const score = Number(value);
+            if (Number.isFinite(score)) out[key] = unit(score);
+          }
+          for (const key of ["brand", "product", "category", "proof", "size", "origin", ...DETAIL_KEYS]) {
+            const value = key === "brand" ? b.brand : key === "product" ? b.product : key === "category" ? b.category : key === "proof" ? b.proof : key === "size" ? b.size : key === "origin" ? b.origin : (pickDetails(b)[key]);
+            if (value && out[key] === undefined) out[key] = unit(b.confidence);
+          }
+          return out;
+        })(),
       };
     }).filter((b) => b.box.x1 > b.box.x0 && b.box.y1 > b.box.y0);
     const queries = list.map((b) => clean(`${b.brand} ${b.product}`, 120) || b.words.slice(0, 3).join(" "));
@@ -213,7 +259,7 @@ Deno.serve(async (req: Request) => {
     if (saveErr || saveOk !== true) return reply({ error: saveErr ? "rate_limit_unavailable" : "rate_limited" }, saveErr ? 503 : 429, origin);
     const incoming = (Array.isArray(body.bottles) ? body.bottles as Array<Record<string, unknown>> : []).slice(0, MAX_SAVE)
       .map((b) => ({ brand: clean(b.brand, 80), product: clean(b.product, 80), category: CATEGORIES.includes(String(b.category)) ? String(b.category) : "other",
-        proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b) }))
+        proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {} }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
     const queries = incoming.map((b) => clean(`${b.brand} ${b.product}`, 120));
@@ -225,7 +271,7 @@ Deno.serve(async (req: Request) => {
       const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
-        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: b.details, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
+        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
     const { error } = await db.from("bottle_sightings").insert(rows);
