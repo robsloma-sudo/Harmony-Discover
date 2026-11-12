@@ -93,23 +93,57 @@ Product identity confidence, bottle detection confidence, mask confidence, and p
 
 ## Current phase status
 
-**Not complete.** Mask-to-contour and overlay plumbing exists. D-FINE model-specific preprocessing, raw output tensor decoding, NMS, crop/resize, and the provider contract are implemented with synthetic fixtures. A GitHub Actions export job is currently building the COCO instance-segmentation ONNX artifact; the scanner typecheck/test/web-export workflow is also running. No actual camera-frame mask has yet been produced, and no physical iPhone benchmark has been run.
+<badge color="warning">Implementation in progress — not accepted</badge>
+
+### Verified model artifact
+- D-FINE-seg-N COCO instance-segmentation model exported to ONNX FP32 and passed upstream parity.
+- Model is versioned under `public/models/` with license, provenance, graph contract, and SHA-256 metadata.
+- SHA-256: `999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30`.
+- Real exported graph contract was inspected and executed with ONNX Runtime CPU:
+  - Input `input`: FP32 `[1, 3, 640, 640]`
+  - `labels`: INT64 `[1, 300]`
+  - `boxes`: FP32 `[1, 300, 4]`
+  - `scores`: FP32 `[1, 300]`
+  - `masks`: FP32 `[1, 300, 160, 160]`
+- Browser runtime dependency is pinned in the lockfile; web build copies only the required WASM binary and JS glue assets into `public/ort/`.
+- Browser loader verifies the model checksum before creating a WASM-only inference session.
+
+### Live camera integration now implemented in a separate draft branch
+- Bounded local inference is started from the same cropped camera frame sent to cloud recognition.
+- Inference cadence is bounded to at least 2.2 seconds, max 8 tracks, and 1.6-second frame freshness.
+- Only cloud-detected bottle boxes seed mask association.
+- Masks are associated by overlap and source timestamp to persistent bottle track IDs.
+- Accepted mask contours are emitted to the existing overlay path; prior contours are transformed with track motion between fresh masks.
+- No box-derived or fabricated silhouettes are emitted when inference fails.
+- The web runtime is platform-specific; native builds use a stub rather than bundling the browser ONNX Runtime package.
+
+### Build validation
+- D-FINE export, graph inspection, ONNX CPU smoke test, and model provenance packaging have succeeded.
+- A native iOS simulator build has succeeded on the platform-separated runtime branch. This is a compile check only, not a physical-device test.
+- The latest web camera integration CI is still pending. An earlier web export caught Metro resolving the native/server stub instead of the web runtime; platform-specific `.web.ts` loader and an exported-bundle check have been added to catch this.
+
+### Still not complete
+- No actual bottle camera frame has yet been shown to produce and render a D-FINE mask in a running browser.
+- No hand-annotated bottle segmentation dataset or mask IoU / boundary F-score benchmark exists yet.
+- No physical iPhone Safari performance, battery, memory, or thermal test has been run.
+- COCO's generic bottle category is not beverage SKU/product recognition; product identity remains the separate Phase 5 pipeline.
+- License and redistribution review must be completed before public model distribution.
 
 ## Immediate implementation sequence
 
-1. Complete the active D-FINE-seg COCO ONNX export and retain its artifact + provenance.
-2. Verify the exported graph's real tensor names, ranks, dimensions, and output values against the implemented adapter; adjust from real graph metadata if needed.
-3. Add ONNX Runtime Web as a pinned app dependency and regenerate the lockfile in a network-enabled CI environment.
-4. Load the verified model through the WASM provider and connect bounded frame capture to the live browser camera.
-5. Associate masks with persistent bottle track IDs and render accepted contours only.
-6. Run typecheck, focused tests, full regression, web export, and real-frame parity tests.
-7. Benchmark desktop Chrome and iOS Safari WASM; obtain physical iPhone battery/thermal/latency measurements.
-8. Compare D-FINE-seg-S/M, MobileSAM, SAM 2.1 Tiny, and native Vision after the N baseline works.
+1. Finish the current web bundle verification, including the model URL and required WASM assets in the exported client bundle.
+2. Run a real bottle image/frame through the WASM provider and inspect decoded masks, crop alignment, confidence, and contour overlay.
+3. Test multiple adjacent bottles, partial occlusion, glare, dark/clear glass, shelf clutter, and motion blur; record false masks and missed masks.
+4. Measure cold/warm first-mask latency and sustained inference cadence on desktop Chrome and iOS Safari.
+5. Obtain physical iPhone measurements for memory, battery, and 10-minute thermal behavior.
+6. Build a hand-annotated held-out dataset and report mask IoU and boundary F-score by scenario before setting release thresholds.
+7. Complete model license review and full regression before considering any production release.
 
 ## References
 
 - D-FINE-seg upstream: https://github.com/ArgoHA/D-FINE-seg
 - ONNX Runtime Web browser support: https://onnxruntime.ai/docs/get-started/with-javascript/web.html
 - ONNX Runtime Web overview: https://onnxruntime.ai/docs/tutorials/web/
+- ONNX Runtime Web deployment assets: https://onnxruntime.ai/docs/tutorials/web/deploy.html
 - Apple Vision foreground instance masks: https://developer.apple.com/documentation/vision/vngenerateforegroundinstancemaskrequest
 - MobileSAM upstream: https://github.com/ChaoningZhang/MobileSAM
