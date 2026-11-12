@@ -9,6 +9,8 @@ export type BottleRead = {
   words: string[];
   brand: string; product: string; category: string;
   proof: string; size: string; origin: string; confidence: number;
+  fieldConfidence: Record<string, number>;
+  researchSources: Array<{ url: string; title: string; supports: string[]; source_type: string }>;
   details: Record<string, string | string[]>;
   match: { id: string; brand: string | null; product: string | null; score: number } | null;
   state: BottleState;
@@ -38,7 +40,7 @@ export type LiveRead = { bottles: BottleRead[]; menu: MenuGlimpse; diagnostics: 
 export async function readLiveFrame(jpegBase64: string): Promise<LiveRead> {
   const result = await call({ action: 'frame', image: jpegBase64 });
   const menu = result.menu && typeof result.menu === 'object' ? result.menu as MenuGlimpse : { visible: false, title: '', items: [] };
-  const bottles = Array.isArray(result.bottles) ? result.bottles as BottleRead[] : [];
+  const bottles = Array.isArray(result.bottles) ? result.bottles.map((b: Record<string, unknown>) => ({ ...b, researchSources: Array.isArray(b.research_sources) ? b.research_sources : [] })) as BottleRead[] : [];
   const d = result.diagnostics && typeof result.diagnostics === 'object' ? result.diagnostics : {};
   return { bottles, menu: { visible: !!menu.visible, title: menu.title || '', items: Array.isArray(menu.items) ? menu.items : [] }, diagnostics: { version: String(d.version || result.version || 'unknown'), model: String(d.model || result.model || 'unknown'), providerMs: Number(d.provider_ms) || 0, bottlesReturned: Number(d.bottles_returned) || bottles.length, bottlesConfident: Number(d.bottles_confident) || 0, bottlesMatched: Number(d.bottles_matched) || 0 } };
 }
@@ -47,7 +49,7 @@ export async function readLiveFrame(jpegBase64: string): Promise<LiveRead> {
 export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number }> {
   const result = await call({
     action: 'save', scan_session_id: scanSessionId, venue_name: venueName,
-    bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details })),
+    bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details, field_confidence: b.fieldConfidence, research_sources: b.researchSources })),
   });
   return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0 };
 }

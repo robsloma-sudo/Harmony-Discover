@@ -27,18 +27,24 @@ const text = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v || ''))
 
 /** The facts worth showing for one bottle, most important first. Only what was printed on the label. */
 function factsOf(b: BottleRead): Array<[string, string]> {
-  const d = b.details || {};
-  const rows: Array<[string, string]> = [
-    ['Brand', b.match?.brand || b.brand], ['Expression', b.product], ['Type', CATEGORY[b.category] || ''],
-    ['Producer', text(d.producer)], ['Vintage', text(d.vintage)], ['Appellation', text(d.appellation)],
-    ['Region', text(d.region) || b.origin || text(d.country)], ['Grapes', text(d.grapes)], ['Class', text(d.classification)],
-    ['Age', text(d.age_statement)], ['Finish', text(d.cask_finish)], ['Flavour', text(d.flavor)],
-    ['Strength', b.proof], ['Size', b.size], ['Batch', text(d.batch)], ['Certified', text(d.certifications)],
+  const d=b.details||{}, fc=b.fieldConfidence||{};
+  const rows: Array<[string,string]> = [
+    ['Brand',b.match?.brand||b.brand],['Producer',text(d.producer)],['Distillery',text(d.distillery)],['Winery / estate',text(d.winery)||text(d.estate)],
+    ['Bottler',text(d.bottler)],['Brand owner',text(d.brand_owner)],['Product expression',b.product],['Category',CATEGORY[b.category]||b.category],
+    ['Class / designation',text(d.classification)||text(d.label_designation)],['Style',text(d.style)],['Subcategory',text(d.subcategory)],
+    ['Origin',b.origin||text(d.country)],['Region',text(d.region)],['Subregion / AVA',text(d.subregion)],['Appellation',text(d.appellation)],['Appellation level',text(d.appellation_level)],
+    ['Vineyard',text(d.vineyard)],['Grapes',text(d.grapes)],['Vintage',text(d.vintage)],['Harvest',text(d.harvested_on)],
+    ['Proof / ABV',b.proof],['Bottle size',b.size||text(d.net_contents)||text(d.package_size)],['Package type',text(d.package_type)],['Package material',text(d.package_material)],
+    ['SKU',text(d.sku)],['UPC / EAN',text(d.upc_ean)],['Age statement',text(d.age_statement)],['Mash bill',text(d.mash_bill)],['Grain',text(d.grain)],['Agave',text(d.agave_type)],
+    ['Production method',text(d.production_method)],['Distillation',text(d.distillation)],['Cask type',text(d.cask_type)],['Cask finish',text(d.cask_finish)],
+    ['Barrel number',text(d.barrel_number)],['Batch',text(d.batch)],['Lot code',text(d.lot_code)],['Distilled on',text(d.distilled_on)],['Bottled on',text(d.bottled_on)],
+    ['Disgorged on',text(d.disgorged_on)],['Dosage',text(d.dosage)],['Residual sugar',text(d.residual_sugar)],['Flavor',text(d.flavor)],
+    ['Importer',text(d.importer)],['Certifications',text(d.certifications)],['Organic claim',text(d.organic_claim)],['Awards',text(d.awards)],
   ];
-  const seen = new Set<string>();
-  return rows.filter(([, v]) => { const k = v.toLowerCase(); if (!v || seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
+  const seen=new Set<string>();
+  const aliases:Record<string,string>={brand:'brand','product expression':'product',category:'category','class / designation':'classification','proof / abv':'proof','bottle size':'size',origin:'origin','winery / estate':'winery', 'subregion / ava':'subregion','appellation level':'appellation_level','age statement':'age_statement','cask finish':'cask_finish','barrel number':'barrel_number','lot code':'lot_code','organic claim':'organic_claim','upc / ean':'upc_ean'};
+  return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;}).map(([label,value])=>{const field=aliases[label.toLowerCase()]||label.toLowerCase().replace(/[^a-z0-9]+/g,'_');const score=fc[field];return [score===undefined?label:`${label} · ${Math.round(score*100)}%`,value] as [string,string];});
 }
-
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
 
@@ -168,7 +174,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
   const showMenu = !!cur && !focus && !!cur.menu;
   const facts: Array<[string, string]> = focus ? factsOf(focus) : showMenu ? cur!.menu!.items.slice(0, 12).map(it => [it.price || it.type, it.name] as [string, string]) : [];
   const sideKey = focus ? keyOf(focus) : showMenu ? `menu-${open}` : '';
-  const left = facts.filter((_, i) => i % 2 === 0), right = facts.filter((_, i) => i % 2 === 1);
+  
 
   /** Hands the menu photos to the existing menu flow: review, corrections and consent all happen there. */
   function keepMenu() { if (!menuPages.length) return; addPages(menuPages, source); router.push('/preview'); }
@@ -232,16 +238,16 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
         )}
       </div>
 
-      {facts.length > 0 && [left, right].map((col, side) => (
-        <div key={`${sideKey}-${side}`} style={{ position: 'absolute', top: '30%', [side ? 'right' : 'left']: 12, width: '31vw', maxWidth: 190, textAlign: side ? 'right' : 'left', pointerEvents: 'none' }}>
-          {col.slice(0, 6).map(([label, value], i) => (
-            <div key={`${label}-${value}`} className="hd-fly" style={{ marginBottom: 14, animation: `${side ? 'hdFlyR' : 'hdFlyL'} .55s cubic-bezier(.2,.8,.2,1) both`, animationDelay: `${(i * 2 + side) * 0.11}s` }}>
-              <div style={{ ...dim, fontSize: 10, letterSpacing: 0.6 }}>{label}</div>
-              <div style={{ ...word, fontSize: 14, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{value}</div>
+      {facts.length > 0 && (
+        <div key={sideKey} style={{ position: 'absolute', left: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.82)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '10px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+          {facts.map(([label, value], i) => (
+            <div key={`${label}-${i}`} style={{ display: 'grid', gridTemplateColumns: '38% minmax(0,1fr)', columnGap: 12, alignItems: 'start', padding: '9px 0', borderBottom: '1px solid rgba(153,180,220,.18)' }}>
+              <div style={{ ...dim, fontSize: 10, letterSpacing: .45, lineHeight: 1.25 }}>{label}</div>
+              <div style={{ ...word, fontSize: 12, lineHeight: 1.3, overflowWrap: 'anywhere', textAlign: 'left' }}>{value}</div>
             </div>
           ))}
         </div>
-      ))}
+      )
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '0 22px max(18px, env(safe-area-inset-bottom))' }}>
         {note ? <div style={{ ...dim, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>{note}</div> : null}
