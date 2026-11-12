@@ -324,14 +324,21 @@ Deno.serve(async (req: Request) => {
     const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      // A fuzzy result is not an identity proof. Require the returned catalogue brand
-      // to agree with the printed brand and require a real product/SKU row.
-      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
+      const normalize = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+      const fieldConfidence = b.fieldConfidence as Record<string, number>;
+      const brandReadIsStrong = !!b.brand && (fieldConfidence.brand ?? 0) >= 0.90;
+      const productReadIsStrong = !!b.product && (fieldConfidence.product ?? 0) >= 0.90;
+      const sameBrand = !!m?.brand && normalize(m.brand) === normalize(b.brand);
+      const sameExpression = !!m?.product && normalize(m.product) === normalize(b.product);
+      // Packaging, shape, closure, category and brand alone never prove an SKU.
+      // Require a high-confidence read of both brand and expression plus an
+      // exact normalized expression match to a product-level catalogue row.
+      const hit = brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
+        !!m?.id && !!m.category && (m.score ?? 0) >= 0.90
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
-      const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
-      return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
+      const state = !brandReadIsStrong || !productReadIsStrong ? "unsure" : hit ? "matched" : "reported";
+      return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> };
     });
     const mraw = (input?.menu && typeof input.menu === "object" ? input.menu : {}) as Record<string, unknown>;
     const items = (Array.isArray(mraw.items) ? mraw.items as Array<Record<string, unknown>> : []).slice(0, 40)
