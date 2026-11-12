@@ -7,6 +7,9 @@ on:
     paths:
       - "app/**"
       - "src/**"
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
       - "tests/**"
       - "modules/discover-arkit/**"
       - "package.json"
@@ -52,6 +55,9 @@ jobs:
 
       - name: Type-check live reader Edge Function
         run: deno check --node-modules-dir=auto supabase/functions/discover-live-read/index.ts
+
+      - name: Type-check enrichment worker Edge Function
+        run: deno check --node-modules-dir=auto supabase/functions/discover-enrichment-worker/index.ts
 
       - name: TypeScript validation
         run: npm run typecheck
