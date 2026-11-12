@@ -107,11 +107,8 @@ async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant
     if (!context) continue;
     const frame = context.createImageData(width, height);
     const src = original.data, dst = frame.data;
-    const mean = new Float64Array(3);
-    for (let p = 0; p < src.length; p += 4) { mean[0] += src[p]; mean[1] += src[p + 1]; mean[2] += src[p + 2]; }
     const count = Math.max(1, width * height);
-    mean[0] /= count; mean[1] /= count; mean[2] /= count;
-    let sum = 0, sumSq = 0;
+    let clipped = 0;
     for (let p = 0; p < src.length; p += 4) {
       const r0 = src[p], g0 = src[p + 1], b0 = src[p + 2];
       const lum = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
@@ -131,17 +128,31 @@ async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant
       g = Math.max(0, Math.min(255, g));
       b = Math.max(0, Math.min(255, b));
       dst[p] = r; dst[p + 1] = g; dst[p + 2] = b; dst[p + 3] = src[p + 3];
-      const outLum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      sum += outLum; sumSq += outLum * outLum;
+      if (r < 3 || r > 252 || g < 3 || g > 252 || b < 3 || b > 252) clipped += 1;
     }
-    const variance = Math.max(0, sumSq / count - Math.pow(sum / count, 2));
+    // Score local edge energy rather than global contrast: text strokes create
+    // compact gradients, while flat exposure changes and clipped highlights do not.
     context.putImageData(frame, 0, 0);
-    variants.push({ name: recipe.name, jpeg: canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '', score: Math.sqrt(variance) });
+    const enhanced = context.getImageData(0, 0, width, height).data;
+    let edgeEnergy = 0, edgeSamples = 0;
+    const luminance = (x: number, y: number) => {
+      const p = (y * width + x) * 4;
+      return 0.2126 * enhanced[p] + 0.7152 * enhanced[p + 1] + 0.0722 * enhanced[p + 2];
+    };
+    for (let y = 1; y < height - 1; y += 2) for (let x = 1; x < width - 1; x += 2) {
+      const gx = -luminance(x-1,y-1) - 2*luminance(x-1,y) - luminance(x-1,y+1) + luminance(x+1,y-1) + 2*luminance(x+1,y) + luminance(x+1,y+1);
+      const gy = -luminance(x-1,y-1) - 2*luminance(x,y-1) - luminance(x+1,y-1) + luminance(x-1,y+1) + 2*luminance(x,y+1) + luminance(x+1,y+1);
+      edgeEnergy += Math.min(255, Math.hypot(gx, gy) / 4);
+      edgeSamples += 1;
+    }
+    const clippingPenalty = (clipped / count) * 180;
+    const score = edgeSamples ? edgeEnergy / edgeSamples - clippingPenalty : 0;
+    variants.push({ name: recipe.name, jpeg: canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '', score });
   }
   return variants.filter(v => !!v.jpeg).sort((a, b) => b.score - a.score);
 }
 
-type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4; menu: MenuGlimpse | null; note: string };
+type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4 | 5; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], visualBottles: [], visualMenu: null, scanStage: 0, menu: null, note: '' };
 
 /** One frozen photo with its own sweep line, glowing edges and name tags. */
@@ -272,14 +283,15 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         // Pass 4 magnifies each label. Pass 5 keeps sweeping while local enhancement
         // variants are generated and the strongest candidates are sent for fine-print OCR.
         patch(i, { scanStage: 4 });
-        const fineReads = await Promise.all(result.bottles.slice(0, 4).map(async bottle => {
+        // Hard budget: at most two bottles and one enhanced OCR request per bottle.
+        // The initial full-frame read is the baseline; do not resend every recipe to the model.
+        const fineReads = await Promise.all(result.bottles.slice(0, 2).map(async bottle => {
           try {
             const crop = await makeFinePrintCrop(uris[i], bottle.label_box || bottle.box);
             if (!crop) return [];
             patch(i, { scanStage: 5 });
             const variants = await makeFinePrintVariants(crop);
-            // Keep the original plus the three highest-contrast enhanced candidates.
-            const selected = [variants.find(v => v.name === 'original'), ...variants.filter(v => v.name !== 'original').slice(0, 3)].filter((v): v is EnhancementVariant => !!v);
+            const selected = variants.filter(v => v.name !== 'original').slice(0, 1);
             const reads = await Promise.all(selected.map(async variant => {
               try {
                 const response = await readLiveFrame(variant.jpeg, 'fine_print');
