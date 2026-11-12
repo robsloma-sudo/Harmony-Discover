@@ -63,7 +63,7 @@ export function AtlasMap({center, venues, onSelectVenue, height=210}:{
       const wrappedX=wrap(tx,count);
       result.push({
         key:zoom+'-'+tx+'-'+ty,
-        uri:'https://basemaps.cartocdn.com/dark_all/'+zoom+'/'+wrappedX+'/'+ty+'.png',
+        uri:'https://tile.openstreetmap.org/'+zoom+'/'+wrappedX+'/'+ty+'.png',
         left:size.width/2+(tx*TILE_SIZE-c.x)+drag.x,
         top:size.height/2+(ty*TILE_SIZE-c.y)+drag.y,
       });
@@ -84,7 +84,7 @@ export function AtlasMap({center, venues, onSelectVenue, height=210}:{
     style={{height,width:'100%',borderRadius:14,overflow:'hidden',backgroundColor:'#071326',borderWidth:1,borderColor:'rgba(54,123,255,0.42)'}}>
     <View style={{position:'absolute',left:0,right:0,top:0,bottom:0}} {...responder.panHandlers}>
       {tiles.map(t=><Image key={t.key} source={{uri:t.uri}} resizeMode="stretch" style={{position:'absolute',left:t.left,top:t.top,width:TILE_SIZE,height:TILE_SIZE}} />)}
-      <View pointerEvents="none" style={{position:'absolute',left:0,right:0,top:0,bottom:0,backgroundColor:'rgba(4,13,35,0.18)'}}/>
+      <View pointerEvents="none" style={{position:'absolute',left:0,right:0,top:0,bottom:0,backgroundColor:'rgba(4,13,35,0.34)'}}/>
       {pins.map(pin=><Pressable key={pin.id} onPress={()=>onSelectVenue?.(pin.id)} style={{position:'absolute',left:pin.left-8,top:pin.top-8,width:16,height:16,borderRadius:8,backgroundColor:'#3B82F6',borderWidth:2,borderColor:'#DCEBFF',shadowColor:'#287BFF',shadowOpacity:0.95,shadowRadius:9,elevation:8}} />)}
       {center&&<View pointerEvents="none" style={{position:'absolute',left:size.width/2-7,top:size.height/2-7,width:14,height:14,borderRadius:7,backgroundColor:'#58A6FF',borderWidth:2,borderColor:'#EAF4FF',shadowColor:'#318BFF',shadowOpacity:1,shadowRadius:12,elevation:9}}/>}
     </View>
@@ -94,7 +94,7 @@ export function AtlasMap({center, venues, onSelectVenue, height=210}:{
       <Pressable onPress={()=>{if(center){setMapCenter(center);setZoom(12);}else{setMapCenter({latitude:39.5,longitude:-98.35});setZoom(4);}}} style={{width:32,height:32,borderRadius:9,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(5,15,32,0.92)',borderWidth:1,borderColor:'rgba(91,155,255,0.7)'}}><Text style={{color:'#8FC2FF',fontSize:13,fontWeight:'900'}}>◎</Text></Pressable>
     </View>
     <View pointerEvents="none" style={{position:'absolute',left:9,bottom:7,paddingHorizontal:7,paddingVertical:4,borderRadius:6,backgroundColor:'rgba(3,9,20,0.76)'}}>
-      <Text style={{color:'rgba(220,235,255,0.8)',fontSize:7,letterSpacing:0.4}}>© OpenStreetMap · CARTO · DRAG TO MOVE</Text>
+      <Text style={{color:'rgba(220,235,255,0.8)',fontSize:7,letterSpacing:0.4}}>© OpenStreetMap contributors · DRAG TO MOVE</Text>
     </View>
   </View>;
 }
