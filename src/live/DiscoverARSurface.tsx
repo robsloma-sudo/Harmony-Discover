@@ -26,7 +26,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }> }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
@@ -143,7 +143,7 @@ function WebLiveCamera(props: NativeProps) {
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
-    type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }> };
+    type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
@@ -153,7 +153,7 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
-    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number }>) => {
+    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead }>) => {
       const now = Date.now();
       const used = new Set<number>();
       const next: WebTrack[] = [];
@@ -179,6 +179,7 @@ function WebLiveCamera(props: NativeProps) {
           width: trackBounds.width,
           height: trackBounds.height,
           confidence: detection.confidence,
+          bottle: detection.bottle,
           lastSeenAt: now,
           misses: 0,
           hits: (previous?.hits ?? 0) + 1,
@@ -197,7 +198,7 @@ function WebLiveCamera(props: NativeProps) {
       // Do not expose one-frame guesses as visible bottle tracks. A track must
       // be seen twice and may survive only one missed recognition interval.
       return next.filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
-        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour }));
+        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
     // Keep a single request in flight and pace requests by start time, not by
@@ -257,7 +258,7 @@ function WebLiveCamera(props: NativeProps) {
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence })));
+        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })));
         const instances = await segmentationPromise;
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
           const segmented = associateInstanceMasks(
@@ -280,7 +281,7 @@ function WebLiveCamera(props: NativeProps) {
         }
         const maskCandidates = webTracks
           .filter(track => track.hits >= 2 && track.misses <= 1 && track.confidence >= 0.58)
-          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour }));
+          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, candidates: maskCandidates } });
 
       } catch (error) {
@@ -469,7 +470,7 @@ function FallbackNativeCamera(props: NativeProps) {
   return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => { cameraReady.current = true; props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } }); }} />;
 }
 
-type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number };
+type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; bottle: BottleRead };
 let nativeRecognitionTracks: RecognitionTrack[] = [];
 let nextNativeRecognitionTrackId = 1;
 let nativeFrameReadBusy = false;
@@ -505,6 +506,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
       height: prior ? prior.height * (1 - blend) + box.height * blend : box.height,
       confidence: bottle.confidence,
       lastSeenAt: now,
+      bottle,
     };
     next.push(track);
     return track;
@@ -546,7 +548,7 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
-        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })) } });
+        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
       }).catch(error => {
         props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
       }).finally(() => { nativeFrameReadBusy = false; });
