@@ -66,5 +66,9 @@ jobs:
       - name: Export web build
         run: npm run build:web
 
-      - name: Verify exported app
-        run: test -s dist/index.html
+      - name: Verify exported app and local ONNX runtime assets
+        run: |
+          test -s dist/index.html
+          test -s public/ort/ort.min.js
+          find public/ort -maxdepth 1 -name '*.mjs' -print -quit | grep -q .
+          find public/ort -maxdepth 1 -name '*.wasm' -print -quit | grep -q .
