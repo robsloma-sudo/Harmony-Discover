@@ -7,6 +7,7 @@
 // 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { hasStrongProductIdentity } from "../_shared/bottleIdentity.ts";
 
 const VERSION = "0.3.8";
 const PROJECT = "lqqmwqrffelgnbngrkep";
@@ -90,23 +91,7 @@ function headers(origin: string | null): Headers {
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
-const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-function hasUnmodeledSkuDifferentiator(b: Record<string, unknown>): boolean {
-  const details = (b.details && typeof b.details === "object" ? b.details : {}) as Record<string, unknown>;
-  // product_index cannot distinguish these package/release-level variants safely.
-  return [b.proof, b.size, details.vintage, details.package_size, details.sku,
-    details.barcode, details.upc_ean, details.batch, details.lot_code]
-    .some((value) => clean(value, 80).length > 0);
-}
-function hasStrongProductIdentity(b: Record<string, unknown>, match: { id: string | null; brand: string | null; product: string | null; category: string | null; score: number | null } | undefined): boolean {
-  const confidence = (b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : b.field_confidence) as Record<string, unknown> | undefined;
-  return !!match?.id && !!match.brand && !!match.product && !!match.category &&
-    (match.score ?? 0) >= 0.90 &&
-    unit(confidence?.brand) >= 0.90 && unit(confidence?.product) >= 0.90 &&
-    normalizeIdentity(match.brand) === normalizeIdentity(b.brand) &&
-    normalizeIdentity(match.product) === normalizeIdentity(b.product) &&
-    !hasUnmodeledSkuDifferentiator(b);
-}
+
 
 type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
 function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
