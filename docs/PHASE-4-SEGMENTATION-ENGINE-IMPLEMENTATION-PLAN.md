@@ -1,6 +1,6 @@
 # Harmony Discover Phase 4 — Segmentation Engine Implementation Plan
 
-Status: **in progress — model inference is not yet integrated or validated**  
+Status: **in progress — model and browser/WASM inference are integrated and CI-validated; physical-device and real-bottle acceptance remain open**  
 Branch: `fix/spatial-frame-sync-2026-11-12`  
 Scope: Harmony Discover only. No Supabase migrations, Edge Function deployment, production merge, or Netlify deployment.
 
@@ -16,7 +16,7 @@ The current branch already contains:
 - Persistent visual track IDs and a contour-warping fallback between fresh observations.
 - A strict visual rule: the overlay renders no silhouette when no actual mask exists.
 
-The missing component is the model inference provider. No segmentation runtime or model weights are currently in `package.json` or the repository. The existing contour tests validate synthetic masks; they do not prove that a camera frame can generate a bottle mask.
+The D-FINE-seg-N ONNX model, pinned ONNX Runtime Web WASM runtime, browser camera integration, model-integrity verification, and mask-to-track overlay path are now implemented. CI executes the real model with ONNX Runtime CPU and ONNX Runtime Web WASM and validates output tensors. The browser camera captures the same centered, cover-cropped frame shown to the user, runs bounded single-flight inference in parallel with cloud recognition, associates masks to persistent track IDs, and emits contours only from measured mask pixels. The CI runtime smoke test uses a zero-valued tensor; positive bottle detection and real-camera output are not yet proven.
 
 ## Candidate decision
 
@@ -32,7 +32,7 @@ Reasons:
 
 License gate:
 - Do not use the Cityscapes semantic-segmentation weights; upstream says those weights inherit non-commercial Cityscapes terms.
-- Before bundling any ONNX artifact, record the exact upstream checkpoint/export source, SHA-256, model card, dataset terms, and license notices in the repository.
+- The committed COCO instance-segmentation artifact records its upstream checkpoint/export source, SHA-256, model card, and Apache-2.0 license notice in repository metadata. The upstream model card states code and COCO-pretrained instance-segmentation checkpoints are Apache-2.0; internal legal/data-provenance review is still required before public redistribution.
 - A generic COCO bottle class is not a claim of reliable wine/spirits/beer packaging segmentation. A bottle-specific dataset and evaluation are still required.
 
 ### Browser runtime
@@ -52,8 +52,8 @@ Keep MobileSAM as a later box-prompted mask-refinement comparison. Do not make i
 ## Required runtime architecture
 
 1. Existing trusted cloud bottle detections seed per-bottle boxes and persistent visual track IDs.
-2. A segmentation scheduler requests masks only for new or materially changed tracks, with a bounded cadence and one in-flight inference per camera session.
-3. The provider returns per-instance masks with source frame timestamp, track association, mask dimensions, model/runtime identifier, and confidence/quality metadata.
+2. The browser camera scheduler captures the current visible/cropped frame at the existing cloud-recognition cadence, with a one-second minimum segmentation interval and one in-flight inference per camera session. The model currently processes the full cropped frame; it is not yet a per-track ROI model.
+3. The provider returns per-instance masks with source frame timestamp, mask dimensions, model/runtime identifier, detection confidence, and mask quality. Track association is performed against the same-frame cloud-seeded persistent bottle tracks.
 4. Associate masks to bottle seeds using overlap/IoU and reject ambiguous or low-overlap matches.
 5. Convert accepted masks using `extractMaskContour`; validate area, bounds, point count, and mask-to-seed overlap.
 6. Attach the contour to the persistent visual track ID.
@@ -65,7 +65,7 @@ Product identity confidence, bottle detection confidence, mask confidence, and p
 ## Performance policy
 
 - Do not run segmentation at the 10 Hz tracking cadence.
-- Initial experiment: one mask refresh per second at most, only when a trusted bottle seed exists; adapt cadence based on measured latency and drift.
+- Initial experiment: at most one segmentation inference per second, started alongside a trusted cloud bottle read; current cloud recognition cadence is slower than this cap. Adapt cadence based on measured latency and drift.
 - Bound input dimensions, concurrent inference, queued frames, mask resolution, and contour point count.
 - Cancel stale results when camera session/generation changes or the source frame is too old.
 - Release model sessions and temporary frame/mask buffers when the scanner stops.
@@ -93,18 +93,27 @@ Product identity confidence, bottle detection confidence, mask confidence, and p
 
 ## Current phase status
 
-**Not complete.** Mask-to-contour and overlay plumbing exists. D-FINE model-specific preprocessing, raw output tensor decoding, NMS, crop/resize, and the provider contract are implemented with synthetic fixtures. A GitHub Actions export job is currently building the COCO instance-segmentation ONNX artifact; the scanner typecheck/test/web-export workflow is also running. No actual camera-frame mask has yet been produced, and no physical iPhone benchmark has been run.
+**Not complete.** The D-FINE-seg-N COCO ONNX model is committed under `public/models/` with checksum, provenance, Apache-2.0 license metadata, and an actual graph contract generated by inspecting and executing the model. The pinned runtime is `onnxruntime-web@1.31.1`; the web prebuild copies the UMD browser bundle, WASM loader modules, and WASM binaries into `public/ort/` so Expo Metro does not parse the runtime's internal dynamic imports.
+
+The browser camera path now loads the UMD runtime outside Metro, downloads the model with a 45-second timeout and 32 MB size cap, verifies SHA-256 before session creation, and backs off failed initialization attempts. It performs bounded WASM inference alongside cloud bottle recognition, associates real mask outputs to same-frame persistent visual track IDs, and maps contours to the actual camera cover crop. Prior measured contours may be warped with their tracked boxes for a bounded period; no silhouette is fabricated when inference fails.
+
+CI currently verifies:
+- ONNX checksum, ONNX checker, actual graph input/output names/shapes, and CPU inference.
+- Actual ONNX Runtime Web WASM inference using the committed model and tensor contract.
+- TypeScript, Deno live-reader check, scanner/segmentation/contour tests, Expo web export, and local UMD/WASM runtime assets.
+- The overlay's centered cover-crop transform with unit tests.
+
+**Remaining gaps:** the runtime smoke tests use a zero-valued 640x640 tensor, not a positive bottle image. There is no held-out annotated beverage-bottle dataset, no measured bottle-mask IoU/boundary F-score, and no verified first-mask result from a real browser camera session or physical iPhone. Sustained latency, memory, battery, and thermal behavior remain unmeasured. The model is a generic COCO bottle class, not a wine/spirits/beer SKU segmenter.
 
 ## Immediate implementation sequence
 
-1. Complete the active D-FINE-seg COCO ONNX export and retain its artifact + provenance.
-2. Verify the exported graph's real tensor names, ranks, dimensions, and output values against the implemented adapter; adjust from real graph metadata if needed.
-3. Add ONNX Runtime Web as a pinned app dependency and regenerate the lockfile in a network-enabled CI environment.
-4. Load the verified model through the WASM provider and connect bounded frame capture to the live browser camera.
-5. Associate masks with persistent bottle track IDs and render accepted contours only.
-6. Run typecheck, focused tests, full regression, web export, and real-frame parity tests.
-7. Benchmark desktop Chrome and iOS Safari WASM; obtain physical iPhone battery/thermal/latency measurements.
-8. Compare D-FINE-seg-S/M, MobileSAM, SAM 2.1 Tiny, and native Vision after the N baseline works.
+1. Run a positive bottle-image inference test using a rights-cleared, annotated bottle image; verify class 39 detection, box coordinates, mask probabilities, and contour extraction.
+2. Build a versioned, manually annotated bottle evaluation set covering clear/dark glass, glare, backlighting, overlap, shelf clutter, reflections, motion blur, and unusual bottle shapes. Report mask IoU, boundary F-score, detection recall/precision, and bottle-to-mask association rate.
+3. Test the web export in desktop Chrome and iPhone Safari with real camera permissions. Verify model download/checksum, UMD/WASM initialization, first mask, contour alignment, and graceful fallback.
+4. Measure cold load, first-mask latency, warm latency, sustained cadence, memory, long-session stability, battery, and thermal behavior on a physical iPhone.
+5. Tune cadence, score threshold, mask threshold, crop resolution, and contour point budget only against the fixed evaluation set.
+6. Preserve the Apache-2.0 notice and metadata; complete internal legal/data-provenance review before public redistribution.
+7. Evaluate D-FINE-seg-S/M, MobileSAM, or native Vision only if the N baseline's measured accuracy or performance requires a comparison. Native iOS segmentation remains a separate later phase.
 
 ## References
 
