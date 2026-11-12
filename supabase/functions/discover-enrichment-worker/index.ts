@@ -404,7 +404,7 @@ Deno.serve(async (req: Request) => {
 
   const deferredTypes = [
     ...DEFERRED_JOB_TYPES,
-    ...(!supportedTypes.includes("official_source_lookup") ? ["official_source_lookup"] : []),
+    ...(!supportedTypes.some(type => type === "official_source_lookup") ? ["official_source_lookup"] : []),
   ];
   return json({
     ok: true,
