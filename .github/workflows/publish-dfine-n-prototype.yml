@@ -141,6 +141,7 @@ jobs:
           npm run build:web
           test -s dist/index.html
           find public/ort -maxdepth 1 -name '*.wasm' -print -quit | grep -q .
+          find public/ort -maxdepth 1 -name '*.mjs' -print -quit | grep -q .
 
       - name: Commit prototype model and runtime dependency
         run: |
