@@ -19,7 +19,7 @@ function factsOf(b: BottleRead): Array<[string,string]> {
   ['Class / designation',clean(d.classification)||clean(d.label_designation)],['Style',clean(d.style)],['Subcategory',clean(d.subcategory)],
   ['Origin',b.origin||clean(d.country)],['Region',clean(d.region)],['Subregion / AVA',clean(d.subregion)],['Appellation',clean(d.appellation)],['Appellation level',clean(d.appellation_level)],
   ['Vineyard',clean(d.vineyard)],['Grapes',clean(d.grapes)],['Vintage',clean(d.vintage)],['Harvest',clean(d.harvested_on)],
-  ['Proof / ABV',b.proof],['Bottle size',b.size||clean(d.net_contents)],['Package type',clean(d.package_type)],['Package material',clean(d.package_material)],
+  ['Proof / ABV',b.proof],['Bottle size',b.size||clean(d.net_contents)||clean(d.package_size)],['Package type',clean(d.package_type)],['Package material',clean(d.package_material)],
   ['SKU',clean(d.sku)],['UPC / EAN',clean(d.upc_ean)],['Age statement',clean(d.age_statement)],['Mash bill',clean(d.mash_bill)],['Grain',clean(d.grain)],['Agave',clean(d.agave_type)],
   ['Production method',clean(d.production_method)],['Distillation',clean(d.distillation)],['Cask type',clean(d.cask_type)],['Cask finish',clean(d.cask_finish)],
   ['Barrel number',clean(d.barrel_number)],['Batch',clean(d.batch)],['Lot code',clean(d.lot_code)],['Distilled on',clean(d.distilled_on)],['Bottled on',clean(d.bottled_on)],
@@ -27,7 +27,7 @@ function factsOf(b: BottleRead): Array<[string,string]> {
   ['Importer',clean(d.importer)],['Certifications',clean(d.certifications)],['Organic claim',clean(d.organic_claim)],['Awards',clean(d.awards)]
  ];
  const seen=new Set<string>();
- return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;});
+ return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;}).map(([label,value])=>{const field=label.toLowerCase().replace(/[^a-z0-9]+/g,'_');const score=fc[field];return [score===undefined?label:`${label} · ${Math.round(score*100)}%`,value] as [string,string];});
 }
 function makeSession() {
  try { if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID(); } catch {}
