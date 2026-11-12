@@ -172,7 +172,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   public func session(_ session: ARSession, didUpdate frame: ARFrame) {
     guard isActive else { return }
     let now = frame.timestamp
-    if now - lastDepthFrameTime >= 0.20 {
+    if now - lastDepthFrameTime >= 0.50 {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
