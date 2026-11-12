@@ -205,7 +205,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               return score > best.score ? { id: candidate.trackId, score } : best;
             }, { id: index + 1, score: 0 });
             return (
-              <View key={track.id} style={[s.liveDetectionBox, { left: (x * 100) + '%', top: (y * 100) + '%', width: (width * 100) + '%', height: (height * 100) + '%' }]}>
+              <View key={track.id} style={[s.liveDetectionBox, { left: ((x * 100) + '%') as `${number}%`, top: ((y * 100) + '%') as `${number}%`, width: ((width * 100) + '%') as `${number}%`, height: ((height * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · LIVE</Text>
