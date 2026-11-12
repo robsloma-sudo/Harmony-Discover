@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraPermissions } from 'expo-camera';
@@ -20,6 +20,7 @@ import { associateLabelSignalsToBottles } from '../src/live/labelBottleAssociati
 import { SpatialBottleTracker } from '../src/live/spatialBottleTracker';
 import { projectBottleBoxToWorld } from '../src/live/spatialBottleProjection';
 import { mergeTrackedBottleCandidates, type TrackedBottleRecord } from '../src/live/trackedBottleRegistry';
+import { MaskContourOverlay } from '../src/live/MaskContourOverlay';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -314,7 +315,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
             const renderBox = record;
             return (
-              <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
+              <Fragment key={renderBox.trackId}>
+              <View style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · READ</Text>
@@ -323,6 +325,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                   {!!(labelSignalsByBottle[index]?.text.length || labelSignalsByBottle[index]?.barcodes.length) && <Text numberOfLines={2} style={s.liveDetectionConfidence}>{[...(labelSignalsByBottle[index]?.text || []).slice(0, 2), ...(labelSignalsByBottle[index]?.barcodes || []).map(code => `BAR ${code}`)].join(' · ')}</Text>}
                 </View>
               </View>
+              <MaskContourOverlay points={record.contour} />
+              </Fragment>
             );
           })}
         </View>
