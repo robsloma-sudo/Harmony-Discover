@@ -247,7 +247,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
             </div>
           ))}
         </div>
-      )
+      )}
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '0 22px max(18px, env(safe-area-inset-bottom))' }}>
         {note ? <div style={{ ...dim, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>{note}</div> : null}
