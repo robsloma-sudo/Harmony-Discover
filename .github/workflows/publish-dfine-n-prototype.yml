@@ -1,0 +1,116 @@
+name: Publish verified D-FINE N prototype asset
+
+on:
+  push:
+    branches:
+      - fix/spatial-frame-sync-2026-11-12
+    paths:
+      - '.github/workflows/publish-dfine-n-prototype.yml'
+
+concurrency:
+  group: dfine-seg-research-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current scanner branch
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/${{ github.ref_name }}
+
+      - name: Download previously parity-checked D-FINE N artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dfine-seg-n-coco-onnx
+          run-id: 43278057727
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          path: model-artifacts
+
+      - name: Verify model artifact checksum and add graph contract
+        run: |
+          set -euo pipefail
+          MODEL="model-artifacts/dfine_seg_n_coco.onnx"
+          test -s "$MODEL"
+          sha256sum -c model-artifacts/dfine_seg_n_coco.onnx.sha256
+          cat > model-artifacts/dfine_seg_graph_contract.json <<'JSON'
+          {
+            "graph_name": "D-FINE-seg-N COCO instance segmentation",
+            "inputs": [
+              {"name": "input", "shape": [1, 3, 640, 640], "element_type": "FLOAT"}
+            ],
+            "outputs": [
+              {"name": "labels", "shape": [1, 300], "element_type": "INT64"},
+              {"name": "boxes", "shape": [1, 300, 4], "element_type": "FLOAT"},
+              {"name": "scores", "shape": [1, 300], "element_type": "FLOAT"},
+              {"name": "masks", "shape": [1, 300, 160, 160], "element_type": "FLOAT"}
+            ],
+            "verification": {
+              "onnx_export_parity": "passed",
+              "cpu_onnxruntime_smoke_test": "passed",
+              "input_preprocessing": "RGB NCHW float32 scaled to 0..1, direct 640x640 resize",
+              "mask_postprocessing": "box crop, bilinear resize to source-frame crop, threshold 0.5"
+            }
+          }
+          JSON
+
+      - name: Fetch matching upstream license notice
+        run: |
+          set -euo pipefail
+          UPSTREAM_SHA="$(python -c 'import json; print(json.load(open("model-artifacts/dfine_seg_n_coco.metadata.json"))["upstream_commit"])')"
+          git clone --filter=blob:none --no-checkout https://github.com/ArgoHA/D-FINE-seg.git .research/dfine-seg
+          git -C .research/dfine-seg checkout "$UPSTREAM_SHA" -- LICENSE
+          cp .research/dfine-seg/LICENSE model-artifacts/dfine-seg-upstream-LICENSE.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Add ONNX Runtime Web and WASM build hook
+        run: |
+          set -euo pipefail
+          npm install onnxruntime-web@latest --save-exact --package-lock-only --no-audit --no-fund
+          node <<'JS'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.scripts['prebuild:web'] = 'node scripts/copy-ort-wasm.mjs';
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          JS
+          npm install --package-lock-only --no-audit --no-fund
+
+      - name: Validate runtime, scanner tests, and web export
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npx vitest run tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts
+          npm run build:web
+          test -s dist/index.html
+          find public/ort -maxdepth 1 -name '*.wasm' -print -quit | grep -q .
+
+      - name: Commit prototype model and runtime dependency
+        run: |
+          set -euo pipefail
+          mkdir -p public/models
+          cp model-artifacts/dfine_seg_n_coco.onnx public/models/
+          cp model-artifacts/dfine_seg_n_coco.onnx.sha256 public/models/
+          cp model-artifacts/dfine_seg_n_coco.metadata.json public/models/
+          cp model-artifacts/dfine_seg_graph_contract.json public/models/
+          cp model-artifacts/dfine-seg-upstream-LICENSE.txt public/models/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/models/ package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "Prototype model and runtime dependency are already current."
+          else
+            git commit -m "chore(discover): add D-FINE N model and ONNX Runtime Web"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
