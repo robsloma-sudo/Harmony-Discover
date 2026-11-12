@@ -50,6 +50,24 @@ describe("Discover enrichment worker policy", () => {
       .toThrow("catalog_identity_missing_product_index_link");
   });
 
+  it("rejects missing product and sighting records returned by the database", () => {
+    expect(() => validateIdentityJobReferences(job, null, sighting))
+      .toThrow("discover_product_not_found");
+    expect(() => validateIdentityJobReferences(job, product, null))
+      .toThrow("sighting_product_link_mismatch");
+  });
+
+  it("allows a conservative candidate without a legacy catalog link", () => {
+    const candidate = { id: product.id, identity_payload: { identity_status: "candidate" } };
+    const unlinkedSighting = { ...sighting, product_index_id: null };
+    expect(validateIdentityJobReferences(job, candidate, unlinkedSighting)).toEqual({
+      identity_status: "candidate",
+      discover_product_id: candidate.id,
+      sighting_id: unlinkedSighting.id,
+      catalog_linked: false,
+    });
+  });
+
   it("returns a checked result for a consistent sighting and product", () => {
     expect(validateIdentityJobReferences(job, product, sighting)).toEqual({
       identity_status: "catalog_exact",
