@@ -161,6 +161,17 @@ describe("world-track identity reassociation", () => {
     expect(split.find(track => track.sourceTrackId === 6)?.categoryKey).toBe("wine");
   });
 
+  it("keeps nearby but distinct bottle instances separate outside the tight reassociation gate", () => {
+    const first = updateWorldSpatialTracks([], [{
+      trackId: 10, point: { x: 0, y: 0, z: 1 }, confidence: 0.9, categoryKey: "whiskey",
+    }], 1000);
+    const second = updateWorldSpatialTracks(first, [{
+      trackId: 11, point: { x: 0.3, y: 0, z: 1 }, confidence: 0.9, categoryKey: "whiskey",
+    }], 2000);
+    expect(second).toHaveLength(2);
+    expect(new Set(second.map(track => track.trackId)).size).toBe(2);
+  });
+
   it("does not merge separate bottles beyond the reassociation radius", () => {
     const first = updateWorldSpatialTracks([], [{
       trackId: 1, point: { x: 0, y: 0, z: 1 }, confidence: 0.9, categoryKey: "whiskey",
