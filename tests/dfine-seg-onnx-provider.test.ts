@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DfineSegOnnxProvider, preprocessDfineImage, type DfineOrtSession, type DfineOrtTensor } from '../src/live/dfineSegOnnxProvider';
+import { createDfineSegOnnxProvider, DfineSegOnnxProvider, preprocessDfineImage, type DfineOrtSession, type DfineOrtTensor } from '../src/live/dfineSegOnnxProvider';
 import type { SegmentationSeed } from '../src/live/segmentationEngine';
 
 const seed: SegmentationSeed = {
@@ -54,6 +54,21 @@ describe('D-FINE ONNX provider', () => {
     expect(result[0]?.sourceTimestampMs).toBe(1000);
     await provider.dispose();
     expect(session.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates the provider with WASM as the required baseline execution provider', async () => {
+    const session = makeSession();
+    const create = vi.fn(async () => session);
+    class Tensor {
+      constructor(public type: string, public data: Float32Array, public dims: number[]) {}
+    }
+    const provider = await createDfineSegOnnxProvider({
+      Tensor,
+      InferenceSession: { create },
+    }, new Uint8Array([1, 2, 3]), { inputSize: 640 });
+    expect(create).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), { executionProviders: ['wasm'] });
+    expect(provider).toBeInstanceOf(DfineSegOnnxProvider);
+    await provider.dispose();
   });
 
   it('rejects mixed-frame seeds and malformed graph output shapes', async () => {
