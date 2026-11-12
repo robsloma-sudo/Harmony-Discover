@@ -5,6 +5,7 @@ const source = path.resolve('node_modules/onnxruntime-web/dist');
 const destination = path.resolve('public/ort');
 const required = [
   'ort-wasm-simd-threaded.wasm',
+  'ort-wasm-simd-threaded.mjs',
   'ort.wasm.bundle.min.mjs',
 ];
 const missing = required.filter(file => !fs.existsSync(path.join(source, file)));
