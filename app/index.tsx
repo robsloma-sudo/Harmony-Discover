@@ -31,6 +31,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [permission, requestPermission] = useCameraPermissions();
   const [liveReadConsent, setLiveReadConsent] = useState(false);
   const [liveReadNoticeDismissed, setLiveReadNoticeDismissed] = useState(false);
+  const [liveReadPromptOpen, setLiveReadPromptOpen] = useState(false);
+  const [liveReadStatus, setLiveReadStatus] = useState<'off'|'starting'|'reading'|'no_results'|'error'>('off');
+  const [liveReadError, setLiveReadError] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [captureRequestId, setCaptureRequestId] = useState(0);
   const pendingCapture = useRef<'scan'|'menu_page'|null>(null);
@@ -170,18 +173,31 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
-          onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
+          onTrackingUpdate={event => {
+            const update = event.nativeEvent;
+            setLiveTracking(update);
+            const reason = update.reason || '';
+            if (liveReadConsent && update.state === 'limited' && reason && !['browser_camera_ready_no_world_pose','requesting_browser_camera'].includes(reason)) {
+              setLiveReadError(reason);
+              setLiveReadStatus('error');
+            }
+          }}
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
           onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates)}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
-            if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
+            if (value.bottles) {
+              setLiveBottles(value.bottles);
+              setLiveReadAt(value.frameTimestamp);
+              setLiveReadError(null);
+              setLiveReadStatus(value.bottles.length ? 'reading' : 'no_results');
+            }
             if (value.barcodes?.length) setLiveBarcodes(previous => { const merged = [...previous]; value.barcodes!.forEach(barcode => { if (!merged.some(item => item.value === barcode.value)) merged.push(barcode); }); return merged.slice(-12); });
             if (value.text?.length) setLiveLabelText(previous => Array.from(new Set([...previous, ...value.text!])).slice(-24));
             if (value.menu) setLiveMenu(value.menu);
           }}
-          onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
+          onARError={event => { pendingCapture.current = null; setCapturing(false); const message = event.nativeEvent.message || 'Camera session failed.'; setCameraMessage(message); if (liveReadConsent) { setLiveReadError(message); setLiveReadStatus('error'); } }}
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.permissionFallback]}>
@@ -217,14 +233,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           })}
         </View>
       )}
-      {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
+      {permission.granted && !scanPhotos && !liveReadConsent && (!liveReadNoticeDismissed || liveReadPromptOpen) && <View style={{position:'absolute',zIndex:90,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:14,borderRadius:12,backgroundColor:'rgba(8,11,15,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.9)'}}>
         <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
         <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
         <View style={{flexDirection:'row',alignItems:'center',gap:9,marginTop:9}}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>{setLiveReadConsent(true);setLiveReadNoticeDismissed(true);}} style={{paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>{setLiveReadConsent(true);setLiveReadNoticeDismissed(true);setLiveReadPromptOpen(false);setLiveReadStatus('starting');setLiveReadError(null);}} style={{paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
             <Text style={{color:'#111',fontSize:9,fontWeight:'900',letterSpacing:0.8}}>ENABLE LIVE RECOGNITION</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Not now, keep live recognition off" onPress={()=>setLiveReadNoticeDismissed(true)} style={{paddingHorizontal:11,paddingVertical:9,borderRadius:8,borderWidth:1,borderColor:C.line}}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Not now, keep live recognition off" onPress={()=>{setLiveReadNoticeDismissed(true);setLiveReadPromptOpen(false);}} style={{paddingHorizontal:11,paddingVertical:9,borderRadius:8,borderWidth:1,borderColor:C.line}}>
             <Text style={{color:C.muted,fontSize:9,fontWeight:'800',letterSpacing:0.6}}>NOT NOW</Text>
           </Pressable>
         </View>
@@ -232,7 +248,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
-        <View style={s.topActions}><View style={s.livePill}><View style={s.liveDot}/><Text style={s.liveText}>VIEWFINDER</Text></View><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
+        <View style={s.topActions}><Pressable accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>{if(liveReadConsent){setLiveReadConsent(false);setLiveReadStatus('off');setLiveReadError(null);setLiveReadNoticeDismissed(true);}else{setLiveReadNoticeDismissed(false);setLiveReadPromptOpen(true);}}} style={s.livePill}><View style={[s.liveDot, !liveReadConsent && {backgroundColor:C.red}]}/><Text style={s.liveText}>{!liveReadConsent ? 'LIVE READ OFF · TAP' : liveReadStatus==='starting' ? 'LIVE STARTING' : liveReadStatus==='error' ? 'LIVE ERROR' : liveReadStatus==='no_results' ? 'LIVE · NO LABELS' : 'LIVE · READING'}</Text></Pressable><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
       </View>
       <View style={[s.centerHint, { top: Math.max(insets.top, 24) + 112, bottom: Math.max(insets.bottom, 12) + (screenHeight < 750 ? 218 : 238) }]} pointerEvents="none">
         <View style={[s.corner, s.tl]} /><View style={[s.corner, s.tr]} /><View style={[s.corner, s.bl]} /><View style={[s.corner, s.br]} />
