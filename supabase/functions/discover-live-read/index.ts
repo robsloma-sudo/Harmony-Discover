@@ -410,6 +410,21 @@ Deno.serve(async (req: Request) => {
     }));
     const { error: queueError } = jobs.length ? await db.from("bottle_research_jobs").insert(jobs) : { error: null };
     if (queueError) console.log(JSON.stringify({ evt: "bottle_research_enqueue_error", msg: clean(queueError.message, 160) }));
+    if (!queueError && jobs.length) {
+      const workerSecret = Deno.env.get("DISCOVER_RESEARCH_WORKER_SECRET");
+      const workerUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\\/$/, "") + "/functions/v1/discover-research-worker";
+      if (workerSecret && workerUrl.startsWith("https://")) {
+        EdgeRuntime.waitUntil(fetch(workerUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-discover-worker-secret": workerSecret },
+          body: JSON.stringify({ trigger: "bottle_save" }),
+        }).then(async response => {
+          if (!response.ok) console.log(JSON.stringify({ evt: "bottle_research_worker_trigger_failed", status: response.status }));
+        }).catch(error => console.log(JSON.stringify({ evt: "bottle_research_worker_trigger_error", msg: clean(error instanceof Error ? error.message : "trigger_failed", 120) }))));
+      } else {
+        console.log(JSON.stringify({ evt: "bottle_research_worker_not_configured" }));
+      }
+    }
     return reply({
       ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length,
       research: { queued: queueError ? 0 : jobs.length, enqueue_failed: !!queueError },
