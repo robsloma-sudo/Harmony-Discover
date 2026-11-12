@@ -84,7 +84,7 @@ describe("Discover enrichment worker policy", () => {
         grapes: "Chardonnay",
         awards: "Gold medal",
       },
-      field_confidence: { package_size: 0.94, region: 0.89, grapes: 0.99, awards: 0.99 },
+      field_confidence: { package_size: 0.94, region: 0.72, grapes: 0.99, awards: 0.99 },
       sources: [
         { url: "https://producer.example/package", title: "Producer package page", source_type: "manufacturer", supports: ["package_size"] },
         { url: "https://region.example/page", title: "Region reference", source_type: "reference", supports: ["region"] },
