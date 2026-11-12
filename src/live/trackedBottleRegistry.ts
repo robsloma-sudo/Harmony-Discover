@@ -26,7 +26,16 @@ export function mergeTrackedBottleCandidates<T>(
     const previousRecord = previousById.get(candidate.trackId);
     const bottle = candidate.bottle ?? previousRecord?.bottle;
     if (!bottle) continue;
-    next.push({ ...candidate, bottle, contour: candidate.contour ?? previousRecord?.contour });
+    let contour = candidate.contour;
+    if (!contour && previousRecord?.contour && previousRecord.width > 0 && previousRecord.height > 0) {
+      // Carry the existing mask outline with the locally propagated box. This
+      // only warps a previously measured mask; it does not invent a new mask.
+      contour = previousRecord.contour.map(point => ({
+        x: candidate.x + ((point.x - previousRecord.x) / previousRecord.width) * candidate.width,
+        y: candidate.y + ((point.y - previousRecord.y) / previousRecord.height) * candidate.height,
+      }));
+    }
+    next.push({ ...candidate, bottle, ...(contour ? { contour } : {}) });
   }
   return next;
 }
