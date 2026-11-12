@@ -42,6 +42,11 @@ describe("shared conservative bottle identity gate", () => {
     for (const details of [
       { vintage: "2022" }, { package_size: "750 ml" }, { sku: "ABC-123" },
       { barcode: "0123456789012" }, { batch: "B-04" }, { lot_code: "L-9" },
+      { age_statement: "12 Years Old" }, { cask_finish: "Sherry Cask" },
+      { cask_type: "French Oak" }, { barrel_number: "42" }, { flavor: "Peach" },
+      { style: "Single Barrel" }, { appellation: "Barolo DOCG" },
+      { appellation_level: "DOCG" }, { classification: "Grand Cru" },
+      { dosage: "Brut Nature" }, { residual_sugar: "2 g/L" },
     ]) {
       expect(hasUnmodeledSkuDifferentiator(bottle({ details }))).toBe(true);
       expect(hasStrongProductIdentity(bottle({ details }), match)).toBe(false);
