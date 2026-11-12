@@ -19,7 +19,7 @@ import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { associateLabelSignalsToBottles } from '../src/live/labelBottleAssociation';
 import { SpatialBottleTracker } from '../src/live/spatialBottleTracker';
 import { projectBottleBoxToWorld } from '../src/live/spatialBottleProjection';
-import { matchDetectionsToTracks } from '../src/live/overlayTrackAssociation';
+import { mergeTrackedBottleCandidates, type TrackedBottleRecord } from '../src/live/trackedBottleRegistry';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -46,6 +46,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const processedBottleFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [livePhysicalIds, setLivePhysicalIds] = useState<string[]>([]);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
+  const [liveBottleTracks, setLiveBottleTracks] = useState<TrackedBottleRecord<BottleRead>[]>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
@@ -59,6 +60,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     const staleTimer = setTimeout(() => {
       setLiveBottles([]);
       setLiveCandidates([]);
+      setLiveBottleTracks([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
       setLiveTextItems([]);
@@ -246,13 +248,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     } catch { setCameraMessage('Could not open your photo library. Please try again.'); }
   };
 
-  const labelSignalsByBottle = associateLabelSignalsToBottles(liveBottles.map(bottle => bottle.box), liveTextItems, liveBarcodeItems);
-  const overlayTracks = Platform.OS === 'web'
-    // The browser tracker preserves detection order for the active seed set,
-    // then appends retained occluded tracks. Use that stable per-result order
-    // so the overlay can follow a bottle after it moves beyond the seed IOU.
-    ? liveCandidates.slice(0, liveBottles.length).map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height }))
-    : matchDetectionsToTracks(liveBottles.map(bottle => ({ x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 })), liveCandidates);
+  const labelSignalsByBottle = associateLabelSignalsToBottles(liveBottleTracks.map(track => track.bottle.box), liveTextItems, liveBarcodeItems);
 
   if (!permission) return <View style={s.loading}><Text style={s.loadingText}>DISCOVER</Text></View>;
 
@@ -269,7 +265,11 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) { setLiveDepthFrame(value); depthFramesRef.current = [...depthFramesRef.current.filter(frame => value.timestamp - frame.timestamp <= 8 && frame.timestamp <= value.timestamp), value].slice(-20); if (liveBottleFrameTimestamp !== null && Math.abs(value.timestamp - liveBottleFrameTimestamp) <= 0.20) setLiveBottleDepthFrame(current => current ?? value); } }}
-          onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates)}
+          onVisualCandidates={event => {
+            const candidates = event.nativeEvent.candidates;
+            setLiveCandidates(candidates.map(({ trackId, x, y, width, height, confidence }) => ({ trackId, x, y, width, height, confidence })));
+            setLiveBottleTracks(previous => mergeTrackedBottleCandidates(previous, candidates));
+          }}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
             if (value.bottles) {
@@ -305,27 +305,17 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
-      {permission.granted && !scanPhotos && liveBottles.length > 0 && (
+      {permission.granted && !scanPhotos && liveBottleTracks.length > 0 && (
         <View pointerEvents="none" style={s.liveDetectionLayer}>
-          {liveBottles.slice(0, 8).map((bottle, index) => {
-            const x = Math.max(0, Math.min(1, bottle.box.x0));
-            const y = Math.max(0, Math.min(1, bottle.box.y0));
-            const right = Math.max(x, Math.min(1, bottle.box.x1));
-            const bottom = Math.max(y, Math.min(1, bottle.box.y1));
-            const width = Math.max(0.035, right - x);
-            const height = Math.max(0.045, bottom - y);
-            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
-            // Use the tracker's smoothed camera-space rectangle for rendering,
-            // not just its ID. Fall back to the latest recognition box when no
-            // sufficiently overlapping track can be defended.
-            const track = overlayTracks[index];
-            const renderBox = track ?? { trackId: index + 1, x, y, width, height };
+          {liveBottleTracks.slice(0, 8).map((record, index) => {
+            const bottle = record.bottle;
+            const renderBox = record;
             return (
               <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · LIVE</Text>
-                  {!!livePhysicalIds[index] && <Text style={s.liveDetectionConfidence}>ID · {livePhysicalIds[index]}</Text>}
+                  <Text style={s.liveDetectionConfidence}>TRACK · {record.trackId}</Text>
                   {!!(labelSignalsByBottle[index]?.text.length || labelSignalsByBottle[index]?.barcodes.length) && <Text numberOfLines={2} style={s.liveDetectionConfidence}>{[...(labelSignalsByBottle[index]?.text || []).slice(0, 2), ...(labelSignalsByBottle[index]?.barcodes || []).map(code => `BAR ${code}`)].join(' · ')}</Text>}
                 </View>
               </View>
