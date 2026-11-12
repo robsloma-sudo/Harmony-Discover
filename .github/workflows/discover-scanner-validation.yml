@@ -17,6 +17,8 @@ on:
   push:
     branches:
       - release/scanner-settings-mainline-2026-11-11
+      - fix/spatial-frame-sync-2026-11-12
+      - feat/phase4-web-camera-segmentation
   workflow_dispatch:
 
 permissions:
@@ -43,11 +45,34 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check live reader Edge Function
+        run: deno check --node-modules-dir=auto supabase/functions/discover-live-read/index.ts
+
+      - name: Smoke-test actual D-FINE WASM inference
+        run: |
+          node scripts/copy-ort-wasm.mjs
+          node scripts/smoke-dfine-wasm-runtime.mjs
+
       - name: TypeScript validation
         run: npm run typecheck
+
+      - name: Run scanner unit tests
+        run: npx vitest run tests/live-recognition-policy.test.ts tests/overlay-track-association.test.ts tests/spatial-bottle-tracker.test.ts tests/patch-motion-tracker.test.ts tests/tracked-bottle-registry.test.ts tests/mask-contour.test.ts tests/contour-geometry.test.ts tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts tests/dfine-seg-runtime.test.ts tests/bottle-identity-gate.test.ts
 
       - name: Export web build
         run: npm run build:web
 
       - name: Verify exported app
-        run: test -s dist/index.html
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          test -s dist/ort/ort-wasm-simd-threaded.wasm
+          test -s dist/ort/ort-wasm-simd-threaded.mjs
+          test -s dist/ort/ort.wasm.bundle.min.mjs
+          test -s dist/ort/ort-loader.js
+          grep -R -q --include='*.js' '/models/dfine_seg_n_coco.onnx' dist
