@@ -97,6 +97,18 @@ function WebLiveCamera(props: NativeProps) {
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
+    let pageVisible = document.visibilityState === 'visible';
+    const handleVisibilityChange = () => {
+      pageVisible = document.visibilityState === 'visible';
+      if (!pageVisible) {
+        if (recognitionTimer) window.clearTimeout(recognitionTimer);
+        recognitionTimer = 0;
+        callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
+      } else if (callbacksRef.current.recognitionEnabled) {
+        scheduleRecognition(250);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
     let barcodeDetector: BarcodeDetectorLike | null = null;
@@ -163,10 +175,10 @@ function WebLiveCamera(props: NativeProps) {
     // adding a full delay after the provider response. This stays below the
     // server's 30/minute limit even when inference is fast.
     const scheduleRecognition = (delay = recognitionIntervalMs) => {
-      if (!disposed && callbacksRef.current.recognitionEnabled) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
+      if (!disposed && pageVisible && callbacksRef.current.recognitionEnabled) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
     };
     const recognizeFrame = async () => {
-      if (disposed || recognitionBusy || !callbacksRef.current.recognitionEnabled) return;
+      if (disposed || !pageVisible || recognitionBusy || !callbacksRef.current.recognitionEnabled) return;
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
@@ -294,6 +306,7 @@ function WebLiveCamera(props: NativeProps) {
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (depthTimer) window.clearInterval(depthTimer);
       depthEstimator?.dispose();
       if (stream) stream.getTracks().forEach(track => track.stop());
