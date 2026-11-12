@@ -100,3 +100,73 @@ describe("persistent world-space bottle tracks", () => {
     expect(updateWorldSpatialTracks(tracks, [], 9000)).toHaveLength(0);
   });
 });
+
+
+describe("world-track identity reassociation", () => {
+  it("preserves a stable world ID when the transient 2D detector ID changes", () => {
+    const first = updateWorldSpatialTracks([], [{
+      trackId: 21,
+      point: { x: 1, y: 0, z: 2 },
+      confidence: 0.9,
+      categoryKey: "whiskey",
+      identityKey: "maker a label x",
+      box: { x0: 0.2, y0: 0.1, x1: 0.4, y1: 0.8 },
+    }], 1000);
+    const second = updateWorldSpatialTracks(first, [{
+      trackId: 88,
+      point: { x: 1.04, y: 0, z: 2.02 },
+      confidence: 0.95,
+      categoryKey: "whiskey",
+      identityKey: "maker a label x",
+      box: { x0: 0.21, y0: 0.1, x1: 0.41, y1: 0.8 },
+    }], 2000);
+    expect(second).toHaveLength(1);
+    expect(second[0].trackId).toBe(first[0].trackId);
+    expect(second[0].sourceTrackId).toBe(88);
+    expect(second[0].lastSeenAt).toBe(2000);
+  });
+
+  it("uses category as a hard gate but allows uncertain label evidence to vary", () => {
+    const first = updateWorldSpatialTracks([], [{
+      trackId: 3, point: { x: 0, y: 0, z: 1 }, confidence: 0.9,
+      categoryKey: "whiskey", identityKey: "label one",
+    }], 1000);
+    const sameCategory = updateWorldSpatialTracks(first, [{
+      trackId: 4, point: { x: 0.02, y: 0, z: 1 }, confidence: 0.8,
+      categoryKey: "whiskey", identityKey: "label uncertain",
+    }], 2000);
+    expect(sameCategory).toHaveLength(1);
+    expect(sameCategory[0].trackId).toBe(first[0].trackId);
+
+    const differentCategory = updateWorldSpatialTracks(sameCategory, [{
+      trackId: 5, point: { x: 0.03, y: 0, z: 1 }, confidence: 0.99,
+      categoryKey: "wine", identityKey: "label one",
+    }], 3000);
+    expect(differentCategory).toHaveLength(2);
+    expect(new Set(differentCategory.map(track => track.trackId)).size).toBe(2);
+  });
+
+  it("prevents stable-ID collisions when conflicting identity evidence splits a detection", () => {
+    const first = updateWorldSpatialTracks([], [{
+      trackId: 6, point: { x: 0, y: 0, z: 1 }, confidence: 0.9,
+      categoryKey: "whiskey", identityKey: "label a",
+    }], 1000);
+    const split = updateWorldSpatialTracks(first, [{
+      trackId: 6, point: { x: 0.02, y: 0, z: 1 }, confidence: 0.9,
+      categoryKey: "wine", identityKey: "label b",
+    }], 2000);
+    expect(split).toHaveLength(2);
+    expect(new Set(split.map(track => track.trackId)).size).toBe(2);
+    expect(split.find(track => track.sourceTrackId === 6)?.categoryKey).toBe("wine");
+  });
+
+  it("does not merge separate bottles beyond the reassociation radius", () => {
+    const first = updateWorldSpatialTracks([], [{
+      trackId: 1, point: { x: 0, y: 0, z: 1 }, confidence: 0.9, categoryKey: "whiskey",
+    }], 1000);
+    const second = updateWorldSpatialTracks(first, [{
+      trackId: 2, point: { x: 0.8, y: 0, z: 1 }, confidence: 0.9, categoryKey: "whiskey",
+    }], 2000);
+    expect(second).toHaveLength(2);
+  });
+});
