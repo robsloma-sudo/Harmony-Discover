@@ -18,6 +18,7 @@ on:
     branches:
       - release/scanner-settings-mainline-2026-11-11
       - fix/spatial-frame-sync-2026-11-12
+      - feat/phase5-identity-queue-2026-11-12
   workflow_dispatch:
 
 permissions:
