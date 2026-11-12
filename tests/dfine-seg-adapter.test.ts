@@ -33,7 +33,7 @@ describe('D-FINE raw ONNX instance-mask adapter', () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.bounds).toEqual({ x: 0.2, y: 0.1, width: 0.3, height: 0.7 });
     expect(result[0]?.width).toBe(3);
-    expect(result[0]?.height).toBe(6);
+    expect(result[0]?.height).toBe(7);
     expect(result[0]?.sourceTimestampMs).toBe(8000);
   });
 
