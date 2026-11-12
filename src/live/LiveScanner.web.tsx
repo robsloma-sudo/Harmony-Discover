@@ -122,7 +122,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       const shown = new Uint8Array(EH); let lastRow = -1, shownCount = 0; const t0 = performance.now();
       const tick = (now: number) => {
         if (!alive) return;
-        let p = ((now - t0) / SWEEP_MS) % 2; p = p < 1 ? p : 2 - p; p = p * p * (3 - 2 * p);
+        let p = Math.max(0, Math.min(1, (now - t0) / SWEEP_MS)); if (state.scanStage === 2) p = 1 - p; p = p * p * (3 - 2 * p);
         const row = Math.round(p * (EH - 1));
         if (lastRow < 0) lastRow = row;
         const a = Math.min(row, lastRow), b = Math.max(row, lastRow); let dirty = false;
