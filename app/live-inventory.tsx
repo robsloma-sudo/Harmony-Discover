@@ -23,6 +23,7 @@ type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; d
 export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],menu,lastReadAt}:LiveInventoryProps={}) {
   const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
   const toggle=(id:string)=>setExpanded(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id]);
+  const metricDepthSamples=depthFrame?.depthMeters.filter(value=>Number.isFinite(value)&&value>0).length ?? 0;
   return <View style={s.root}>
     <View style={s.header}>
       <View style={s.grabber}/>
@@ -37,7 +38,7 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
         <View style={s.dot}/>
         <View style={{flex:1}}>
           <Text style={s.statusTitle}>SHARED CAMERA · {tracking?.state?.toUpperCase().replace('_',' ') || 'STARTING'}</Text>
-          <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}</Text>
+          <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}{depthFrame ? ` · ${metricDepthSamples} metric depth samples` : ''}</Text>
         </View>
       </View>
       <Text style={s.note}>This panel reads the same camera session used by the main viewfinder. It never starts another camera. {lastReadAt ? `Last recognition: ${new Date(lastReadAt).toLocaleTimeString()}.` : 'Waiting for the first recognition result.'}</Text>
