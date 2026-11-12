@@ -8,6 +8,8 @@ import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
+import { MartyPanel } from '../src/home-panels/MartyPanel';
+import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -27,6 +29,7 @@ export default function Home() {
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [martyConsentOpen, setMartyConsentOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|null>(null);
 
   const startMenuScan = async () => {
@@ -132,9 +135,16 @@ export default function Home() {
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
           <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='nearby'?'Discover places around you':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':'Depth and spatial scanning'}</Text>
-          {activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='marty'?'Marty’s live voice controls are being integrated into this panel. Voice remains opt-in and requires your consent.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='marty' && martyConsentOpen && <>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
+            <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
+              <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:8}}><Text style={{color:C.ivory,fontSize:11,fontWeight:'900',letterSpacing:1.3}}>MARTY · VOICE & MEMORY CONSENT</Text><Pressable onPress={()=>setMartyConsentOpen(false)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable></View>
+              <MartyConsentPanel />
+            </View>
+          </>}
         </View>
-      </>}
+      </>]}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
         <View style={{position:'absolute',zIndex:61,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,maxHeight:screenHeight*0.78,padding:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.99)',borderWidth:1,borderColor:'rgba(198,163,106,0.65)',shadowColor:'#000',shadowOpacity:0.45,shadowRadius:18,shadowOffset:{width:0,height:8},elevation:24}}>
