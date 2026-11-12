@@ -34,7 +34,7 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
  const openVenue=(v:DiscoverVenue)=>{setSelectedVenue(v.id);};
  return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{paddingBottom:10}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
   
-  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} fitKey={`${settledRadius}-${filtered.length}`} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
+  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} fitKey={`${settledRadius}-${filtered.length}-${filtered[0]?.latitude}-${filtered[0]?.longitude}-${filtered[filtered.length-1]?.latitude}-${filtered[filtered.length-1]?.longitude}`} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
   <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginTop:9,marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & LOAD ATLAS'}</Text>}</Pressable>
 
   <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:7}}>
