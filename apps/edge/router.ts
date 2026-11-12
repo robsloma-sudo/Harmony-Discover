@@ -84,8 +84,9 @@ export async function handle(req: Request, deps: EdgeDeps): Promise<Response> {
     if (!atlas && !learning && !account && !observation) return fail(404, 'not_found');
 
     const subject = await deps.identify(req.headers.get('authorization') ?? undefined);
-    if (atlas && !deps.atlas) return fail(503, 'atlas_bridge_not_configured');
-    const limiter = atlas ? deps.atlas!.limiter : learning ? deps.learning.limiter : account ? deps.account.limiter : deps.observations?.limiter;
+    const atlasDeps = deps.atlas;
+    if (atlas && !atlasDeps) return fail(503, 'atlas_bridge_not_configured');
+    const limiter = atlas ? atlasDeps!.limiter : learning ? deps.learning.limiter : account ? deps.account.limiter : deps.observations?.limiter;
     if (!limiter || !(await limiter.allow(subject))) return fail(limiter ? 429 : 503, limiter ? 'rate_limited' : 'unavailable');
 
     if (atlas) {
@@ -98,7 +99,7 @@ export async function handle(req: Request, deps: EdgeDeps): Promise<Response> {
       if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return fail(400, 'invalid_coordinates');
       if (![1,5,10,15,20].includes(radius)) return fail(400, 'invalid_radius');
       if (rawType && !allowedTypes.has(rawType)) return fail(400, 'invalid_venue_type');
-      return respond(await deps.atlas.query(latitude, longitude, radius, rawType));
+      return respond(await atlasDeps!.query(latitude, longitude, radius, rawType));
     }
 
     if (learning) {
