@@ -83,6 +83,8 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  const beamY=activeProgress.interpolate({inputRange:[0,1],outputRange:stage===2||stage===4?[260,0]:[0,260]});
  const waitingBeamY=beamProgress.interpolate({inputRange:[0,1],outputRange:[0,260]});
  const showTrace=animate&&!sequenceDone&&stage>0&&state.bottles.length>0;
+ const showLabel=showTrace&&stage>=2;
+ const showPrint=showTrace&&stage>=3;
  const revealResults=!animate||sequenceDone;
  return <Pressable onPress={onPress} style={s.photo}>
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
