@@ -16,6 +16,7 @@ on:
   push:
     branches:
       - fix/spatial-frame-sync-2026-11-12
+      - feat/phase4-web-camera-segmentation
     paths:
       - "app/**"
       - "src/**"
@@ -24,6 +25,7 @@ on:
       - "package-lock.json"
       - "app.json"
       - "eas.json"
+      - ".github/workflows/discover-ios-native-build.yml"
   workflow_dispatch:
 
 permissions:
