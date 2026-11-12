@@ -296,22 +296,28 @@ function WebLiveCamera(props: NativeProps) {
 }
 
 function FallbackNativeCamera(props: NativeProps) {
-  const cameraRef = useRef<CameraView>(null);
+  const cameraRef = useRef<any>(null);
   const lastRequest = useRef(0);
   const busy = useRef(false);
   useEffect(() => {
     if (!props.active || !props.captureRequestId || props.captureRequestId === lastRequest.current) return;
     lastRequest.current = props.captureRequestId;
     let cancelled = false;
-    if (busy.current) return;
-    busy.current = true;
-    void cameraRef.current?.takePictureAsync({ quality: 0.88 }).then(photo => {
-      if (!cancelled && photo?.uri) props.onCapturedImage?.({ nativeEvent: { uri: photo.uri, width: photo.width, height: photo.height, timestamp: Date.now() } });
-      else if (!cancelled) props.onARError?.({ nativeEvent: { message: 'The camera did not return an image.' } });
-    }).catch(error => {
-      if (!cancelled) props.onARError?.({ nativeEvent: { message: error instanceof Error ? error.message : 'Camera capture failed.' } });
-    }).finally(() => { busy.current = false; });
-    return () => { cancelled = true; };
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    const capture = async () => {
+      if (cancelled) return;
+      if (busy.current) { retry = setTimeout(() => { void capture(); }, 100); return; }
+      busy.current = true;
+      try {
+        const photo = await cameraRef.current?.takePictureAsync({ quality: 0.88 });
+        if (!cancelled && photo?.uri) props.onCapturedImage?.({ nativeEvent: { uri: photo.uri, width: photo.width, height: photo.height, timestamp: Date.now() } });
+        else if (!cancelled) props.onARError?.({ nativeEvent: { message: 'The camera did not return an image.' } });
+      } catch (error) {
+        if (!cancelled) props.onARError?.({ nativeEvent: { message: error instanceof Error ? error.message : 'Camera capture failed.' } });
+      } finally { busy.current = false; }
+    };
+    void capture();
+    return () => { cancelled = true; if (retry) clearTimeout(retry); };
   }, [props.active, props.captureRequestId]);
   useEffect(() => {
     if (!props.active) return;
