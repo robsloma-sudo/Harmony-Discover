@@ -3,6 +3,7 @@
 // a reviewed, source-specific provider is implemented; no speculative evidence is written.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { readUtf8RequestBodyWithinLimit } from "../_shared/requestLimits.ts";
 import { DEFERRED_JOB_TYPES, SUPPORTED_JOB_TYPES, getIdentityJobRetryPlan, validateIdentityJobReferences } from "./workerPolicy.ts";
 
 const PROJECT = "lqqmwqrffelgnbngrkep";
@@ -37,8 +38,9 @@ Deno.serve(async (req: Request) => {
   if (req.headers.get("content-type")?.toLowerCase().startsWith("application/json") !== true) {
     return json({ error: "content_type_must_be_json" }, 415);
   }
-  const raw = await req.text();
-  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) return json({ error: "payload_too_large" }, 413);
+  const bodyRead = await readUtf8RequestBodyWithinLimit(req, MAX_BODY_BYTES);
+  if (bodyRead.tooLarge) return json({ error: "payload_too_large" }, 413);
+  const raw = bodyRead.body;
   let body: Record<string, unknown> = {};
   try {
     const parsed = raw ? JSON.parse(raw) : {};
