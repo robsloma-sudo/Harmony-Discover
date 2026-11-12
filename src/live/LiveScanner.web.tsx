@@ -135,7 +135,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         <img src={uri} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
         <div style={{ ...fill, background: 'rgba(5,10,40,.28)' }} />
         <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 3px #4f8bff) drop-shadow(0 0 9px #2b56f0)' }} />
-        <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', transition: 'opacity .5s' }} />
+        <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />
         {state.bottles.map((b, i) => {
           const cx = ((b.box.x0 + b.box.x1) / 2) * 100, top = Math.max(compact ? 10 : 6, b.box.y0 * 100 - 2), isUnsure = b.state === 'unsure';
           return <div key={`${keyOf(b) || 'u'}-${i}`} style={{ position: 'absolute', left: `${cx}%`, top: `${top}%`, transform: 'translate(-50%,-100%)', textAlign: 'center', pointerEvents: 'none', animation: 'hdRise .35s ease-out both', animationDelay: `${i * 0.12}s`, maxWidth: '46%' }}>
@@ -165,7 +165,21 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
   const patch = (i: number, next: Partial<PhotoState>) => setStates(prev => prev.map((s, k) => (k === i ? { ...s, ...next } : s)));
   function read(i: number, jpeg: string) {
     if (started.current[i]) return; started.current[i] = true;
-    setTimeout(() => { readLiveFrame(jpeg).then(r => patch(i, { status: 'done', bottles: r.bottles, menu: r.menu.visible ? r.menu : null })).catch(error => patch(i, { status: 'error', note: bottleErrorMessage(error) })); }, i * 500);
+    const visualStarted = performance.now();
+    setTimeout(async () => {
+      try {
+        const result = await readLiveFrame(jpeg);
+        // Always show at least one complete up-and-down visualization pass before
+        // revealing any detected bottle or menu data, even when the API is fast.
+        const remaining = Math.max(0, 4600 - (performance.now() - visualStarted));
+        if (remaining) await new Promise(resolve => setTimeout(resolve, remaining));
+        patch(i, { status: 'done', bottles: result.bottles, menu: result.menu.visible ? result.menu : null });
+      } catch (error) {
+        const remaining = Math.max(0, 4600 - (performance.now() - visualStarted));
+        if (remaining) await new Promise(resolve => setTimeout(resolve, remaining));
+        patch(i, { status: 'error', note: bottleErrorMessage(error) });
+      }
+    }, i * 500);
   }
 
   const all = states.flatMap(s => s.bottles);
@@ -209,6 +223,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         @keyframes hdFlyR{from{opacity:0;transform:translate(-38vw,12vh) scale(.7)}to{opacity:1;transform:none}}
         @keyframes hdRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes hdPulse{0%,100%{opacity:.55}50%{opacity:1}}
+        @keyframes hdPreScan{0%{top:0%;opacity:.35}8%{opacity:1}50%{top:100%;opacity:1}92%{opacity:1}100%{top:0%;opacity:.35}}
         .hd-info-panel,.hd-research-panel{scrollbar-width:thin;scrollbar-color:rgba(120,170,255,.45) transparent}
         .hd-single-line{white-space:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
         .hd-single-line::-webkit-scrollbar{display:none}
