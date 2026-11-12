@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
+import { MaskContourOverlay } from '../src/live/MaskContourOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
@@ -218,6 +219,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
             return (
               <View key={tracked.trackId} style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
+                <MaskContourOverlay points={tracked.contour} color="#55D9FF" strokeWidth={2.2} />
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · TRACKED</Text>
