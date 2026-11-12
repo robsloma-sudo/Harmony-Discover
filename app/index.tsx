@@ -33,6 +33,35 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
   const [martyConsentOpen, setMartyConsentOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
+  const [nearbyCommand,setNearbyCommand] = useState<{id:number;action:'set_radius'|'set_category'|'search'|'recenter'|'configure';radius_miles?:number;category?:string;search?:string}|null>(null);
+  const nearbyCommandId = useRef(0);
+  const nearbyCommandResolvers = useRef(new Map<number,(result:string)=>void>());
+  const dispatchNearbyCommand = (command:{action:'set_radius'|'set_category'|'search'|'recenter'|'configure';radius_miles?:number;category?:string;search?:string}) => new Promise<string>(resolve => { const id=++nearbyCommandId.current; nearbyCommandResolvers.current.set(id,resolve); setActivePanel('nearby'); setSettingsOpen(false); setNearbyCommand({...command,id}); });
+  const handleNearbyCommandResult = (id:number,result:string) => { const resolve=nearbyCommandResolvers.current.get(id); if(resolve){nearbyCommandResolvers.current.delete(id);resolve(result);} };
+  const handleMartyAppCommand = async (name:string,args:Record<string,unknown>):Promise<string> => {
+    if(name==='navigate_discover'){
+      const screen=String(args.screen||'');
+      if(screen==='discover'){setActivePanel(null);setSettingsOpen(false);return 'Back on the camera viewfinder.';}
+      if(screen==='nearby'){
+        const hasFilters=args.radius_miles!==undefined||args.category!==undefined||args.search!==undefined;
+        if(hasFilters)return dispatchNearbyCommand({action:'configure',radius_miles:typeof args.radius_miles==='number'?args.radius_miles:undefined,category:typeof args.category==='string'?args.category:undefined,search:typeof args.search==='string'?args.search:undefined});
+        setSettingsOpen(false);setActivePanel('nearby');return 'Nearby Atlas is open on the camera screen.';
+      }
+      if(screen==='library'){setSettingsOpen(false);setActivePanel('favorites');return 'Favorites are open on the camera screen.';}
+      if(screen==='taste'){setSettingsOpen(false);setActivePanel('taste');return 'My Taste is open on the camera screen.';}
+      if(screen==='settings'){setActivePanel(null);setSettingsOpen(true);return 'Discover Settings are open.';}
+      return 'That screen is not available.';
+    }
+    if(name==='control_nearby_atlas'){
+      const action=String(args.action||'');
+      if(action==='set_radius'&&typeof args.radius_miles==='number'&&[1,5,10,15,20].includes(args.radius_miles))return dispatchNearbyCommand({action:'set_radius',radius_miles:args.radius_miles});
+      if(action==='set_category'&&typeof args.category==='string'&&['all','bar','cocktail_bar','restaurant','brewery','winery','distillery'].includes(args.category))return dispatchNearbyCommand({action:'set_category',category:args.category});
+      if(action==='search'&&typeof args.search==='string'&&args.search.trim())return dispatchNearbyCommand({action:'search',search:args.search});
+      if(action==='recenter')return dispatchNearbyCommand({action:'recenter'});
+      return 'I need a valid radius, category, or search phrase to do that.';
+    }
+    return 'That action is not supported.';
+  };
 
   // Scanner menu items select a mode only. The center shutter is the sole capture trigger.
   const startMenuScan = () => {
@@ -138,7 +167,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
           {activePanel!=='lidar' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='nearby'?'Discover places around you':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
-          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)}/> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)}/> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
           {activePanel==='marty' && martyConsentOpen && <>
             <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
             <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
