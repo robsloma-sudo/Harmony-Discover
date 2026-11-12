@@ -328,7 +328,7 @@ Deno.serve(async (req: Request) => {
     if (saveErr || saveOk !== true) return reply({ error: saveErr ? "rate_limit_unavailable" : "rate_limited" }, saveErr ? 503 : 429, origin);
     const incoming = (Array.isArray(body.bottles) ? body.bottles as Array<Record<string, unknown>> : []).slice(0, MAX_SAVE)
       .map((b) => ({ brand: clean(b.brand, 80), product: clean(b.product, 80), category: CATEGORIES.includes(String(b.category)) ? String(b.category) : "other",
-        proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {} }))
+        proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {}, research_sources: Array.isArray(b.research_sources) ? b.research_sources : [] }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
     const queries = incoming.map((b) => clean(`${b.brand} ${b.product}`, 120));
@@ -340,7 +340,7 @@ Deno.serve(async (req: Request) => {
       const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
-        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: (b as Record<string, unknown>).research_sources || [] }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
+        label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
     const { error } = await db.from("bottle_sightings").insert(rows);
