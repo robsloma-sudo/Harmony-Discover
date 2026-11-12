@@ -96,7 +96,8 @@ describe("persistent world-space bottle tracks", () => {
       { trackId: 2, point: { x: 9, y: 9, z: 9 }, confidence: 1 },
     ], 1000);
     expect(tracks).toHaveLength(1);
-    expect(tracks[0].position).toEqual({ x: 0, y: 0, z: 1 });
+    // Duplicate source IDs are resolved by confidence; the strongest observation wins.
+    expect(tracks[0].position).toEqual({ x: 9, y: 9, z: 9 });
     expect(updateWorldSpatialTracks(tracks, [], 9000)).toHaveLength(0);
   });
 });
