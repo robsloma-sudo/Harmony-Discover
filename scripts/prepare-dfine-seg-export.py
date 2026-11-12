@@ -17,8 +17,9 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=Path("."))
     args = parser.parse_args()
 
-    if len(COCO_NAMES) != 80:
-        raise SystemExit(f"Expected 80 COCO classes, found {len(COCO_NAMES)}")
+    coco_names = dict(COCO_NAMES)
+    if len(coco_names) != 80 or coco_names.get(39) != "bottle":
+        raise SystemExit("Unexpected COCO class map: expected 80 classes and class 39=bottle")
 
     if not args.config.is_file():
         raise SystemExit(f"Missing D-FINE config: {args.config}")
@@ -32,7 +33,7 @@ def main() -> None:
     train["device"] = "cpu"
     train["img_size"] = [640, 640]
     train["in_channels"] = 3
-    train["label_to_name"] = {index: name for index, name in enumerate(COCO_NAMES)}
+    train["label_to_name"] = coco_names
     train["pretrained_model_path"] = f"pretrained/dfine_seg_{args.size}_coco.pt"
 
     export = config["export"]
@@ -45,7 +46,7 @@ def main() -> None:
 
     args.config.write_text(yaml.safe_dump(config, sort_keys=False))
     print(f"Prepared {args.config} for D-FINE-seg-{args.size} COCO instance segmentation")
-    print(f"Classes: {len(COCO_NAMES)}")
+    print(f"Classes: {len(coco_names)}; bottle class ID: 39")
     print(f"Checkpoint: {train['pretrained_model_path']}")
     print("Export: ONNX FP32, static 640x640, batch 1, parity enabled")
 
