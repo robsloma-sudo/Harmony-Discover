@@ -87,15 +87,15 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  const showPrint=showTrace&&stage>=3;
  const revealResults=!animate||sequenceDone;
  const edgeKinds=stage===1?['hard']:stage===2?['hard','label']:['hard','label','print'];
- const detectedEdges=(primary?.edgePaths||[]).filter(edge=>edge.confidence>=0.55&&edgeKinds.includes(edge.kind));
+ const detectedEdges=(primary?.edgePaths||[]).filter(edge=>edge.confidence>=0.55&&(edge.inferred?stage===4:edgeKinds.includes(edge.kind)));
  const edgeSegments=detectedEdges.flatMap((edge,edgeIndex)=>edge.points.slice(1).map((point,pointIndex)=>{const prev=edge.points[pointIndex];const dx=point.x-prev.x,dy=point.y-prev.y;return {key:edgeIndex+'-'+pointIndex,left:(prev.x+point.x)*50,top:(prev.y+point.y)*50,length:Math.hypot(dx,dy)*100,angle:Math.atan2(dy,dx)*180/Math.PI,kind:edge.kind,inferred:!!edge.inferred};}));
  return <Pressable onPress={onPress} style={s.photo}>
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
   {waitingForRead&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:waitingBeamY}]}]}/>}
   {showTrace&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:beamY}]}]}/>}
-  {showTrace&&edgeSegments.map(segment=><View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',opacity:segment.inferred?0.72:0.96,borderStyle:segment.inferred?'dashed':'solid'}]}/>)}
-  {showTrace&&edgeSegments.map(segment=><View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',opacity:segment.inferred?0.72:0.96,borderStyle:segment.inferred?'dashed':'solid'}]}/>)}
+  {showTrace&&edgeSegments.map(segment=>{const progress=segment.inferred?closeProgress:segment.kind==='hard'?hardProgress:segment.kind==='label'?labelProgress:printProgress;const revealAt=Math.max(0.04,Math.min(0.96,segment.top/100));const opacity=segment.inferred?progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.72,0.72]}):progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.96,0.96]});return <Animated.View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',opacity,transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',borderStyle:segment.inferred?'dashed':'solid'}]}/>;})}
+
 
   <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING FINE PRINT':stage===4?'4 · CLOSING BOTTLE GEOMETRY':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
