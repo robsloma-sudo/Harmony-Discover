@@ -174,7 +174,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
   const showMenu = !!cur && !focus && !!cur.menu;
   const facts: Array<[string, string]> = focus ? factsOf(focus) : showMenu ? cur!.menu!.items.slice(0, 12).map(it => [it.price || it.type, it.name] as [string, string]) : [];
   const sideKey = focus ? keyOf(focus) : showMenu ? `menu-${open}` : '';
-  const left = facts.filter((_, i) => i % 2 === 0), right = facts.filter((_, i) => i % 2 === 1);
+  
 
   /** Hands the menu photos to the existing menu flow: review, corrections and consent all happen there. */
   function keepMenu() { if (!menuPages.length) return; addPages(menuPages, source); router.push('/preview'); }
@@ -238,16 +238,16 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
         )}
       </div>
 
-      {facts.length > 0 && [left, right].map((col, side) => (
-        <div key={`${sideKey}-${side}`} style={{ position: 'absolute', top: '28%', bottom: 92, overflowY: 'auto', overscrollBehavior: 'contain', [side ? 'right' : 'left']: 12, width: '31vw', maxWidth: 230, textAlign: side ? 'right' : 'left', pointerEvents: 'auto' }}>
-          {col.map(([label, value], i) => (
-            <div key={`${label}-${value}`} className="hd-fly" style={{ marginBottom: 14, animation: `${side ? 'hdFlyR' : 'hdFlyL'} .55s cubic-bezier(.2,.8,.2,1) both`, animationDelay: `${(i * 2 + side) * 0.11}s` }}>
-              <div style={{ ...dim, fontSize: 9, letterSpacing: 0.5 }}>{label}</div>
-              <div style={{ ...word, fontSize: 12, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{value}</div>
+      {facts.length > 0 && (
+        <div key={sideKey} style={{ position: 'absolute', left: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.82)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '10px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+          {facts.map(([label, value], i) => (
+            <div key={`${label}-${i}`} style={{ display: 'grid', gridTemplateColumns: '38% minmax(0,1fr)', columnGap: 12, alignItems: 'start', padding: '9px 0', borderBottom: '1px solid rgba(153,180,220,.18)' }}>
+              <div style={{ ...dim, fontSize: 10, letterSpacing: .45, lineHeight: 1.25 }}>{label}</div>
+              <div style={{ ...word, fontSize: 12, lineHeight: 1.3, overflowWrap: 'anywhere', textAlign: 'left' }}>{value}</div>
             </div>
           ))}
         </div>
-      ))}
+      )
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '0 22px max(18px, env(safe-area-inset-bottom))' }}>
         {note ? <div style={{ ...dim, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>{note}</div> : null}
