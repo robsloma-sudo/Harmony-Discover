@@ -164,7 +164,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       {permission.granted ? (
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
-          active={!!permission.granted && !scanPhotos}
+          active={!!permission.granted}
           recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel })}
           captureRequestId={captureRequestId}
           spatialAnchors={liveSpatialAnchors}
