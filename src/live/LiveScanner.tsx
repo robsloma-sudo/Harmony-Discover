@@ -27,7 +27,7 @@ function factsOf(b: BottleRead): Array<[string,string]> {
   ['Importer',clean(d.importer)],['Certifications',clean(d.certifications)],['Organic claim',clean(d.organic_claim)],['Awards',clean(d.awards)]
  ];
  const seen=new Set<string>();
- return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;}).map(([label,value])=>{const field=label.toLowerCase().replace(/[^a-z0-9]+/g,'_');const score=fc[field];return [score===undefined?label:`${label} · ${Math.round(score*100)}%`,value] as [string,string];});
+ return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;}).map(([label,value])=>{const field=aliases[label.toLowerCase()]||label.toLowerCase().replace(/[^a-z0-9]+/g,'_');const score=fc[field];return [score===undefined?label:`${label} · ${Math.round(score*100)}%`,value] as [string,string];});
 }
 function makeSession() {
  try { if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID(); } catch {}
