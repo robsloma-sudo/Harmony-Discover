@@ -29,7 +29,7 @@ export function MaskContourOverlay({ points, color = '#1677FF', strokeWidth = 2.
           style={{
             position: 'absolute',
             left: segment.left,
-            top: segment.top,
+            top: segment.top - strokeWidth / 2,
             width: segment.length,
             height: strokeWidth,
             borderRadius: strokeWidth,
