@@ -100,15 +100,15 @@ Deno.serve(async (req: Request) => {
         catalog_linked: !!sighting.product_index_id,
         checked_at: new Date().toISOString(),
       };
-      const { error: completeError } = await db.from("discover_enrichment_jobs").update({
+      const { data: completedRow, error: completeError } = await db.from("discover_enrichment_jobs").update({
         status: "complete",
         output_payload: output,
         locked_at: null,
         locked_by: null,
         last_error: null,
         updated_at: new Date().toISOString(),
-      }).eq("id", jobId).eq("status", "processing").eq("locked_by", worker);
-      if (completeError) throw new Error("job_completion_write_failed");
+      }).eq("id", jobId).eq("status", "processing").eq("locked_by", worker).select("id").maybeSingle();
+      if (completeError || !completedRow) throw new Error("job_completion_write_failed_or_lock_lost");
       results.push({ id: jobId, outcome: "complete" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown_worker_error";
@@ -116,15 +116,15 @@ Deno.serve(async (req: Request) => {
       const maxAttempts = Number(job.max_attempts ?? 4);
       const terminal = attempts >= maxAttempts;
       const delaySeconds = Math.min(3600, 30 * (2 ** Math.max(0, attempts - 1)));
-      const { error: retryError } = await db.from("discover_enrichment_jobs").update({
+      const { data: retriedRow, error: retryError } = await db.from("discover_enrichment_jobs").update({
         status: terminal ? "failed" : "retry",
         available_at: new Date(Date.now() + delaySeconds * 1000).toISOString(),
         locked_at: null,
         locked_by: null,
         last_error: message.slice(0, 500),
         updated_at: new Date().toISOString(),
-      }).eq("id", jobId).eq("status", "processing").eq("locked_by", worker);
-      if (retryError) console.error(JSON.stringify({ event: "job_retry_write_failed", job_id: jobId }));
+      }).eq("id", jobId).eq("status", "processing").eq("locked_by", worker).select("id").maybeSingle();
+      if (retryError || !retriedRow) console.error(JSON.stringify({ event: "job_retry_write_failed_or_lock_lost", job_id: jobId }));
       results.push({ id: jobId, outcome: terminal ? "failed" : "retry" });
     }
   }
