@@ -11,7 +11,7 @@ import { createDfineSegOnnxProvider, type DfineOrtRuntime } from './dfineSegOnnx
 type DfineBrowserWindow = Window & { ort?: DfineOrtRuntime };
 let dfineOrtRuntimePromise: Promise<DfineOrtRuntime> | null = null;
 
-const D-FINE_MODEL_SHA256 = '999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30';
+const DFINE_MODEL_SHA256 = '999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30';
 
 async function loadDfineModelBytes(): Promise<ArrayBuffer> {
   const controller = new AbortController();
@@ -31,7 +31,7 @@ async function loadDfineModelBytes(): Promise<ArrayBuffer> {
     if (!window.crypto?.subtle) throw new Error('SHA-256 model integrity verification is unavailable in this browser.');
     const digest = await window.crypto.subtle.digest('SHA-256', bytes);
     const actual = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-    if (actual !== D-FINE_MODEL_SHA256) throw new Error('D-FINE model SHA-256 integrity check failed.');
+    if (actual !== DFINE_MODEL_SHA256) throw new Error('D-FINE model SHA-256 integrity check failed.');
     return bytes;
   } finally {
     window.clearTimeout(timeout);
