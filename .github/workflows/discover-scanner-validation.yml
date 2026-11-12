@@ -66,5 +66,5 @@ jobs:
         run: |
           set -euo pipefail
           test -s dist/index.html
-          find dist/ort -maxdepth 1 -name '*.wasm' -print -quit | grep -q .
-          find dist/ort -maxdepth 1 -name '*.mjs' -print -quit | grep -q .
+          test -s dist/ort/ort-wasm-simd-threaded.wasm
+          test -s dist/ort/ort-wasm-simd-threaded.mjs
