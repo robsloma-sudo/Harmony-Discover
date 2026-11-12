@@ -92,11 +92,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     // Only update physical identities once per cloud-recognition frame. Never
     // re-count the same bottle boxes against later depth frames.
     if (!liveBottleDepthFrame || liveBottleDepthFrame.unit !== 'meters') {
-      const aged = physicalBottleTrackerRef.current.update([], liveBottleFrameTimestamp * 1000);
+      // A matching depth event may still be arriving. Do not consume this
+      // recognition timestamp until its depth frame is available.
       setLivePhysicalIds(liveBottles.map(() => ''));
-      setLiveSpatialAnchors(aged.tracks.flatMap(track => track.worldPoint && track.state !== 'lost'
-        ? [{ physicalObjectId: track.physicalObjectId, x: track.worldPoint.x, y: track.worldPoint.y, z: track.worldPoint.z, state: track.state }]
-        : []));
+      setLiveSpatialAnchors(previous => previous.map(anchor => ({ ...anchor, state: 'occluded' })));
       return;
     }
     const observations = liveBottles.map(bottle => {
