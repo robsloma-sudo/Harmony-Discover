@@ -1,30 +1,69 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
-import {ActivityIndicator,Image,Linking,Platform,Pressable,Text,TextInput,View} from 'react-native';
+import {ActivityIndicator,Linking,Platform,Pressable,ScrollView,Text,TextInput,View} from 'react-native';
 import {colors} from '../ui';
 import {findNearbyVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
+import {AtlasMap} from './AtlasMap';
+import type {JourneyScanItem} from './JourneyPlayerOverlay';
+
 const radii:VenueRadius[]=[1,5,10,15,20];
 const filters=[{label:'All',value:''},{label:'Bars',value:'bar'},{label:'Cocktail bars',value:'cocktail_bar'},{label:'Restaurants',value:'restaurant'},{label:'Breweries',value:'brewery'},{label:'Wineries',value:'winery'},{label:'Distilleries',value:'distillery'}];
-const worldMap='https://staticmap.openstreetmap.de/staticmap.php?center=20,0&zoom=1&size=900x520&maptype=mapnik';
 type NearbyCommand = { id:number; action:'set_radius'|'set_category'|'search'|'recenter'|'configure'; radius_miles?:number; category?:string; search?:string };
-export default function NearbyPanel({command,onCommandResult}:{command?:NearbyCommand|null;onCommandResult?:(id:number,result:string)=>void}){
- const [radius,setRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[mapFailed,setMapFailed]=useState(false);
- const locate=useCallback(()=>new Promise<string>(resolve=>{if(Platform.OS!=='web'||typeof navigator==='undefined'||!navigator.geolocation){const message='Location is available in the web browser when device permission is enabled.';setError(message);resolve(message);return;}setLocating(true);setError('');navigator.geolocation.getCurrentPosition(p=>{setCoords({latitude:p.coords.latitude,longitude:p.coords.longitude});setMapFailed(false);setLocating(false);resolve('Nearby Atlas recentered on your current location.');},e=>{const message=e.code===1?'Location access is blocked. Enable it in browser settings.':e.code===3?'Location request timed out. Try again.':'Could not determine your location.';setError(message);setLocating(false);resolve(message);},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});}),[]);
+
+export default function NearbyPanel({command,onCommandResult,journeyItems=[],onOpenJourney}:{command?:NearbyCommand|null;onCommandResult?:(id:number,result:string)=>void;journeyItems?:JourneyScanItem[];onOpenJourney?:(item:JourneyScanItem)=>void}){
+ const [radius,setRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[selectedVenue,setSelectedVenue]=useState<string|null>(null),[journeysOpen,setJourneysOpen]=useState(false);
+ const locate=useCallback(()=>new Promise<string>(resolve=>{
+  if(typeof navigator==='undefined'||!navigator.geolocation){const message='Location permission is not available in this build yet.';setError(message);resolve(message);return;}
+  setLocating(true);setError('');
+  navigator.geolocation.getCurrentPosition(p=>{setCoords({latitude:p.coords.latitude,longitude:p.coords.longitude});setLocating(false);resolve('Atlas recentered on your current location.');},e=>{const message=e.code===1?'Location access is blocked. Enable it in browser settings.':e.code===3?'Location request timed out. Try again.':'Could not determine your location.';setError(message);setLocating(false);resolve(message);},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+ }),[]);
  const lastCommandId=useRef<number|null>(null);
- useEffect(()=>{if(!command||lastCommandId.current===command.id)return;lastCommandId.current=command.id;void(async()=>{if(command.action==='recenter'){onCommandResult?.(command.id,await locate());return;}const applied:string[]=[];if(command.action==='set_radius'||command.action==='configure'){if(command.radius_miles&&radii.includes(command.radius_miles as VenueRadius)){setRadius(command.radius_miles as VenueRadius);applied.push('radius');}}if(command.action==='set_category'||command.action==='configure'){if(typeof command.category==='string'&&filters.some(f=>f.value===command.category)){setCategory(command.category);applied.push('category');}}if(command.action==='search'||command.action==='configure'){if(typeof command.search==='string'&&command.search.trim()){setQuery(command.search.trim());applied.push('search');}}onCommandResult?.(command.id,applied.length?('Applied Nearby Atlas '+applied.join(', ')+'.'):'I need a valid radius, category, or search phrase to do that.');})();},[command,locate,onCommandResult]);
- useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyVenues(coords.latitude,coords.longitude,radius,category||null).then(rows=>{if(active)setVenues(rows);}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,radius,category]);
+ useEffect(()=>{if(!command||lastCommandId.current===command.id)return;lastCommandId.current=command.id;void(async()=>{
+  if(command.action==='recenter'){onCommandResult?.(command.id,await locate());return;}
+  const applied:string[]=[];
+  if(command.action==='set_radius'||command.action==='configure'){if(command.radius_miles&&radii.includes(command.radius_miles as VenueRadius)){setRadius(command.radius_miles as VenueRadius);applied.push('radius');}}
+  if(command.action==='set_category'||command.action==='configure'){if(typeof command.category==='string'&&filters.some(f=>f.value===command.category)){setCategory(command.category);applied.push('category');}}
+  if(command.action==='search'||command.action==='configure'){if(typeof command.search==='string'&&command.search.trim()){setQuery(command.search.trim());applied.push('search');}}
+  onCommandResult?.(command.id,applied.length?('Applied Nearby Atlas '+applied.join(', ')+'.'):'I need a valid radius, category, or search phrase to do that.');
+ })();},[command,locate,onCommandResult]);
+ useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyVenues(coords.latitude,coords.longitude,radius,category||null).then(rows=>{if(active){setVenues(rows);if(selectedVenue&&!rows.some(v=>v.id===selectedVenue))setSelectedVenue(null);}}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,radius,category]);
  const filtered=useMemo(()=>venues.filter(v=>v.name.toLowerCase().includes(query.trim().toLowerCase())||(v.locality||'').toLowerCase().includes(query.trim().toLowerCase())),[venues,query]);
- const map=coords?'https://staticmap.openstreetmap.de/staticmap.php?center='+coords.latitude+','+coords.longitude+'&zoom=13&size=900x520&maptype=mapnik&markers='+coords.latitude+','+coords.longitude+',red-pushpin':worldMap;
- return <View style={{maxHeight:490}}>
-  <Text style={{color:colors.muted,fontSize:10,lineHeight:15,marginBottom:8}}>Nearby uses your location only after you opt in. Your live coordinates are not saved to the venue directory.</Text>
-  <View style={{height:130,borderRadius:12,overflow:'hidden',backgroundColor:'#17232D',marginBottom:9}}>{!mapFailed?<Image source={{uri:map}} onError={()=>setMapFailed(true)} resizeMode="cover" style={{width:'100%',height:'100%'}}/>:<View style={{flex:1,justifyContent:'center',alignItems:'center'}}><Text style={{color:colors.text}}>Atlas map unavailable</Text></View>}</View>
-  <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & SEARCH'}</Text>}</Pressable>
-  {!!coords&&<>
-   <View style={{flexDirection:'row',gap:5,marginBottom:8}}>{radii.map(n=><Pressable key={n} onPress={()=>setRadius(n)} style={{flex:1,padding:7,borderRadius:8,alignItems:'center',backgroundColor:radius===n?colors.accent:colors.panel}}><Text style={{color:radius===n?'#111':colors.text,fontSize:10,fontWeight:'800'}}>{n} MI</Text></Pressable>)}</View>
-   <TextInput value={query} onChangeText={setQuery} placeholder="Search venues or towns" placeholderTextColor={colors.muted} style={{backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border,borderRadius:9,padding:10,color:colors.text,marginBottom:8}}/>
-   <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{padding:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:colors.panel}}><Text style={{color:category===f.value?'#111':colors.text,fontSize:9,fontWeight:'700'}}>{f.label}</Text></Pressable>)}</View>
-   <Text style={{color:colors.text,fontSize:10,fontWeight:'800',marginBottom:6}}>{loading?'SEARCHING…':filtered.length+' VENUES'}</Text>
-   {error?<Text style={{color:'#E6A18F',fontSize:10,marginBottom:6}}>{error}</Text>:null}
-   <View style={{maxHeight:170}}>{filtered.map(v=><View key={v.id} style={{padding:9,marginBottom:6,borderRadius:9,backgroundColor:colors.panel}}><Text style={{color:colors.text,fontWeight:'800',fontSize:11}}>{v.name}</Text><Text style={{color:colors.muted,fontSize:9,marginTop:3}}>{[v.locality,v.region].filter(Boolean).join(', ')||v.address_line||'Address unavailable'} · {v.distance_miles.toFixed(1)} mi</Text><Pressable onPress={()=>Linking.openURL('https://www.openstreetmap.org/?mlat='+v.latitude+'&mlon='+v.longitude+'#map=16/'+v.latitude+'/'+v.longitude)}><Text style={{color:colors.accent,fontSize:9,fontWeight:'800',marginTop:5}}>OPEN MAP ↗</Text></Pressable></View>)}</View>
-  </>}
- </View>;
+ const selected=filtered.find(v=>v.id===selectedVenue)||null;
+ const venuePins=filtered.map(v=>({id:v.id,name:v.name,latitude:v.latitude,longitude:v.longitude}));
+ const openVenue=(v:DiscoverVenue)=>{setSelectedVenue(v.id);};
+ return <ScrollView style={{maxHeight:560}} contentContainerStyle={{paddingBottom:10}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+  <Text style={{color:colors.muted,fontSize:10,lineHeight:15,marginBottom:8}}>ATLAS · Move and zoom the map, then search or filter the venues around your location. Location is used only after you opt in.</Text>
+  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} height={218}/>
+  <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginTop:9,marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & LOAD ATLAS'}</Text>}</Pressable>
+
+  <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:7}}>
+   <Text style={{color:colors.text,fontSize:10,fontWeight:'900',letterSpacing:1.1}}>JOURNEYS FROM YOUR LAST SCAN</Text>
+   <Text style={{color:colors.muted,fontSize:9}}>{journeyItems.length} ITEMS</Text>
+  </View>
+  <Pressable disabled={!journeyItems.length} onPress={()=>setJourneysOpen(v=>!v)} style={{padding:12,borderRadius:10,borderWidth:1,borderColor:journeyItems.length?'rgba(74,137,255,0.85)':'rgba(74,137,255,0.25)',backgroundColor:journeyItems.length?'rgba(24,65,130,0.28)':'rgba(14,25,44,0.42)',flexDirection:'row',alignItems:'center',justifyContent:'space-between',opacity:journeyItems.length?1:0.62}}>
+   <View><Text style={{color:'#DCEBFF',fontSize:11,fontWeight:'900',letterSpacing:1.2}}>JOURNEYS</Text><Text style={{color:'#94B8EA',fontSize:9,marginTop:3}}>{journeyItems.length?'Choose an item detected in your last photo':'Scan and read a bottle or menu to enable'}</Text></View>
+   <Text style={{color:'#A8CCFF',fontSize:12,fontWeight:'900'}}>{journeyItems.length?(journeysOpen?'−':'＋'):'LOCKED'}</Text>
+  </Pressable>
+  {journeysOpen&&journeyItems.map(item=><Pressable key={item.id} onPress={()=>onOpenJourney?.(item)} style={{marginTop:6,padding:11,borderRadius:9,backgroundColor:'rgba(11,24,44,0.82)',borderWidth:1,borderColor:'rgba(74,137,255,0.25)'}}>
+   <Text style={{color:'#EAF2FF',fontSize:11,fontWeight:'800'}}>{item.name}</Text><Text style={{color:'#91A9CB',fontSize:9,marginTop:3}}>{item.kind==='bottle'?'BOTTLE':'MENU ITEM'}{item.subtitle?' · '+item.subtitle:''}</Text><Text style={{color:'#78AFFF',fontSize:8,fontWeight:'900',letterSpacing:1,marginTop:7}}>OPEN JOURNEY PLAYER →</Text>
+  </Pressable>)}
+  {journeysOpen&&<Text style={{color:colors.muted,fontSize:9,lineHeight:14,marginTop:8}}>Playback is waiting for Harmony's approved public journey connection. This list reflects the scan only; it does not claim a matching published journey exists.</Text>}
+
+  <TextInput value={query} onChangeText={setQuery} placeholder="Search venues or towns" placeholderTextColor={colors.muted} style={{backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border,borderRadius:9,padding:10,color:colors.text,marginTop:12,marginBottom:8}}/>
+  <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{radii.map(n=><Pressable key={n} onPress={()=>setRadius(n)} style={{padding:7,borderRadius:8,backgroundColor:radius===n?colors.accent:colors.panel}}><Text style={{color:radius===n?'#111':colors.text,fontSize:9,fontWeight:'800'}}>{n} MI</Text></Pressable>)}</View>
+  <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{padding:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:colors.panel}}><Text style={{color:category===f.value?'#111':colors.text,fontSize:9,fontWeight:'700'}}>{f.label}</Text></Pressable>)}</View>
+  <Text style={{color:colors.text,fontSize:10,fontWeight:'900',marginBottom:6}}>{loading?'SEARCHING ATLAS…':filtered.length+' VENUES'}</Text>
+  {error?<Text style={{color:'#E6A18F',fontSize:10,marginBottom:6}}>{error}</Text>:null}
+  {selected&&<View style={{padding:11,marginBottom:8,borderRadius:10,backgroundColor:'rgba(23,54,100,0.42)',borderWidth:1,borderColor:'rgba(74,137,255,0.5)'}}>
+   <Text style={{color:'#EAF2FF',fontSize:12,fontWeight:'900'}}>{selected.name}</Text>
+   <Text style={{color:'#A8B7D0',fontSize:9,marginTop:3}}>{[selected.locality,selected.region].filter(Boolean).join(', ')||selected.address_line||'Address unavailable'} · {selected.distance_miles.toFixed(1)} mi</Text>
+   <Text style={{color:'#8DBBFF',fontSize:9,marginTop:6}}>Journey availability will appear after the Harmony connection is approved.</Text>
+   <Pressable onPress={()=>Linking.openURL('https://www.openstreetmap.org/?mlat='+selected.latitude+'&mlon='+selected.longitude+'#map=16/'+selected.latitude+'/'+selected.longitude)}><Text style={{color:'#8DBBFF',fontSize:9,fontWeight:'900',marginTop:8}}>OPEN IN MAPS ↗</Text></Pressable>
+  </View>}
+  {filtered.map(v=><Pressable key={v.id} onPress={()=>openVenue(v)} style={{padding:10,marginBottom:6,borderRadius:9,backgroundColor:selectedVenue===v.id?'rgba(26,63,117,0.5)':colors.panel,borderWidth:1,borderColor:selectedVenue===v.id?'rgba(74,137,255,0.65)':'transparent'}}>
+   <Text style={{color:colors.text,fontWeight:'800',fontSize:11}}>{v.name}</Text>
+   <Text style={{color:colors.muted,fontSize:9,marginTop:3}}>{[v.locality,v.region].filter(Boolean).join(', ')||v.address_line||'Address unavailable'} · {v.distance_miles.toFixed(1)} mi</Text>
+   <Text style={{color:'#79AFFF',fontSize:8,fontWeight:'800',letterSpacing:0.8,marginTop:5}}>SELECT VENUE</Text>
+  </Pressable>)}
+  {Platform.OS!=='web'&&!coords&&<Text style={{color:colors.muted,fontSize:9,marginTop:8}}>On-device location permission support will be added with the native map pass.</Text>}
+ </ScrollView>;
 }

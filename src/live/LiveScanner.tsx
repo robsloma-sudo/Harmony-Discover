@@ -5,6 +5,13 @@ import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead
 import { useScan } from '../state/ScanContext';
 
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
+
+export type JourneyScanItem = {
+  id: string;
+  kind: 'bottle' | 'menu_item';
+  name: string;
+  subtitle: string;
+};
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
 const C = { bg:'#050A1C',line:'rgba(79,139,255,.45)',blue:'#4F8BFF',text:'#F2F8FF',muted:'#B8CBE8',brass:'#D8B878',green:'#7DFFB5',amber:'#FFD27A' };const CATEGORY: Record<string,string> = { tequila:'Tequila',mezcal:'Mezcal',whiskey:'Whiskey',vodka:'Vodka',gin:'Gin',rum:'Rum',brandy:'Brandy',liqueur:'Liqueur',amaro_aperitivo:'Amaro / aperitivo',vermouth:'Vermouth',wine:'Wine',sparkling:'Sparkling wine',beer:'Beer',cider:'Cider',non_alcoholic:'Non-alcoholic',other:'Other' };
 const clean = (v: unknown) => Array.isArray(v) ? v.join(', ') : String(v || '');
@@ -104,7 +111,7 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
   <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING FINE PRINT':stage===4?'4 · CLOSING BOTTLE GEOMETRY':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
-export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
+export default function LiveScanner({photos,onClose,onKeepMenu,onJourneyItems,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;onJourneyItems?:(items:JourneyScanItem[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
  const uris=useMemo(()=>photos.slice(0,6),[photos]);
  const {addPages}=useScan();
  const session=useMemo(()=>makeSession(),[]);
@@ -143,6 +150,32 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
   return Object.values(map);
  },[states,removed]);
  const menuPages=uris.filter((_,i)=>!!states[i]?.menu);
+ useEffect(()=>{
+  const items:JourneyScanItem[]=[];
+  const seen=new Set<string>();
+  states.forEach((photo,index)=>{
+   if(photo.status!=='done')return;
+   photo.bottles.forEach(bottle=>{
+    if(bottle.state==='unsure')return;
+    const name=[bottle.match?.brand||bottle.brand,bottle.product].filter(Boolean).join(' ').trim();
+    if(!name)return;
+    const id='bottle:'+keyOf(bottle);
+    if(seen.has(id))return;
+    seen.add(id);
+    items.push({id,kind:'bottle',name,subtitle:[CATEGORY[bottle.category]||bottle.category,bottle.details?.vintage].filter(Boolean).join(' · ')});
+   });
+   photo.menu?.items.forEach((item,itemIndex)=>{
+    const name=String(item.name||'').trim();
+    if(!name)return;
+    const id='menu:'+name.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if(seen.has(id))return;
+    seen.add(id);
+    items.push({id:id+':'+itemIndex,kind:'menu_item',name,subtitle:[item.type,item.price].filter(Boolean).join(' · ')});
+   });
+  });
+  onJourneyItems?.(items);
+ },[states,removed,onJourneyItems]);
+
  const menuItems=states.reduce((n,x)=>n+(x.menu?.items.length||0),0);
  const current=states[active]||EMPTY;
  const focus=current.bottles.filter(b=>b.state!=='unsure').sort((a,b)=>Math.abs((a.box.x0+a.box.x1)/2-.5)-Math.abs((b.box.x0+b.box.x1)/2-.5))[0];
