@@ -195,22 +195,24 @@ export function filterResearchFields(
 
   for (const [code, rawValue] of Object.entries(fields)) {
     if (!allowed.has(code) || !missing.has(code)) continue;
-    const value = String(rawValue ?? "").replace(/\s+/g, " ").trim().slice(0, 240);
+    if (typeof rawValue !== "string") continue;
+    const value = rawValue.replace(/\s+/g, " ").trim().slice(0, 240);
     const score = Number(scores[code]);
     if (!value || !Number.isFinite(score) || score < minimumConfidence || score > 1) continue;
     for (const source of sources) {
       const supports = Array.isArray(source.supports) ? source.supports.map(String) : [];
       if (!supports.includes(code)) continue;
       const url = String(source.url ?? "").trim().slice(0, 500);
+      const title = String(source.title ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
       const sourceType = mapResearchSourceType(source.source_type, url);
-      if (!sourceType) continue;
+      if (!sourceType || !title) continue;
       output.push({
         code,
         value,
         confidence: score,
         source: {
           url,
-          title: String(source.title ?? "").replace(/\s+/g, " ").trim().slice(0, 180),
+          title,
           source_type: sourceType,
         },
       });
