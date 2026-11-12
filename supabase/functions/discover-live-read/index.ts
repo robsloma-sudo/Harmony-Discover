@@ -91,6 +91,30 @@ const reply = (body: unknown, status = 200, origin: string | null = null) => new
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
 
+type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
+function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
+  const additions: EdgePath[] = [];
+  const endpoint = (p: EdgePath, atStart: boolean) => atStart ? p.points[0] : p.points[p.points.length-1];
+  const direction = (p: EdgePath, atStart: boolean) => {
+    const a=endpoint(p,atStart), b=atStart?p.points[1]:p.points[p.points.length-2];
+    const dx=a.x-b.x, dy=a.y-b.y, len=Math.hypot(dx,dy)||1;
+    return {x:dx/len,y:dy/len};
+  };
+  for(let i=0;i<paths.length;i++) for(let j=i+1;j<paths.length;j++) {
+    const a=paths[i], b=paths[j];
+    if(a.kind!==b.kind||a.confidence<0.62||b.confidence<0.62) continue;
+    for(const aStart of [false,true]) for(const bStart of [true,false]) {
+      const p=endpoint(a,aStart), q=endpoint(b,bStart);
+      const dx=q.x-p.x, dy=q.y-p.y, gap=Math.hypot(dx,dy);
+      if(gap<0.0015||gap>0.012) continue;
+      const ux=dx/gap, uy=dy/gap, da=direction(a,aStart), db=direction(b,bStart);
+      if(da.x*ux+da.y*uy<0.82||db.x*(-ux)+db.y*(-uy)<0.82) continue;
+      additions.push({kind:a.kind,points:[p,q],confidence:Math.min(a.confidence,b.confidence)*0.82,inferred:true});
+    }
+  }
+  return paths.concat(additions).slice(0,64);
+}
+
 function pickDetails(b: Record<string, unknown>): Record<string, unknown> {
   const src = (b.details && typeof b.details === "object" ? b.details : b) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
@@ -268,11 +292,12 @@ Deno.serve(async (req: Request) => {
         label_box: Number.isFinite(Number(lb.x0)) && Number.isFinite(Number(lb.y0)) && Number.isFinite(Number(lb.x1)) && Number.isFinite(Number(lb.y1)) ? { x0: unit(lb.x0), y0: unit(lb.y0), x1: unit(lb.x1), y1: unit(lb.y1) } : null,
         edgePaths: (() => {
           const paths = Array.isArray(b.edge_paths) ? b.edge_paths.slice(0,48) : [];
-          return paths.map((path: Record<string, unknown>) => {
+          const observed = paths.map((path: Record<string, unknown>) => {
             const kind = ["hard","label","print"].includes(String(path.kind)) ? String(path.kind) : "";
             const points = (Array.isArray(path.points) ? path.points : []).slice(0,32).map((p: Record<string,unknown>) => ({ x: unit(p.x), y: unit(p.y) }));
             return { kind, points, confidence: unit(path.confidence) };
-          }).filter((path: {kind:string;points:Array<{x:number;y:number}>;confidence:number}) => path.kind && path.points.length >= 2 && path.confidence >= 0.45);
+          }).filter((path: {kind:string;points:Array<{x:number;y:number}>;confidence:number}) => path.kind && path.points.length >= 2 && path.confidence >= 0.45) as EdgePath[];
+          return bridgeSmallEdgeGaps(observed);
         })(),
         words: (Array.isArray(b.label_words) ? b.label_words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8),
         brand: clean(b.brand, 80), product: clean(b.product, 80),
