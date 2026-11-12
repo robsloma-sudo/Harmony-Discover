@@ -18,6 +18,7 @@ declare
   fields jsonb;
   identity jsonb;
   has_variant boolean := false;
+  v_job record;
 begin
   select * into s from public.bottle_sightings where id = p_sighting_id for update;
   if not found then raise exception 'Bottle sighting not found'; end if;
@@ -130,11 +131,20 @@ begin
   );
 
   -- A sighting may be attached repeatedly; only one active job of each type is created.
-  insert into public.discover_enrichment_jobs(discover_product_id, job_type, priority, input_payload)
-  select product_id, job.job_type, job.priority, jsonb_build_object('sighting_id', s.id)
-  from (values ('identity_match'::text, 10::smallint), ('official_source_lookup'::text, 30::smallint)) job(job_type, priority)
-  on conflict (discover_product_id, job_type)
-    where status in ('queued', 'processing', 'retry') do nothing;
+  for v_job in
+    select * from (values
+      ('identity_match'::text, 10::smallint),
+      ('official_source_lookup'::text, 30::smallint)
+    ) as requested(job_type, priority)
+  loop
+    begin
+      insert into public.discover_enrichment_jobs(discover_product_id, job_type, priority, input_payload)
+      values (product_id, v_job.job_type, v_job.priority, jsonb_build_object('sighting_id', s.id));
+    exception when unique_violation then
+      -- Another sighting already created active work for this product/type.
+      null;
+    end;
+  end loop;
   return query select product_id, score, created;
 end;
 $function$;
