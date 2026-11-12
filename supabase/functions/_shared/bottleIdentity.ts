@@ -11,7 +11,7 @@ export type BottleIdentityMatch = {
 };
 
 const clean = (value: unknown, max = 120) =>
-  String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, max);
+  String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 const unit = (value: unknown) => {
   const score = Number(value);
   return Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
@@ -19,7 +19,7 @@ const unit = (value: unknown) => {
 
 export function normalizeBottleIdentity(value: unknown): string {
   return clean(value).toLowerCase().normalize("NFKD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, " ").trim();
 }
 
