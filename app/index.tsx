@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraPermissions } from 'expo-camera';
@@ -40,6 +40,16 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
   const [liveReadAt, setLiveReadAt] = useState<number | null>(null);
   const [cameraMessage, setCameraMessage] = useState('');
+  useEffect(() => {
+    if (!liveReadAt) return;
+    const staleTimer = setTimeout(() => {
+      setLiveBottles([]);
+      setLiveCandidates([]);
+      setLiveBarcodes([]);
+      setLiveLabelText([]);
+    }, 6000);
+    return () => clearTimeout(staleTimer);
+  }, [liveReadAt]);
   const [scanPhotos, setScanPhotos] = useState<string[] | null>(null);
   const [scanSource, setScanSource] = useState<'camera'|'gallery'>('camera');
   const [scanMode, setScanMode] = useState<'bottle'|'menu'|'auto'>('auto');
