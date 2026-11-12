@@ -55,7 +55,26 @@ function researchValue(b: BottleRead, key: string): string {
   const value = aliases[key] ?? d[key];
   return Array.isArray(value) ? value.join(', ') : String(value || '');
 }
-type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3; menu: MenuGlimpse | null; note: string };
+async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Promise<string | null> {
+  if (!box) return null;
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('label_crop_load_failed')); image.src = uri; });
+  const padX = (box.x1 - box.x0) * 0.06, padY = (box.y1 - box.y0) * 0.08;
+  const x0 = Math.max(0, box.x0 - padX), y0 = Math.max(0, box.y0 - padY);
+  const x1 = Math.min(1, box.x1 + padX), y1 = Math.min(1, box.y1 + padY);
+  const sx = Math.round(x0 * image.naturalWidth), sy = Math.round(y0 * image.naturalHeight);
+  const sw = Math.max(1, Math.round((x1 - x0) * image.naturalWidth)), sh = Math.max(1, Math.round((y1 - y0) * image.naturalHeight));
+  const scale = Math.min(3, 2400 / Math.max(sw, sh));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sw * scale)); canvas.height = Math.max(1, Math.round(sh * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.94).replace(/^data:image\\/jpeg;base64,/, '');
+}
+
+type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], visualBottles: [], visualMenu: null, scanStage: 0, menu: null, note: '' };
 
 /** One frozen photo with its own sweep line, glowing edges and name tags. */
@@ -183,7 +202,25 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
         patch(i, { scanStage: 3 });
         await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
-        patch(i, { status: 'done', bottles: result.bottles, visualBottles: [], visualMenu: null, scanStage: 0, menu: result.menu.visible ? result.menu : null });
+        // Fourth pass: magnify each detected label from the original photo, then ask
+        // the vision model specifically for fine print. Keep the original read if this fails.
+        patch(i, { scanStage: 4 });
+        const fineReads = await Promise.all(result.bottles.map(async bottle => {
+          try {
+            const crop = await makeFinePrintCrop(uris[i], bottle.label_box || null);
+            return crop ? await readLiveFrame(crop, 'fine_print') : null;
+          } catch { return null; }
+        }));
+        const finalBottles = result.bottles.map((bottle, index) => {
+          const fine = fineReads[index]?.bottles?.[0];
+          if (!fine) return bottle;
+          const details = { ...bottle.details };
+          for (const [key, value] of Object.entries(fine.details || {})) if (!details[key] && value) details[key] = value;
+          return { ...bottle, details, proof: bottle.proof || fine.proof, size: bottle.size || fine.size, origin: bottle.origin || fine.origin,
+            fieldConfidence: { ...bottle.fieldConfidence, ...Object.fromEntries(Object.entries(fine.fieldConfidence || {}).filter(([key]) => !bottle.details?.[key])) },
+            words: Array.from(new Set([...(bottle.words || []), ...(fine.words || [])])).slice(0, 20) };
+        });
+        patch(i, { status: 'done', bottles: finalBottles, visualBottles: [], visualMenu: null, scanStage: 0, menu: result.menu.visible ? result.menu : null });
       } catch (error) {
         const remaining = Math.max(0, 4600 - (performance.now() - visualStarted));
         if (remaining) await new Promise(resolve => setTimeout(resolve, remaining));
