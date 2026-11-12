@@ -108,11 +108,11 @@ begin
     created := true;
   end if;
 
-  update public.bottle_sightings
+  update public.bottle_sightings as sighting
   set discover_product_id = product_id,
-      product_index_id = case when exact_count = 1 then m.id else product_index_id end,
-      match_score = case when exact_count = 1 then score::real else match_score end
-  where id = s.id;
+      product_index_id = case when exact_count = 1 then m.id else sighting.product_index_id end,
+      match_score = case when exact_count = 1 then score::real else sighting.match_score end
+  where sighting.id = s.id;
 
   -- Preserve OCR as unreviewed evidence; it is not a verified attribute.
   insert into public.discover_product_evidence(
