@@ -19,6 +19,7 @@ import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { associateLabelSignalsToBottles } from '../src/live/labelBottleAssociation';
 import { SpatialBottleTracker } from '../src/live/spatialBottleTracker';
 import { projectBottleBoxToWorld } from '../src/live/spatialBottleProjection';
+import { matchDetectionToTrack } from '../src/live/overlayTrackAssociation';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
@@ -308,18 +309,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const width = Math.max(0.035, right - x);
             const height = Math.max(0.045, bottom - y);
             const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
-            const track = liveCandidates.reduce((best, candidate) => {
-              const overlapLeft = Math.max(x, candidate.x);
-              const overlapTop = Math.max(y, candidate.y);
-              const overlapRight = Math.min(right, candidate.x + candidate.width);
-              const overlapBottom = Math.min(bottom, candidate.y + candidate.height);
-              const intersection = Math.max(0, overlapRight - overlapLeft) * Math.max(0, overlapBottom - overlapTop);
-              const union = width * height + candidate.width * candidate.height - intersection;
-              const score = union > 0 ? intersection / union : 0;
-              return score > best.score ? { id: candidate.trackId, score } : best;
-            }, { id: index + 1, score: 0 });
+            // Use the tracker's smoothed camera-space rectangle for rendering,
+            // not just its ID. Fall back to the latest recognition box when no
+            // sufficiently overlapping track can be defended.
+            const track = matchDetectionToTrack({ x, y, width, height }, liveCandidates);
+            const renderBox = track ?? { trackId: index + 1, x, y, width, height };
             return (
-              <View key={track.id} style={[s.liveDetectionBox, { left: ((x * 100) + '%') as `${number}%`, top: ((y * 100) + '%') as `${number}%`, width: ((width * 100) + '%') as `${number}%`, height: ((height * 100) + '%') as `${number}%` }]}>
+              <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · LIVE</Text>
