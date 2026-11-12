@@ -40,7 +40,12 @@ export type SpatialDetection = {
 };
 
 export type SpatialTrack = {
+  /** Stable world-track ID; can survive changes to the detector's 2D ID. */
   trackId: number;
+  /** Most recent detector ID, retained for joining current-frame UI metadata. */
+  sourceTrackId?: number;
+  identityKey?: string;
+  box?: ImageBox;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
   confidence: number;
@@ -213,9 +218,14 @@ export function arkitOrientationFromRawValue(value: number): ARKitImageOrientati
 export type WorldPoint = { x: number; y: number; z: number };
 
 export type WorldSpatialDetection = {
+  /** Transient 2D detector ID, not a permanent object identity. */
   trackId: number;
   point: WorldPoint;
   confidence: number;
+  /** Stable product/category evidence when available; normalized by caller. */
+  identityKey?: string;
+  /** Current normalized image-space box, used only as a weak tie-breaker. */
+  box?: ImageBox;
 };
 
 /**
@@ -227,40 +237,82 @@ export function updateWorldSpatialTracks(
   previous: SpatialTrack[],
   detections: WorldSpatialDetection[],
   now: number,
-  options: { smoothing?: number; maxAgeMs?: number; maxJumpMeters?: number } = {},
+  options: { smoothing?: number; maxAgeMs?: number; maxJumpMeters?: number; reassociationMeters?: number } = {},
 ): SpatialTrack[] {
   const alpha = Math.max(0.05, Math.min(1, options.smoothing ?? 0.28));
   const maxAgeMs = options.maxAgeMs ?? 7000;
   const maxJumpMeters = options.maxJumpMeters ?? 0.65;
-  const old = new Map(previous.map(track => [track.trackId, track]));
-  const seen = new Set<number>();
+  const reassociationMeters = options.reassociationMeters ?? 0.45;
+  const used = new Set<number>();
+  const seenSourceIds = new Set<number>();
   const next: SpatialTrack[] = [];
+  const activePrevious = previous.filter(track => now - track.lastSeenAt <= maxAgeMs);
 
-  for (const detection of detections) {
-    if (seen.has(detection.trackId)) continue;
-    seen.add(detection.trackId);
-    const target = detection.point;
-    if (![target.x, target.y, target.z, detection.confidence].every(Number.isFinite)) continue;
-    const prior = old.get(detection.trackId);
+  // Process the strongest observations first so a weak/ambiguous detection
+  // cannot steal the best world-space match from a clearer one.
+  const ordered = [...detections]
+    .filter(detection => [detection.point.x, detection.point.y, detection.point.z, detection.confidence].every(Number.isFinite))
+    .sort((a, b) => b.confidence - a.confidence);
+
+  for (const detection of ordered) {
+    if (seenSourceIds.has(detection.trackId)) continue;
+    seenSourceIds.add(detection.trackId);
+    let prior = activePrevious.find(track => track.trackId === detection.trackId && !used.has(track.trackId));
+
+    // Detector IDs are only temporal 2D IDs. If they change, reassociate by
+    // world-space proximity, predicted motion, and available product evidence.
+    if (!prior) {
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (const candidate of activePrevious) {
+        if (used.has(candidate.trackId)) continue;
+        if (candidate.identityKey && detection.identityKey && candidate.identityKey !== detection.identityKey) continue;
+        const elapsed = Math.max(0, Math.min(2, (now - candidate.lastSeenAt) / 1000));
+        const predicted = {
+          x: candidate.position.x + candidate.velocity.x * elapsed,
+          y: candidate.position.y + candidate.velocity.y * elapsed,
+          z: candidate.position.z + candidate.velocity.z * elapsed,
+        };
+        const distance = Math.hypot(
+          detection.point.x - predicted.x,
+          detection.point.y - predicted.y,
+          detection.point.z - predicted.z,
+        );
+        if (distance > reassociationMeters) continue;
+        const identityBonus = candidate.identityKey && candidate.identityKey === detection.identityKey ? 0.08 : 0;
+        const boxPenalty = candidate.box && detection.box
+          ? 0.04 * (1 - boxIoU(candidate.box, detection.box))
+          : 0.02;
+        const score = distance - identityBonus + boxPenalty;
+        if (score < bestScore) {
+          bestScore = score;
+          prior = candidate;
+        }
+      }
+    }
+
     if (!prior) {
       next.push({
         trackId: detection.trackId,
-        position: { x: target.x, y: target.y, z: target.z },
+        sourceTrackId: detection.trackId,
+        identityKey: detection.identityKey,
+        box: detection.box,
+        position: { x: detection.point.x, y: detection.point.y, z: detection.point.z },
         velocity: { x: 0, y: 0, z: 0 },
         confidence: detection.confidence,
         lastSeenAt: now,
       });
+      used.add(detection.trackId);
       continue;
     }
 
-    const dx = target.x - prior.position.x;
-    const dy = target.y - prior.position.y;
-    const dz = target.z - prior.position.z;
+    used.add(prior.trackId);
+    const dx = detection.point.x - prior.position.x;
+    const dy = detection.point.y - prior.position.y;
+    const dz = detection.point.z - prior.position.z;
     const jump = Math.hypot(dx, dy, dz);
     if (jump > maxJumpMeters) {
-      // Do not refresh lastSeenAt: repeated rejected measurements must not
-      // keep a stale or incorrectly associated object alive indefinitely.
-      if (now - prior.lastSeenAt <= maxAgeMs) next.push(prior);
+      // Keep the previous stable track but do not refresh its timestamp.
+      next.push(prior);
       continue;
     }
 
@@ -276,11 +328,31 @@ export function updateWorldSpatialTracks(
       y: prior.velocity.y * (1 - velocityAlpha) + ((position.y - prior.position.y) / dt) * velocityAlpha,
       z: prior.velocity.z * (1 - velocityAlpha) + ((position.z - prior.position.z) / dt) * velocityAlpha,
     };
-    next.push({ trackId: detection.trackId, position, velocity, confidence: detection.confidence, lastSeenAt: now });
+    next.push({
+      trackId: prior.trackId,
+      sourceTrackId: detection.trackId,
+      identityKey: detection.identityKey ?? prior.identityKey,
+      box: detection.box ?? prior.box,
+      position,
+      velocity,
+      confidence: detection.confidence,
+      lastSeenAt: now,
+    });
   }
 
-  for (const track of previous) {
-    if (!seen.has(track.trackId) && now - track.lastSeenAt <= maxAgeMs) next.push(track);
+  for (const track of activePrevious) {
+    if (!used.has(track.trackId)) next.push(track);
   }
   return next;
+}
+
+/** Intersection-over-union for normalized image boxes; zero for invalid boxes. */
+function boxIoU(a: ImageBox, b: ImageBox): number {
+  const aw = a.x1 - a.x0, ah = a.y1 - a.y0;
+  const bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+  if (![aw, ah, bw, bh].every(value => Number.isFinite(value) && value > 0)) return 0;
+  const intersection = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0))
+    * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const union = aw * ah + bw * bh - intersection;
+  return union > 0 ? intersection / union : 0;
 }
