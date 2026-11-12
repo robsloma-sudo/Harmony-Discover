@@ -13,18 +13,19 @@ Status: research gate only. No segmentation model or model weights are bundled o
 
 ## Candidates
 
-### D-FINE-seg-S — leading instance-mask experiment
+### D-FINE-seg-N / S — leading instance-mask experiment
 
 Repository: https://github.com/ArgoHA/D-FINE-seg
 
 - Repository code is Apache-2.0.
 - The repository states that its COCO detection and instance-segmentation weights are Apache-2.0; Cityscapes semantic-segmentation checkpoints are non-commercial and must not be used.
 - COCO instance-segmentation weights include the COCO bottle class. This is a useful generic bottle prior, not a guarantee that the model will segment every spirit, wine, beer, can, keg, or unusual package correctly.
-- The S instance-segmentation model is listed at 11.87M parameters and 640x640 input.
+- The N COCO instance-segmentation checkpoint is listed at 5.1M parameters; the S checkpoint is 11.9M. Both are designed around 640x640 inference.
+- A third-party ONNX model catalog lists exported COCO segmentation graphs at approximately 17.89 MB (N) and 47.62 MB (S). Treat these as candidate artifacts; verify exact provenance, checksum, and license notices before bundling.
 - The project exports ONNX and Core ML; its inference wrappers return per-instance masks.
 - Published speed numbers are from an RTX 5070 Ti / TensorRT benchmark, not an iPhone or browser. Do not reuse those numbers as mobile performance claims.
 
-Why it is promising: unlike prompt-only segmentation, it can produce instance masks for bottle-class objects in one model pass. It is also a plausible source for a later Harmony-trained bottle-specific segmentation model.
+Why it is promising: unlike prompt-only segmentation, it can produce instance masks for bottle-class objects in one model pass. Start with N for the browser download/memory budget, then compare S for mask quality. It is also a plausible source for a later Harmony-trained bottle-specific segmentation model.
 
 Risks: COCO bottle coverage is generic; clear glass, dark glass, foil necks, overlapping shelf stock, label glare, and unusual shapes may reduce mask quality. Browser ONNX operator compatibility and iPhone Core ML latency are unmeasured.
 
@@ -84,4 +85,4 @@ Initial engineering targets (not achieved results): first useful mask under 500 
 
 ## Decision
 
-Prototype D-FINE-seg-S and MobileSAM side by side. D-FINE-seg-S is the leading candidate for generic bottle instance masks and future fine-tuning; MobileSAM is the leading prompt-refinement candidate for cloud-seeded boxes. Do not adopt either until exact checkpoint provenance, browser operator support, and iPhone measurements are recorded.
+Prototype D-FINE-seg-N, D-FINE-seg-S, and MobileSAM side by side. D-FINE-seg-N is the first browser candidate by size; S is the quality comparison. D-FINE-seg is the leading candidate for generic bottle instance masks and future fine-tuning; MobileSAM is the prompt-refinement comparison for cloud-seeded boxes. Do not adopt either until exact checkpoint provenance, browser operator support, and iPhone measurements are recorded.
