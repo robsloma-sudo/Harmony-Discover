@@ -167,7 +167,7 @@ function WebLiveCamera(props: NativeProps) {
           features: [],
           bottle: detection.bottle,
         };
-        if (latestGrayFrame) track.features = seedMotionFeatures(latestGrayFrame, track);
+        if (seedFrame) track.features = seedMotionFeatures(seedFrame, track);
         next.push(track);
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence };
       });
@@ -176,6 +176,21 @@ function WebLiveCamera(props: NativeProps) {
       });
       webTracks = next;
       return next.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour }));
+    };
+
+    const captureTrackingFrameFromCanvas = (source: HTMLCanvasElement): GrayFrame | null => {
+      if (!trackingCanvas) trackingCanvas = document.createElement('canvas');
+      const scale = Math.min(1, 320 / Math.max(source.width, source.height));
+      const width = Math.max(1, Math.round(source.width * scale));
+      const height = Math.max(1, Math.round(source.height * scale));
+      if (trackingCanvas.width !== width || trackingCanvas.height !== height) {
+        trackingCanvas.width = width;
+        trackingCanvas.height = height;
+        trackingContext = trackingCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      if (!trackingContext) return null;
+      trackingContext.drawImage(source, 0, 0, source.width, source.height, 0, 0, width, height);
+      return grayscaleFrame(width, height, trackingContext.getImageData(0, 0, width, height).data);
     };
 
     const captureTrackingFrame = (): GrayFrame | null => {
@@ -280,6 +295,9 @@ function WebLiveCamera(props: NativeProps) {
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
+        // Seed local motion features from the exact cropped image sent to cloud
+        // recognition, not a later camera frame captured after the response.
+        const seedFrame = captureTrackingFrameFromCanvas(canvas);
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
         const result = await readLiveFrame(jpeg);
         const decodedBarcodes = await barcodePromise;
@@ -289,7 +307,7 @@ function WebLiveCamera(props: NativeProps) {
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })));
+        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })), seedFrame);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', candidates: trackedCandidates } });
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
