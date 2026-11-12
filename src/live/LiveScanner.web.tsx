@@ -74,6 +74,21 @@ async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Pro
   return canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '';
 }
 
+// Share a small fine-print request pool across every photo in this scanner session.
+// A per-photo cap alone could still burst to 12 requests when six images are scanned.
+let activeFinePrintReads = 0;
+const finePrintWaiters: Array<() => void> = [];
+async function withFinePrintSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activeFinePrintReads >= 2) await new Promise<void>(resolve => finePrintWaiters.push(resolve));
+  activeFinePrintReads += 1;
+  try {
+    return await task();
+  } finally {
+    activeFinePrintReads = Math.max(0, activeFinePrintReads - 1);
+    finePrintWaiters.shift()?.();
+  }
+}
+
 type EnhancementVariant = { name: string; jpeg: string; score: number };
 
 /**
@@ -343,7 +358,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
             const selected = variants.filter(v => v.name !== 'original').slice(0, 1);
             const reads = await Promise.all(selected.map(async variant => {
               try {
-                const response = await readLiveFrame(variant.jpeg, 'fine_print');
+                const response = await withFinePrintSlot(() => readLiveFrame(variant.jpeg, 'fine_print'));
                 return { name: variant.name, bottles: response.bottles };
               } catch { return null; }
             }));
