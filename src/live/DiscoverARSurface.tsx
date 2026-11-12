@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
-import { CameraView, type CameraViewRef } from 'expo-camera';
+import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
