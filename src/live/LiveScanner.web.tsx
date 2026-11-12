@@ -64,14 +64,14 @@ async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Pro
   const x1 = Math.min(1, box.x1 + padX), y1 = Math.min(1, box.y1 + padY);
   const sx = Math.round(x0 * image.naturalWidth), sy = Math.round(y0 * image.naturalHeight);
   const sw = Math.max(1, Math.round((x1 - x0) * image.naturalWidth)), sh = Math.max(1, Math.round((y1 - y0) * image.naturalHeight));
-  const scale = Math.min(3, 2400 / Math.max(sw, sh));
+  const scale = Math.min(2.5, 1600 / Math.max(sw, sh));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sw * scale)); canvas.height = Math.max(1, Math.round(sh * scale));
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.94).replace(/^data:image\\/jpeg;base64,/, '');
+  return canvas.toDataURL('image/jpeg', 0.88).replace(/^data:image\\/jpeg;base64,/, '');
 }
 
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4; menu: MenuGlimpse | null; note: string };
@@ -113,7 +113,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const gy = -gray[i - EW - 1] - 2 * gray[i - EW] - gray[i - EW + 1] + gray[i + EW - 1] + 2 * gray[i + EW] + gray[i + EW + 1];
         const m = Math.abs(gx) + Math.abs(gy);
         const nx = x / EW, ny = y / EH;
-        alpha[i] = m < 90 ? 0 : Math.min(255, (m - 90) * 2.2);
+        alpha[i] = m < 65 ? 0 : Math.min(150, (m - 65) * 0.85);
       }
       const canvas = canvasRef.current; if (!canvas) return;
       canvas.width = EW; canvas.height = EH;
@@ -153,13 +153,14 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       <div style={{ position: 'relative', aspectRatio: ratio ? String(ratio) : undefined, maxWidth: '100%', maxHeight: '100%', width: ratio >= 1 ? '100%' : undefined, height: ratio && ratio < 1 ? '100%' : undefined, overflow: 'hidden' }}>
         <img src={uri} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
         <div style={{ ...fill, background: 'rgba(5,10,40,.28)' }} />
-        {state.scanStage === 3 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 3px #4f8bff) drop-shadow(0 0 9px #2b56f0)' }} />}
+        {state.scanStage === 3 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 1px rgba(79,139,255,.55)) drop-shadow(0 0 3px rgba(43,86,240,.3))' }} />}
+        {state.scanStage === 4 && <div aria-hidden style={{ position: 'absolute', left: '50%', top: '12%', transform: 'translateX(-50%)', padding: '5px 9px', border: '1px solid rgba(169,212,255,.45)', borderRadius: 6, background: 'rgba(5,12,30,.58)', color: 'rgba(225,239,255,.9)', fontSize: 10, letterSpacing: 1.4, whiteSpace: 'nowrap', textShadow: '0 0 4px rgba(79,139,255,.35)' }}>FINE-PRINT EXTRACTION</div>}
         {state.scanStage === 0 && <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />}
-        {state.scanStage === 2 && state.visualMenu?.box && <div aria-hidden style={{ position: 'absolute', left: `${state.visualMenu.box.x0 * 100}%`, top: `${state.visualMenu.box.y0 * 100}%`, width: `${(state.visualMenu.box.x1 - state.visualMenu.box.x0) * 100}%`, height: `${(state.visualMenu.box.y1 - state.visualMenu.box.y0) * 100}%`, border: '2px solid #7dffb5', borderRadius: 5, boxSizing: 'border-box', boxShadow: '0 0 8px #7dffb5, inset 0 0 8px rgba(125,255,181,.25)' }} />}
+        {state.scanStage === 2 && state.visualMenu?.box && <div aria-hidden style={{ position: 'absolute', left: `${state.visualMenu.box.x0 * 100}%`, top: `${state.visualMenu.box.y0 * 100}%`, width: `${(state.visualMenu.box.x1 - state.visualMenu.box.x0) * 100}%`, height: `${(state.visualMenu.box.y1 - state.visualMenu.box.y0) * 100}%`, border: '1px solid rgba(125,255,181,.78)', borderRadius: 5, boxSizing: 'border-box', boxShadow: '0 0 3px rgba(125,255,181,.4), inset 0 0 3px rgba(125,255,181,.12)' }} />}
         {(state.scanStage === 1 || state.scanStage === 2) && state.visualBottles.map((b, i) => {
           const box = state.scanStage === 1 ? b.box : b.label_box;
           if (!box) return null;
-          return <div key={`stage-${state.scanStage}-${i}`} aria-hidden style={{ position: 'absolute', left: `${box.x0 * 100}%`, top: `${box.y0 * 100}%`, width: `${(box.x1 - box.x0) * 100}%`, height: `${(box.y1 - box.y0) * 100}%`, border: state.scanStage === 1 ? '2px solid #a9d4ff' : '2px solid #7dffb5', borderRadius: state.scanStage === 1 ? 18 : 4, boxSizing: 'border-box', boxShadow: state.scanStage === 1 ? '0 0 8px #4f8bff, inset 0 0 8px rgba(79,139,255,.35)' : '0 0 8px #7dffb5, inset 0 0 8px rgba(125,255,181,.25)', transition: 'all .25s ease-out' }} />;
+          return <div key={`stage-${state.scanStage}-${i}`} aria-hidden style={{ position: 'absolute', left: `${box.x0 * 100}%`, top: `${box.y0 * 100}%`, width: `${(box.x1 - box.x0) * 100}%`, height: `${(box.y1 - box.y0) * 100}%`, border: state.scanStage === 1 ? '1px solid rgba(169,212,255,.82)' : '1px solid rgba(125,255,181,.78)', borderRadius: state.scanStage === 1 ? 18 : 4, boxSizing: 'border-box', boxShadow: state.scanStage === 1 ? '0 0 3px rgba(79,139,255,.45), inset 0 0 3px rgba(79,139,255,.15)' : '0 0 3px rgba(125,255,181,.4), inset 0 0 3px rgba(125,255,181,.12)', transition: 'all .25s ease-out' }} />;
         })}
         {state.bottles.map((b, i) => {
           const cx = ((b.box.x0 + b.box.x1) / 2) * 100, top = Math.max(compact ? 10 : 6, b.box.y0 * 100 - 2), isUnsure = b.state === 'unsure';
@@ -205,14 +206,14 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         // Fourth pass: magnify each detected label from the original photo, then ask
         // the vision model specifically for fine print. Keep the original read if this fails.
         patch(i, { scanStage: 4 });
-        const fineReads = await Promise.all(result.bottles.map(async bottle => {
+        const fineReads = await Promise.all(result.bottles.slice(0, 4).map(async bottle => {
           try {
             const crop = await makeFinePrintCrop(uris[i], bottle.label_box || null);
             return crop ? await readLiveFrame(crop, 'fine_print') : null;
           } catch { return null; }
         }));
         const finalBottles = result.bottles.map((bottle, index) => {
-          const fine = fineReads[index]?.bottles?.[0];
+          const fine = index < 4 ? fineReads[index]?.bottles?.[0] : null;
           if (!fine) return bottle;
           const details = { ...bottle.details };
           for (const [key, value] of Object.entries(fine.details || {})) if (!details[key] && value) details[key] = value;
