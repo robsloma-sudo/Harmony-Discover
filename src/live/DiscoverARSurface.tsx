@@ -313,7 +313,7 @@ function WebLiveCamera(props: NativeProps) {
         const provider = await createDfineSegOnnxProvider(
           ort as unknown as DfineOrtRuntime,
           '/models/dfine_seg_n_coco.onnx',
-          { inputSize: 640, minimumScore: 0.5, modelId: 'dfine-seg-n-coco' },
+          { inputSize: 640, minimumScore: 0.5 },
         );
         const runner = new SegmentationRunner(provider, {
           minimumIntervalMs: 1000,
