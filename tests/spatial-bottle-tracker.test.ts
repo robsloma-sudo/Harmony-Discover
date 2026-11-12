@@ -7,11 +7,11 @@ describe('persistent physical bottle tracking', () => {
   it('confirms a stable physical object after repeated strong geometry observations', () => {
     const tracker = new SpatialBottleTracker();
     const first = tracker.update([{ worldPoint: point(0), confidence: 0.92, geometryComplete: true }], 1000);
-    const id = first.observed[0].physicalObjectId;
-    expect(first.observed[0].state).toBe('potential');
+    const id = first.observed[0]!.physicalObjectId;
+    expect(first.observed[0]?.state).toBe('potential');
     const second = tracker.update([{ worldPoint: point(0.04), confidence: 0.94, geometryComplete: true }], 1500);
-    expect(second.observed[0].physicalObjectId).toBe(id);
-    expect(second.observed[0].state).toBe('confirmed');
+    expect(second.observed[0]!.physicalObjectId).toBe(id);
+    expect(second.observed[0]?.state).toBe('confirmed');
   });
 
   it('does not confirm incomplete or low-confidence geometry', () => {
@@ -25,7 +25,7 @@ describe('persistent physical bottle tracking', () => {
     const tracker = new SpatialBottleTracker({ occlusionGraceMs: 2500 });
     tracker.update([{ worldPoint: point(0), confidence: 0.9, geometryComplete: true }], 1000);
     const confirmed = tracker.update([{ worldPoint: point(0), confidence: 0.9, geometryComplete: true }], 1500);
-    const id = confirmed.observed[0].physicalObjectId;
+    const id = confirmed.observed[0]!.physicalObjectId;
     const occluded = tracker.update([], 2300);
     expect(occluded.tracks[0].physicalObjectId).toBe(id);
     expect(occluded.tracks[0].state).toBe('occluded');
@@ -46,7 +46,7 @@ describe('persistent physical bottle tracking', () => {
     const tracker = new SpatialBottleTracker();
     const first = tracker.update([{ worldPoint: point(0), confidence: 0.9, geometryComplete: true, visualKey: 'label-a' }], 1000);
     const next = tracker.update([{ worldPoint: point(0.01), confidence: 0.9, geometryComplete: true, visualKey: 'label-b' }], 1200);
-    expect(next.observed[0].physicalObjectId).not.toBe(first.observed[0].physicalObjectId);
+    expect(next.observed[0]!.physicalObjectId).not.toBe(first.observed[0]!.physicalObjectId);
   });
 
   it('does not create phantom tracks when metric depth is unavailable', () => {
