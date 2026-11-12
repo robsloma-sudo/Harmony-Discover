@@ -7,7 +7,7 @@ function makeOutput() {
   const masks = new Uint8Array(width * height);
   for (let y = 2; y < 10; y++) for (let x = 3; x < 7; x++) masks[y * width + x] = 1;
   return {
-    labels: new BigInt64Array([39n, 1n]),
+    labels: [39, 1],
     boxes: new Float32Array([2, 1, 8, 11, 0, 0, 4, 4]),
     scores: new Float32Array([0.94, 0.99]),
     masks: new Uint8Array([...masks, ...new Uint8Array(width * height)]),
@@ -51,6 +51,7 @@ describe('D-FINE instance-mask adapter', () => {
     const output = makeOutput();
     expect(adaptDfineSegOutput({ ...output, maskWidth: 9 }, 10, 12, 5000)).toEqual([]);
     expect(adaptDfineSegOutput({ ...output, boxes: new Float32Array([NaN, 0, 1, 1, 0, 0, 1, 1]) }, 10, 12, 5000)).toEqual([]);
+    expect(adaptDfineSegOutput({ ...output, masks: new Uint8Array(240) }, 10, 12, 5000)).toEqual([]);
     expect(adaptDfineSegOutput({ ...output, masks: new Uint8Array(240) }, 10, 12, 5000)).toEqual([]);
   });
 });
