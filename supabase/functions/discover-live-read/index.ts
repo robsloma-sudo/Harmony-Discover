@@ -386,22 +386,9 @@ Deno.serve(async (req: Request) => {
         proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {}, research_sources: Array.isArray(b.research_sources) ? b.research_sources : [] }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
-    // Research only on an explicit save, never on every live camera frame.
-    // Cap per-save research to keep latency and third-party search spend predictable.
-    const enriched = await Promise.all(incoming.map(async (b, index) => {
-      if (index >= 5 || !b.brand) return b;
-      try {
-        const research = await researchBottle(anthropicKey, MODEL, b);
-        return {
-          ...b,
-          details: { ...b.details, ...research.details },
-          field_confidence: { ...(b.field_confidence as Record<string,number> || {}), ...research.fieldConfidence },
-          research_sources: research.sources,
-        };
-      } catch {
-        return b;
-      }
-    }));
+    // Persist sightings first. Deeper web research is queued after the save and never
+    // blocks the camera workflow. Research budget remains capped at five bottles/save.
+    const enriched = incoming;
     const queries = enriched.map((b) => clean(`${b.brand} ${b.product}`, 120));
     const found = await match(queries);   // matched again on the server; the browser's ids are never trusted
     const venue = clean(body.venue_name, 120) || null;
@@ -414,13 +401,21 @@ Deno.serve(async (req: Request) => {
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
-    const { error } = await db.from("bottle_sightings").insert(rows);
-    if (error) { console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error.message, 160) })); return reply({ error: "save_failed" }, 503, origin); }
+    const { data: inserted, error } = await db.from("bottle_sightings").insert(rows).select("id");
+    if (error || !inserted) { console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error?.message, 160) })); return reply({ error: "save_failed" }, 503, origin); }
+    const jobs = inserted.slice(0, 5).map((row: {id:string}, index: number) => ({
+      sighting_id: row.id, consumer_id: subject, status: "queued",
+      // A small stagger limits burst concurrency; worker enforces provider and daily spend caps.
+      available_at: new Date(Date.now() + index * 1200).toISOString(),
+    }));
+    const { error: queueError } = jobs.length ? await db.from("bottle_research_jobs").insert(jobs) : { error: null };
+    if (queueError) console.log(JSON.stringify({ evt: "bottle_research_enqueue_error", msg: clean(queueError.message, 160) }));
     return reply({
       ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length,
+      research: { queued: queueError ? 0 : jobs.length, enqueue_failed: !!queueError },
       enriched_bottles: enriched.map((b) => ({
         brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size,
-        details: b.details, field_confidence: b.field_confidence, research_sources: b.research_sources,
+        details: b.details, field_confidence: b.field_confidence, research_sources: [],
       })),
     }, 200, origin);
   }
