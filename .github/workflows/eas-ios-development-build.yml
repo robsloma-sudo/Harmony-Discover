@@ -17,7 +17,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Confirm Expo token is available
@@ -32,6 +32,9 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Align native dependencies with Expo SDK 52
+        run: npx expo install expo-constants expo-linking @expo/vector-icons@~14.0.4 react-native@0.76.9
 
       - name: Verify Expo project
         run: npx expo-doctor
