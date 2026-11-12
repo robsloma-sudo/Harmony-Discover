@@ -13,7 +13,7 @@ export type SegmentationInstance = {
   height: number;
   data: Uint8Array | Float32Array;
   bounds: NormalizedBounds;
-  confidence: number;
+  detectionConfidence: number;
   sourceTimestampMs: number;
   modelId: string;
 };
@@ -21,7 +21,7 @@ export type SegmentationInstance = {
 export type SegmentedTrack = {
   trackId: number;
   contour: MaskContour;
-  maskConfidence: number;
+  detectionConfidence: number;
   modelId: string;
   sourceTimestampMs: number;
   maskBounds: NormalizedBounds;
@@ -35,7 +35,6 @@ export type SegmentationProvider = {
 
 export type SegmentationPolicy = {
   minimumDetectionConfidence?: number;
-  minimumMaskConfidence?: number;
   minimumIoU?: number;
   ambiguityMargin?: number;
   maximumTimestampDeltaMs?: number;
@@ -72,7 +71,6 @@ export function associateInstanceMasks(
   policy: SegmentationPolicy = {},
 ): SegmentedTrack[] {
   const minimumDetectionConfidence = policy.minimumDetectionConfidence ?? 0.55;
-  const minimumMaskConfidence = policy.minimumMaskConfidence ?? 0.55;
   const minimumIoU = policy.minimumIoU ?? 0.35;
   const ambiguityMargin = policy.ambiguityMargin ?? 0.08;
   const maximumTimestampDeltaMs = policy.maximumTimestampDeltaMs ?? 200;
@@ -89,7 +87,7 @@ export function associateInstanceMasks(
   const candidates: Array<{ seedIndex: number; instanceIndex: number; score: number }> = [];
   eligibleSeeds.forEach((seed, seedIndex) => {
     instances.forEach((instance, instanceIndex) => {
-      if (instance.confidence < minimumMaskConfidence ||
+      if (instance.detectionConfidence < minimumDetectionConfidence ||
           !finite(instance.sourceTimestampMs) ||
           Math.abs(instance.sourceTimestampMs - seed.sourceTimestampMs) > maximumTimestampDeltaMs ||
           !validBounds(instance.bounds) ||
@@ -127,7 +125,7 @@ export function associateInstanceMasks(
     output.push({
       trackId: seed.trackId,
       contour,
-      maskConfidence: instance.confidence,
+      detectionConfidence: instance.detectionConfidence,
       modelId: instance.modelId,
       sourceTimestampMs: instance.sourceTimestampMs,
       maskBounds: instance.bounds,
