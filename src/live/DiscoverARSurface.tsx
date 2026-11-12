@@ -330,6 +330,8 @@ function WebLiveCamera(props: NativeProps) {
 
     const runLocalTrackingFrame = () => {
       if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled || trackingBusy) return;
+      const video = videoRef.current;
+      if (!video) return;
       trackingBusy = true;
       try {
         const frame = captureTrackingFrame();
