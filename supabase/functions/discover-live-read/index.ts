@@ -201,28 +201,41 @@ async function researchBottle(key: string, model: string, bottle: Record<string,
   if (!clean(bottle.brand,80) || !missing.length) return { details: {}, fieldConfidence: {}, sources: [] };
   const query = [bottle.brand, bottle.product, bottle.category, bottle.proof, bottle.size].filter(Boolean).join(" ");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
+  const timeout = setTimeout(() => controller.abort(), 35_000);
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", signal: controller.signal,
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model, max_tokens: 2600,
-        system: "You are a product research assistant for a beverage catalog. Use live web search. Find the exact product expression, not merely the brand or a similar SKU. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources. Use retailers and reference sources only as secondary corroboration. Never invent facts. Never return a field unless a source explicitly supports it for this exact product. Do not overwrite facts already read from the physical label. If identity is ambiguous, return empty fields. Preserve source URLs and map each field to its supporting sources. Product marketing copy is not technical fact.",
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }, ENRICHMENT_TOOL],
-        tool_choice: { type: "tool", name: "bottle_enrichment" },
-        messages: [{ role: "user", content: "Research missing product facts for this exact bottle.\\nIDENTITY: " + JSON.stringify(known) + "\\nMISSING FIELDS: " + missing.join(", ") + "\\nSearch query: " + query + "\\nReturn only exact-expression facts with source URLs and field confidence. If exact match cannot be proven, leave fields empty." }]
-      })
-    });
-    const j = await response.json().catch(() => ({}));
-    if (!response.ok) return { details: {}, fieldConfidence: {}, sources: [] };
-    const block = (Array.isArray(j.content) ? j.content : []).find((x: Record<string, unknown>) => x.type === "tool_use" && x.name === "bottle_enrichment");
-    const input = (block?.input && typeof block.input === "object" ? block.input : {}) as Record<string, unknown>;
-    const rawFields = (input.fields && typeof input.fields === "object" ? input.fields : {}) as Record<string, unknown>;
-    const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
+    const tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }, ENRICHMENT_TOOL];
+    const messages: Array<Record<string, unknown>> = [{
+      role: "user",
+      content: "Research missing product facts for this exact bottle.\\nIDENTITY: " + JSON.stringify(known) +
+        "\\nMISSING FIELDS: " + missing.join(", ") + "\\nSearch query: " + query +
+        "\\nUse the web search tool. Return only exact-expression facts with source URLs and field confidence. If exact match cannot be proven, leave fields empty. Call bottle_enrichment once after searching."
+    }];
+    const content: Array<Record<string, unknown>> = [];
+    let finalInput: Record<string, unknown> = {};
+    for (let turn = 0; turn < 3; turn++) {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST", signal: controller.signal,
+        headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model, max_tokens: 2600,
+          system: "You are a product research assistant for a beverage catalog. Search the exact product expression, not merely the brand or a similar SKU. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources. Use retailers and reference sources only as secondary corroboration. Never invent facts. Never return a field unless a source explicitly supports it for this exact product. Do not overwrite facts read from the physical label. If identity is ambiguous, return empty fields. Map every proposed field to the exact URLs that support it. Product marketing copy is not technical fact.",
+          tools, tool_choice: { type: "auto" }, messages
+        })
+      });
+      const j = await response.json().catch(() => ({}));
+      if (!response.ok) return { details: {}, fieldConfidence: {}, sources: [] };
+      const turnContent = Array.isArray(j.content) ? j.content as Array<Record<string, unknown>> : [];
+      content.push(...turnContent);
+      const block = turnContent.find(x => x.type === "tool_use" && x.name === "bottle_enrichment");
+      if (block && block.input && typeof block.input === "object") { finalInput = block.input as Record<string, unknown>; break; }
+      if (j.stop_reason !== "pause_turn" || turn === 2) break;
+      messages.push({ role: "assistant", content: turnContent });
+    }
+    const rawFields = (finalInput.fields && typeof finalInput.fields === "object" ? finalInput.fields : {}) as Record<string, unknown>;
+    const rawScores = (finalInput.field_confidence && typeof finalInput.field_confidence === "object" ? finalInput.field_confidence : {}) as Record<string, unknown>;
     const evidence = validateResearchEvidence(
-      (Array.isArray(input.sources) ? input.sources : []) as ProposedResearchSource[],
-      collectSearchResultSources(Array.isArray(j.content) ? j.content : []),
+      (Array.isArray(finalInput.sources) ? finalInput.sources : []) as ProposedResearchSource[],
+      collectSearchResultSources(content),
       new Set(missing),
     );
     const enriched: Record<string,string> = {};
@@ -234,7 +247,7 @@ async function researchBottle(key: string, model: string, bottle: Record<string,
         enriched[field] = v; scores[field] = score;
       }
     }
-    const sources = evidence.sources.filter(source => source.supports.some(field => Object.hasOwn(enriched, field)));
+    const sources = evidence.sources.filter(source => source.supports.some(field => Object.prototype.hasOwnProperty.call(enriched, field)));
     return { details: enriched, fieldConfidence: scores, sources };
   } catch {
     return { details: {}, fieldConfidence: {}, sources: [] };
