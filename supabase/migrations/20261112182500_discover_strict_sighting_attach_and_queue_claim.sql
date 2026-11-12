@@ -123,8 +123,9 @@ begin
 
   update public.bottle_sightings as sighting
   set discover_product_id = product_id,
-      product_index_id = case when exact_count = 1 then m.id else sighting.product_index_id end,
-      match_score = case when exact_count = 1 then score::real else sighting.match_score end
+      -- Clear any legacy fuzzy/brand-only link when strict identity is withheld.
+      product_index_id = case when exact_count = 1 and m.id is not null then m.id else null end,
+      match_score = case when exact_count = 1 then score::real else null end
   where sighting.id = s.id;
 
   -- Preserve OCR as unreviewed evidence; it is not a verified attribute.
