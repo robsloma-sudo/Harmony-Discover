@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { ARKitDepthFrame, ARTrackingUpdate } from '../live/DiscoverARSurface';
 import type { BottleRead } from '../services/discoverLiveApi';
 import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection, updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
@@ -99,7 +99,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
   const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
 
   return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
-    <View style={{ gap: 12 }}>
+    <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ gap: 10, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
       <Text style={{ color: muted, fontSize: 10, lineHeight: 16 }}>SHARED CAMERA SESSION · ARKit WORLD TRACKING WHEN AVAILABLE</Text>
       <View style={{ padding: 12, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(198,163,106,0.2)' }}>
         <Text style={{ color: trackingColor, fontSize: 12, fontWeight: '900', letterSpacing: 0.5 }}>TRACKING · {tracking.state.toUpperCase().replace('_', ' ')}</Text>
@@ -132,7 +132,7 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
         <Text style={{ color: muted, fontSize: 9, lineHeight: 14, marginTop: 7 }}>Smoothed world-space centre estimates are associated through temporal 2D track IDs. Large position jumps are rejected. This is not bottle-surface reconstruction, and physical iPhone validation is still required.</Text>
       </View>
       <Text style={{ color: muted, fontSize: 9, lineHeight: 14 }}>World tracking and metric depth are device capabilities, not proof of bottle reconstruction. These projections depend on physical-device coordinate validation.</Text>
-    </View>
+    </ScrollView>
     <Pressable onPress={onClose} style={{ padding: 14, borderRadius: 9, borderWidth: 1, borderColor: 'rgba(255,255,255,0.24)', alignItems: 'center', justifyContent: 'center', marginTop: 12 }}>
       <Text style={{ color: ink, fontSize: 11, fontWeight: '800' }}>CLOSE DIAGNOSTICS</Text>
     </Pressable>
