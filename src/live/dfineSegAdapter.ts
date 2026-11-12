@@ -66,7 +66,7 @@ export function adaptDfineSegOutput(
     const height = bottom - top;
     if (width < 2 || height < 2) continue;
 
-    const crop = new Float32Array(width * height);
+    const crop = new Uint8Array(width * height);
     let foregroundPixels = 0;
     const sourceOffset = index * imageWidth * imageHeight;
     for (let y = 0; y < height; y++) {
@@ -75,8 +75,10 @@ export function adaptDfineSegOutput(
       for (let x = 0; x < width; x++) {
         const value = Number(output.masks[sourceRow + x]);
         if (!Number.isFinite(value)) continue;
-        crop[targetRow + x] = value;
-        if (value >= maskThreshold) foregroundPixels++;
+        if (value >= maskThreshold) {
+          crop[targetRow + x] = 1;
+          foregroundPixels++;
+        }
       }
     }
     if (foregroundPixels < 4) continue;
