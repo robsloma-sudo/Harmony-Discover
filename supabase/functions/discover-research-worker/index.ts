@@ -64,7 +64,7 @@ Deno.serve(async req=>{
   if(!service||!anthropic)return Response.json({error:"worker_not_configured"},{status:503});
   const db=createClient(url,service,{auth:{persistSession:false,autoRefreshToken:false}});
   const workerId=crypto.randomUUID();
-  const {data:jobs,error}=await db.rpc("discover_claim_bottle_research_jobs",{p_worker:workerId,p_limit:5});
+  const {data:jobs,error}=await db.rpc("discover_claim_bottle_research_jobs",{p_worker:workerId,p_limit:2});
   if(error)return Response.json({error:"queue_claim_failed"},{status:503});
   let completed=0,failed=0,empty=0;
   for(const job of jobs||[]){
@@ -85,6 +85,15 @@ Deno.serve(async req=>{
       failed++;
       await db.rpc("discover_finish_bottle_research_job",{p_job:job.id,p_worker:workerId,p_status:"failed",p_error:clean(error instanceof Error?error.message:"research_failed",300)});
     }
+  }
+  // Drain a larger save batch in bounded invocations rather than risking a long-running Edge request.
+  if ((jobs || []).length === 2) {
+    const workerUrl = url.replace(/\\/$/, "") + "/functions/v1/discover-research-worker";
+    EdgeRuntime.waitUntil(fetch(workerUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-discover-worker-secret": secret },
+      body: JSON.stringify({ trigger: "queue_drain" }),
+    }).catch(() => undefined));
   }
   return Response.json({ok:true,claimed:(jobs||[]).length,completed,failed,empty});
 });
