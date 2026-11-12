@@ -311,6 +311,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <View pointerEvents="none" style={s.liveDetectionLayer}>
           {liveBottleTracks.slice(0, 8).map((record, index) => {
             const bottle = record.bottle;
+            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
             const renderBox = record;
             return (
               <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
