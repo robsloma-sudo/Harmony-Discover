@@ -46,7 +46,6 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const processedBottleFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [livePhysicalIds, setLivePhysicalIds] = useState<string[]>([]);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead}>>([]);
-  const [liveTrackedBottles, setLiveTrackedBottles] = useState<TrackedBottleRecord<BottleRead>[]>([]);
   const [liveBottleTracks, setLiveBottleTracks] = useState<TrackedBottleRecord<BottleRead>[]>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
@@ -60,6 +59,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     if (!liveReadAt) return;
     const staleTimer = setTimeout(() => {
       setLiveBottles([]);
+      setLiveBottleTracks([]);
       setLiveBarcodes([]);
       setLiveLabelText([]);
       setLiveTextItems([]);
