@@ -147,26 +147,39 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       onARError(["message": "The shared AR camera is not ready to capture."])
       return
     }
+    let pixelBuffer = frame.capturedImage
+    CVPixelBufferRetain(pixelBuffer)
+    let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
-    let image = CIImage(cvPixelBuffer: frame.capturedImage).oriented(orientation)
-    let context = CIContext()
-    guard let cgImage = context.createCGImage(image, from: image.extent),
-          let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.88) else {
-      onARError(["message": "Could not encode the current AR camera frame."])
-      return
-    }
-    let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("discover-camera-\(UUID().uuidString).jpg")
-    do {
-      try jpeg.write(to: url, options: .atomic)
-      onCapturedImage([
-        "uri": url.absoluteString,
-        "width": cgImage.width,
-        "height": cgImage.height,
-        "timestamp": frame.timestamp
-      ])
-    } catch {
-      onARError(["message": "Could not save the captured camera frame: \(error.localizedDescription)"])
+    visionQueue.async { [weak self] in
+      defer { CVPixelBufferRelease(pixelBuffer) }
+      let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+      let context = CIContext()
+      guard let cgImage = context.createCGImage(image, from: image.extent),
+            let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.88) else {
+        DispatchQueue.main.async { [weak self] in
+          self?.onARError(["message": "Could not encode the current AR camera frame."])
+        }
+        return
+      }
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("discover-camera-\(UUID().uuidString).jpg")
+      do {
+        try jpeg.write(to: url, options: .atomic)
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          self.onCapturedImage([
+            "uri": url.absoluteString,
+            "width": cgImage.width,
+            "height": cgImage.height,
+            "timestamp": timestamp
+          ])
+        }
+      } catch {
+        DispatchQueue.main.async { [weak self] in
+          self?.onARError(["message": "Could not save the captured camera frame: \(error.localizedDescription)"])
+        }
+      }
     }
   }
 
