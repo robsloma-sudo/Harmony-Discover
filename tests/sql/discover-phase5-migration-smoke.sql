@@ -201,7 +201,7 @@ declare
 begin
   select id into product_id from public.discover_products
   where brand_name='Example Spirits' and product_name='Reposado'
-  order by created_at limit 1;
+  order by id limit 1;
   insert into public.discover_product_evidence(
     discover_product_id,source_type,source_record_id,source_name,observed_value,confidence,verification_state
   ) values (
