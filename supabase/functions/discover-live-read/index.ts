@@ -395,8 +395,16 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
+      const normalize = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+      const fieldConfidence = (b.field_confidence && typeof b.field_confidence === "object" ? b.field_confidence : {}) as Record<string, unknown>;
+      const brandReadIsStrong = !!b.brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
+      const productReadIsStrong = !!b.product && Number(fieldConfidence.product ?? 0) >= 0.90;
+      const sameBrand = !!m?.brand && normalize(m.brand) === normalize(b.brand);
+      const sameExpression = !!m?.product && normalize(m.product) === normalize(b.product);
+      // Re-evaluate on the server. Product aggregation requires a strong full
+      // expression read and an exact normalized match to a product-level row.
+      const hit = brandReadIsStrong && productReadIsStrong && sameBrand && sameExpression &&
+        !!m?.id && !!m.category && (m.score ?? 0) >= 0.90;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
