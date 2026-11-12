@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ATTRIBUTE_CODE_MAP,
   DEFERRED_JOB_TYPES,
   SUPPORTED_JOB_TYPES,
+  filterResearchFields,
   getIdentityJobRetryPlan,
+  getSupportedJobTypes,
   isUuid,
+  mapResearchSourceType,
   validateIdentityJobReferences,
 } from "../supabase/functions/discover-enrichment-worker/workerPolicy";
 
@@ -25,10 +29,12 @@ const sighting = {
 };
 
 describe("Discover enrichment worker policy", () => {
-  it("only enables the implemented identity job and explicitly defers source lookup", () => {
-    expect(SUPPORTED_JOB_TYPES).toEqual(["identity_match"]);
-    expect(DEFERRED_JOB_TYPES).toContain("official_source_lookup");
-    expect(SUPPORTED_JOB_TYPES).not.toContain("official_source_lookup");
+  it("only enables source lookup when the API key and daily budget are available", () => {
+    expect(SUPPORTED_JOB_TYPES).toEqual(["identity_match", "official_source_lookup"]);
+    expect(DEFERRED_JOB_TYPES).not.toContain("official_source_lookup");
+    expect(getSupportedJobTypes(false, false)).toEqual(["identity_match"]);
+    expect(getSupportedJobTypes(true, true)).toEqual(["identity_match"]);
+    expect(getSupportedJobTypes(true, false)).toEqual(["identity_match", "official_source_lookup"]);
   });
 
   it("accepts UUIDs and rejects malformed job references", () => {
@@ -57,6 +63,62 @@ describe("Discover enrichment worker policy", () => {
       sighting_id: sighting.id,
       catalog_linked: true,
     });
+  });
+
+  it("maps only supported HTTPS source types into the evidence schema", () => {
+    expect(mapResearchSourceType("manufacturer", "https://producer.example/products/x")).toBe("official_producer");
+    expect(mapResearchSourceType("regulator", "https://www.ttb.gov/labeling")).toBe("ttb_cola");
+    expect(mapResearchSourceType("regulator", "https://agency.gov/registry")).toBe("government_registry");
+    expect(mapResearchSourceType("gs1", "https://www.gs1.org/services")).toBe("barcode_registry");
+    expect(mapResearchSourceType("retailer", "https://shop.example/product")).toBe("retailer");
+    expect(mapResearchSourceType("reference", "https://reference.example/page")).toBe("web_search");
+    expect(mapResearchSourceType("manufacturer", "http://producer.example")).toBeNull();
+    expect(mapResearchSourceType("unknown", "https://example.com")).toBeNull();
+  });
+
+  it("accepts only missing high-confidence facts with a source that explicitly supports the field", () => {
+    const result = filterResearchFields({
+      fields: {
+        package_size: "750 mL",
+        region: "Jalisco",
+        grapes: "Chardonnay",
+        awards: "Gold medal",
+      },
+      field_confidence: { package_size: 0.94, region: 0.89, grapes: 0.99, awards: 0.99 },
+      sources: [
+        { url: "https://producer.example/package", title: "Producer package page", source_type: "manufacturer", supports: ["package_size"] },
+        { url: "https://region.example/page", title: "Region reference", source_type: "reference", supports: ["region"] },
+        { url: "http://bad.example", title: "Insecure source", source_type: "reference", supports: ["grapes"] },
+        { url: "https://unrelated.example", title: "Unrelated", source_type: "reference", supports: ["not_awards"] },
+      ],
+    }, ["package_size", "region", "grapes", "awards"]);
+    expect(result).toEqual([{
+      code: "package_size",
+      value: "750 mL",
+      confidence: 0.94,
+      source: {
+        url: "https://producer.example/package",
+        title: "Producer package page",
+        source_type: "official_producer",
+      },
+    }]);
+  });
+
+  it("does not overwrite fields that are already known or outside the research allowlist", () => {
+    const result = filterResearchFields({
+      fields: { package_size: "750 mL", invented_field: "made up" },
+      field_confidence: { package_size: 0.99, invented_field: 0.99 },
+      sources: [{ url: "https://producer.example", title: "Producer", source_type: "manufacturer", supports: ["package_size", "invented_field"] }],
+    }, ["invented_field"]);
+    expect(result).toEqual([]);
+  });
+
+  it("maps only semantically exact research fields into PHG attribute dimensions", () => {
+    expect(ATTRIBUTE_CODE_MAP.package_size).toBe("package_size");
+    expect(ATTRIBUTE_CODE_MAP.package_material).toBe("container_material");
+    expect(ATTRIBUTE_CODE_MAP.flavoring).toBe("flavouring");
+    expect(ATTRIBUTE_CODE_MAP.cask_finish).toBeUndefined();
+    expect(ATTRIBUTE_CODE_MAP.region).toBeUndefined();
   });
 
   it("backs off exponentially and dead-letters at the attempt limit", () => {
