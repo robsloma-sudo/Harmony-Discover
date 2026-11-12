@@ -273,15 +273,18 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       captureFrame(pendingRequest)
     }
     let now = frame.timestamp
-    if now - lastDepthFrameTime >= 0.50 {
+    // Keep metric depth flowing at 2 Hz, and emit an exact matching depth/pose
+    // sample whenever a cloud bottle-read frame is scheduled.
+    let recognitionDue = isRecognitionEnabled && now - lastVisionFrameTime >= 0.50
+    let shouldSendCloudFrame = recognitionDue && now - lastCloudFrameTime >= 2.5
+    if now - lastDepthFrameTime >= 0.50 || shouldSendCloudFrame {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
     guard isRecognitionEnabled else { return }
     // Run local OCR/barcode/classification at 2 Hz; cloud bottle identification remains paced at 2.5 seconds.
-    guard now - lastVisionFrameTime >= 0.50 else { return }
+    guard recognitionDue else { return }
     lastVisionFrameTime = now
-    let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
     if shouldSendCloudFrame { lastCloudFrameTime = now }
     let pixelBuffer = frame.capturedImage
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
