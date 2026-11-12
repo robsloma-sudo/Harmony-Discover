@@ -267,7 +267,11 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) { setLiveDepthFrame(value); depthFramesRef.current = [...depthFramesRef.current.filter(frame => value.timestamp - frame.timestamp <= 8 && frame.timestamp <= value.timestamp), value].slice(-20); if (liveBottleFrameTimestamp !== null && Math.abs(value.timestamp - liveBottleFrameTimestamp) <= 0.20) setLiveBottleDepthFrame(current => current ?? value); } }}
           onVisualCandidates={event => {
-            const candidates = event.nativeEvent.candidates;
+            const candidates = event.nativeEvent.candidates.map(candidate => ({
+              ...candidate,
+              sourceWidth: event.nativeEvent.imageWidth,
+              sourceHeight: event.nativeEvent.imageHeight,
+            }));
             if (event.nativeEvent.source !== 'cloud' || candidates.length > 0) {
               setLiveBottleTracks(previous => mergeTrackedBottleCandidates(previous, candidates));
             }
@@ -325,7 +329,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                   {!!(labelSignalsByBottle[index]?.text.length || labelSignalsByBottle[index]?.barcodes.length) && <Text numberOfLines={2} style={s.liveDetectionConfidence}>{[...(labelSignalsByBottle[index]?.text || []).slice(0, 2), ...(labelSignalsByBottle[index]?.barcodes || []).map(code => `BAR ${code}`)].join(' · ')}</Text>}
                 </View>
               </View>
-              <MaskContourOverlay points={record.contour} />
+              <MaskContourOverlay points={record.contour} sourceWidth={record.sourceWidth} sourceHeight={record.sourceHeight} />
               </Fragment>
             );
           })}
