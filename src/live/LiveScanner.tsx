@@ -53,7 +53,7 @@ function Photo({uri,state,onPress}:{uri:string;state:PhotoState;onPress:()=>void
   <View style={s.photoStatus}>{state.status==='reading'?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>READING LABELS</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
-export default function LiveScanner({photos,onClose,onKeepMenu,source='camera'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;source?:'camera'|'gallery'}) {
+export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
  const uris=useMemo(()=>photos.slice(0,6),[photos]);
  const {addPages}=useScan();
  const session=useMemo(()=>makeSession(),[]);
