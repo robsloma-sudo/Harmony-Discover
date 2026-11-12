@@ -87,7 +87,7 @@ export function projectBottleBoxToWorld(
   const u = (box.x + box.width / 2) * frame.width;
   const v = (box.y + box.height / 2) * frame.height;
   const cameraX = (u - cx) * depth / fx;
-  const cameraY = (v - cy) * depth / fy;
+  const cameraY = (cy - v) * depth / fy;
   const cameraZ = -depth;
 
   // simd_float4x4 serialized column-major: world = M * [cameraX,cameraY,cameraZ,1].
