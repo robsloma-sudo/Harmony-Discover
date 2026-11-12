@@ -81,6 +81,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   // Expo/React may keep the prop value unchanged when the view is reattached.
   private var shouldBeActive = false
   private var isRecognitionEnabled = false
+  private var recognitionGeneration = 0
   private var lastTrackingState = ""
 
   let onTrackingUpdate = EventDispatcher()
@@ -138,7 +139,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   func setRecognitionEnabled(_ enabled: Bool) {
     guard enabled != isRecognitionEnabled else { return }
     isRecognitionEnabled = enabled
+    recognitionGeneration += 1
+    lastVisionFrameTime = 0
+    lastCloudFrameTime = 0
+    lastDepthFrameTime = 0
     if !enabled {
+      previousCandidates.removeAll()
       onVisualCandidates(["count": 0, "candidates": []])
     }
   }
@@ -289,21 +295,24 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     if let pendingRequest = pendingCaptureRequestId {
       captureFrame(pendingRequest)
     }
+    // The preview may remain mounted when the user is not actively scanning.
+    // Do not spend Vision/depth work or emit cloud frames in preview-only mode.
+    guard isRecognitionEnabled else { return }
     let now = frame.timestamp
     // Keep metric depth flowing at 2 Hz, and emit an exact matching depth/pose
     // sample whenever a cloud bottle-read frame is scheduled.
-    let recognitionDue = isRecognitionEnabled && now - lastVisionFrameTime >= 0.50
+    let recognitionDue = now - lastVisionFrameTime >= 0.50
     let shouldSendCloudFrame = recognitionDue && now - lastCloudFrameTime >= 2.5
     if now - lastDepthFrameTime >= 0.50 || shouldSendCloudFrame {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
-    guard isRecognitionEnabled else { return }
     // Run local OCR/barcode/classification at 2 Hz; cloud bottle identification remains paced at 2.5 seconds.
     guard recognitionDue else { return }
     lastVisionFrameTime = now
     if shouldSendCloudFrame { lastCloudFrameTime = now }
     let pixelBuffer = frame.capturedImage
+    let generation = recognitionGeneration
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     CVPixelBufferRetain(pixelBuffer)
     let rawWidth = CVPixelBufferGetWidth(pixelBuffer)
@@ -342,7 +351,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       }
       if let cloudFrameBase64 {
         DispatchQueue.main.async { [weak self] in
-          guard let self, self.isActive else { return }
+          guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation else { return }
           self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
         }
       }
@@ -377,7 +386,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         }
 
         DispatchQueue.main.async { [weak self] in
-          guard let self, self.isActive else { return }
+          guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation else { return }
           self.onRecognitionUpdate([
             "text": recognizedText,
             "barcodes": barcodes,
