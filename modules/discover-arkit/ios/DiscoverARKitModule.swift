@@ -39,7 +39,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -75,9 +75,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onARError = EventDispatcher()
   let onVisualCandidates = EventDispatcher()
   let onRecognitionUpdate = EventDispatcher()
+  let onDepthEstimate = EventDispatcher()
+  let onDepthStatus = EventDispatcher()
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
+  private var lastDepthFrameTime: TimeInterval = 0
   private var nextCandidateTrackID = 1
   private var previousCandidates: [(id: Int, rect: CGRect, confidence: CGFloat)] = []
   private let rectangleOverlay = CAShapeLayer()
@@ -132,6 +135,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   public func session(_ session: ARSession, didUpdate frame: ARFrame) {
     guard isActive else { return }
     let now = frame.timestamp
+    if now - lastDepthFrameTime >= 0.20 {
+      lastDepthFrameTime = now
+      emitDepthFrame(frame)
+    }
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
     let pixelBuffer = frame.capturedImage
@@ -198,6 +205,42 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     }
   }
 
+  /// Emits sampled metric depth. Zero represents an invalid sample.
+  private func emitDepthFrame(_ frame: ARFrame) {
+    guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return }
+    guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return }
+    let depthMap = depthData.depthMap
+    let confidenceMap = depthData.confidenceMap
+    let sourceWidth = CVPixelBufferGetWidth(depthMap)
+    let sourceHeight = CVPixelBufferGetHeight(depthMap)
+    guard sourceWidth > 0, sourceHeight > 0 else { return }
+    let outputWidth = 64
+    let outputHeight = max(1, Int((Double(sourceHeight) / Double(sourceWidth) * Double(outputWidth)).rounded()))
+    CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+    CVPixelBufferLockBaseAddress(confidenceMap, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(confidenceMap, .readOnly); CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+    guard let depthBase = CVPixelBufferGetBaseAddress(depthMap), let confidenceBase = CVPixelBufferGetBaseAddress(confidenceMap) else { return }
+    let depthValues = depthBase.assumingMemoryBound(to: Float32.self)
+    let confidenceValues = confidenceBase.assumingMemoryBound(to: UInt8.self)
+    let depthStride = CVPixelBufferGetBytesPerRow(depthMap) / MemoryLayout<Float32>.size
+    let confidenceStride = CVPixelBufferGetBytesPerRow(confidenceMap)
+    var meters: [Double] = []; var confidence: [Int] = []
+    meters.reserveCapacity(outputWidth * outputHeight); confidence.reserveCapacity(outputWidth * outputHeight)
+    for y in 0..<outputHeight {
+      let sy = min(sourceHeight - 1, y * sourceHeight / outputHeight)
+      for x in 0..<outputWidth {
+        let sx = min(sourceWidth - 1, x * sourceWidth / outputWidth)
+        let value = depthValues[sy * depthStride + sx]
+        meters.append(value.isFinite && value > 0 ? Double(value) : 0)
+        confidence.append(Int(confidenceValues[sy * confidenceStride + sx]))
+      }
+    }
+    let intrinsics = frame.camera.intrinsics; let transform = frame.camera.transform
+    let intrinsicsValues = (0..<3).flatMap { row in (0..<3).map { column in Double(intrinsics[row, column]) } }
+    let transformValues = (0..<4).flatMap { row in (0..<4).map { column in Double(transform[row, column]) } }
+    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth"]
+    DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
+  }
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
     let incoming: [(rect: CGRect, confidence: CGFloat)] = observations.compactMap { item in
       guard let x = item["x"], let y = item["y"], let w = item["width"],
@@ -321,9 +364,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private static func makeConfiguration() -> ARWorldTrackingConfiguration {
     let configuration = ARWorldTrackingConfiguration()
     configuration.worldAlignment = .gravity
-    if #available(iOS 14.0, *),
-       ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-      configuration.frameSemantics.insert(.sceneDepth)
+    if #available(iOS 14.0, *) {
+      if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { configuration.frameSemantics.insert(.sceneDepth) }
+      if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) { configuration.frameSemantics.insert(.smoothedSceneDepth) }
     }
     return configuration
   }
