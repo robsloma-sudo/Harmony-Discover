@@ -54,6 +54,33 @@ describe('metric bottle box projection', () => {
     }
   });
 
+  it('maps right-rotated image rays into the ARKit camera basis', () => {
+    const result = projectBottleBoxToWorld(frame({ cameraRayBasis: [0, 1, 1, 0] }), { x: 0.5, y: 0.5, width: 0.25, height: 0.25 });
+    expect(result.status).toBe('located');
+    if (result.status === 'located') {
+      expect(result.worldPoint.x).toBeCloseTo(-0.02, 6);
+      expect(result.worldPoint.y).toBeCloseTo(0.02, 6);
+    }
+  });
+
+  it('maps left-rotated image rays into the ARKit camera basis', () => {
+    const result = projectBottleBoxToWorld(frame({ cameraRayBasis: [0, -1, -1, 0] }), { x: 0.5, y: 0.5, width: 0.25, height: 0.25 });
+    expect(result.status).toBe('located');
+    if (result.status === 'located') {
+      expect(result.worldPoint.x).toBeCloseTo(0.02, 6);
+      expect(result.worldPoint.y).toBeCloseTo(-0.02, 6);
+    }
+  });
+
+  it('maps upside-down image rays into the ARKit camera basis', () => {
+    const result = projectBottleBoxToWorld(frame({ cameraRayBasis: [-1, 0, 0, 1] }), { x: 0.5, y: 0.5, width: 0.25, height: 0.25 });
+    expect(result.status).toBe('located');
+    if (result.status === 'located') {
+      expect(result.worldPoint.x).toBeCloseTo(-0.02, 6);
+      expect(result.worldPoint.y).toBeCloseTo(0.02, 6);
+    }
+  });
+
   it('rejects missing or invalid depth rather than inventing a location', () => {
     const result = projectBottleBoxToWorld(frame({ depthMeters: Array(64).fill(0) }), { x: 0.25, y: 0.25, width: 0.5, height: 0.5 });
     expect(result).toMatchObject({ status: 'potential', reason: 'insufficient_depth' });
