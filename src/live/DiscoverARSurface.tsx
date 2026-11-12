@@ -16,6 +16,7 @@ export type ARKitDepthFrame = { width: number; height: number; sourceWidth: numb
 
 type NativeProps = ViewProps & {
   active?: boolean;
+  recognitionEnabled?: boolean;
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number } }) => void;
@@ -44,10 +45,11 @@ if (Platform.OS === 'ios') {
  * video frame is playing.
  */
 function WebLiveCamera(props: NativeProps) {
-  const { active, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
+  const { active, recognitionEnabled, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage };
+  const recognitionSchedulerRef = useRef<(() => void) | null>(null);
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -142,10 +144,10 @@ function WebLiveCamera(props: NativeProps) {
     // adding a full delay after the provider response. This stays below the
     // server's 30/minute limit even when inference is fast.
     const scheduleRecognition = (delay = recognitionIntervalMs) => {
-      if (!disposed) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
+      if (!disposed && callbacksRef.current.recognitionEnabled) recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
     };
     const recognizeFrame = async () => {
-      if (disposed || recognitionBusy) return;
+      if (disposed || recognitionBusy || !callbacksRef.current.recognitionEnabled) return;
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
@@ -246,7 +248,7 @@ function WebLiveCamera(props: NativeProps) {
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
             callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
-            scheduleRecognition();
+            if (callbacksRef.current.recognitionEnabled) scheduleRecognition();
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
@@ -257,9 +259,11 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
+    recognitionSchedulerRef.current = () => scheduleRecognition(0);
     void start();
 
     return () => {
+      recognitionSchedulerRef.current = null;
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
@@ -273,6 +277,10 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
   }, [active]);
+
+  useEffect(() => {
+    if (active && recognitionEnabled) recognitionSchedulerRef.current?.();
+  }, [active, recognitionEnabled]);
 
   return (
     <View style={style}>
@@ -320,7 +328,7 @@ function FallbackNativeCamera(props: NativeProps) {
     return () => { cancelled = true; if (retry) clearTimeout(retry); };
   }, [props.active, props.captureRequestId]);
   useEffect(() => {
-    if (!props.active) return;
+    if (!props.active || !props.recognitionEnabled) return;
     let cancelled = false;
     const timer = setInterval(async () => {
       if (cancelled || busy.current || !cameraRef.current) return;
@@ -342,7 +350,7 @@ function FallbackNativeCamera(props: NativeProps) {
       } finally { busy.current = false; }
     }, 2500);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [props.active]);
+  }, [props.active, props.recognitionEnabled]);
   return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } })} />;
 }
 
