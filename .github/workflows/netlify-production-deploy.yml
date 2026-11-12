@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: harmony-discover-netlify-production
-  cancel-in-progress: true
+  group: harmony-discover-netlify-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
+  cancel-in-progress: false
 
 jobs:
   verify:
