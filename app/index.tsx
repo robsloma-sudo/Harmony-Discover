@@ -143,7 +143,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       {permission.granted ? (
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
-          active={!!permission.granted}
+          active={!!permission.granted && !scanPhotos}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
@@ -152,9 +152,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates)}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
-            if (value.bottles) setLiveBottles(value.bottles);
+            if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
             if (value.menu) setLiveMenu(value.menu);
-            setLiveReadAt(value.frameTimestamp);
           }}
           onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
         />
