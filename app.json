@@ -14,7 +14,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Harmony Discover uses your camera to scan beverage menus."
+          "cameraPermission": "Harmony Discover uses your camera to scan beverage bottles, labels and menus."
         }
       ],
       [

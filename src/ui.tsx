@@ -12,7 +12,7 @@ const tabs = [
   { path:'/taste', label:'My taste', icon:'wine-outline' as const, activeIcon:'wine' as const },
   { path:'/settings', label:'Settings', icon:'settings-outline' as const, activeIcon:'settings' as const },
 ];
-export function Screen({ children }: { children: ReactNode }) {
+export function Screen({ children, hideTabs = false }: { children: ReactNode; hideTabs?: boolean }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   return (
@@ -20,7 +20,7 @@ export function Screen({ children }: { children: ReactNode }) {
       <ScrollView style={styles.pageScroll} contentContainerStyle={[styles.content, { paddingBottom: 112 + Math.max(insets.bottom, 8) }]} keyboardShouldPersistTaps="handled">
         {children}
       </ScrollView>
-      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) + 5 }]}>
+      {!hideTabs && <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) + 5 }]}>
         {tabs.map(tab => {
           const active = tab.path === '/' ? pathname === '/' : pathname === tab.path || pathname.startsWith(tab.path + '/');
           return <Pressable key={tab.path} accessibilityRole="button" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => { if (!active) router.replace(tab.path as never); }} style={styles.tab}>
@@ -28,7 +28,7 @@ export function Screen({ children }: { children: ReactNode }) {
             <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{tab.label}</Text>
           </Pressable>;
         })}
-      </View>
+      </View>}
     </View>
   );
 }

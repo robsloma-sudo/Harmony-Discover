@@ -1,0 +1,27 @@
+import {useCallback,useEffect,useMemo,useState} from 'react';
+import {ActivityIndicator,Image,Linking,Platform,Pressable,Text,TextInput,View} from 'react-native';
+import {colors} from '../ui';
+import {findNearbyVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
+const radii:VenueRadius[]=[1,5,10,15,20];
+const filters=[{label:'All',value:''},{label:'Bars',value:'bar'},{label:'Cocktail bars',value:'cocktail_bar'},{label:'Restaurants',value:'restaurant'},{label:'Breweries',value:'brewery'},{label:'Wineries',value:'winery'},{label:'Distilleries',value:'distillery'}];
+const worldMap='https://staticmap.openstreetmap.de/staticmap.php?center=20,0&zoom=1&size=900x520&maptype=mapnik';
+export default function NearbyPanel(){
+ const [radius,setRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[mapFailed,setMapFailed]=useState(false);
+ const locate=useCallback(()=>{if(Platform.OS!=='web'||typeof navigator==='undefined'||!navigator.geolocation){setError('Location is available in the web browser when device permission is enabled.');return;}setLocating(true);setError('');navigator.geolocation.getCurrentPosition(p=>{setCoords({latitude:p.coords.latitude,longitude:p.coords.longitude});setMapFailed(false);setLocating(false);},e=>{setError(e.code===1?'Location access is blocked. Enable it in browser settings.':e.code===3?'Location request timed out. Try again.':'Could not determine your location.');setLocating(false);},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});},[]);
+ useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyVenues(coords.latitude,coords.longitude,radius,category||null).then(rows=>{if(active)setVenues(rows);}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,radius,category]);
+ const filtered=useMemo(()=>venues.filter(v=>v.name.toLowerCase().includes(query.trim().toLowerCase())||(v.locality||'').toLowerCase().includes(query.trim().toLowerCase())),[venues,query]);
+ const map=coords?'https://staticmap.openstreetmap.de/staticmap.php?center='+coords.latitude+','+coords.longitude+'&zoom=13&size=900x520&maptype=mapnik&markers='+coords.latitude+','+coords.longitude+',red-pushpin':worldMap;
+ return <View style={{maxHeight:490}}>
+  <Text style={{color:colors.muted,fontSize:10,lineHeight:15,marginBottom:8}}>Nearby uses your location only after you opt in. Your live coordinates are not saved to the venue directory.</Text>
+  <View style={{height:130,borderRadius:12,overflow:'hidden',backgroundColor:'#17232D',marginBottom:9}}>{!mapFailed?<Image source={{uri:map}} onError={()=>setMapFailed(true)} resizeMode="cover" style={{width:'100%',height:'100%'}}/>:<View style={{flex:1,justifyContent:'center',alignItems:'center'}}><Text style={{color:colors.text}}>Atlas map unavailable</Text></View>}</View>
+  <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & SEARCH'}</Text>}</Pressable>
+  {!!coords&&<>
+   <View style={{flexDirection:'row',gap:5,marginBottom:8}}>{radii.map(n=><Pressable key={n} onPress={()=>setRadius(n)} style={{flex:1,padding:7,borderRadius:8,alignItems:'center',backgroundColor:radius===n?colors.accent:colors.panel}}><Text style={{color:radius===n?'#111':colors.text,fontSize:10,fontWeight:'800'}}>{n} MI</Text></Pressable>)}</View>
+   <TextInput value={query} onChangeText={setQuery} placeholder="Search venues or towns" placeholderTextColor={colors.muted} style={{backgroundColor:colors.panel,borderWidth:1,borderColor:colors.border,borderRadius:9,padding:10,color:colors.text,marginBottom:8}}/>
+   <View style={{flexDirection:'row',flexWrap:'wrap',gap:5,marginBottom:8}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{padding:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:colors.panel}}><Text style={{color:category===f.value?'#111':colors.text,fontSize:9,fontWeight:'700'}}>{f.label}</Text></Pressable>)}</View>
+   <Text style={{color:colors.text,fontSize:10,fontWeight:'800',marginBottom:6}}>{loading?'SEARCHING…':filtered.length+' VENUES'}</Text>
+   {error?<Text style={{color:'#E6A18F',fontSize:10,marginBottom:6}}>{error}</Text>:null}
+   <View style={{maxHeight:170}}>{filtered.map(v=><View key={v.id} style={{padding:9,marginBottom:6,borderRadius:9,backgroundColor:colors.panel}}><Text style={{color:colors.text,fontWeight:'800',fontSize:11}}>{v.name}</Text><Text style={{color:colors.muted,fontSize:9,marginTop:3}}>{[v.locality,v.region].filter(Boolean).join(', ')||v.address_line||'Address unavailable'} · {v.distance_miles.toFixed(1)} mi</Text><Pressable onPress={()=>Linking.openURL('https://www.openstreetmap.org/?mlat='+v.latitude+'&mlon='+v.longitude+'#map=16/'+v.latitude+'/'+v.longitude)}><Text style={{color:colors.accent,fontSize:9,fontWeight:'800',marginTop:5}}>OPEN MAP ↗</Text></Pressable></View>)}</View>
+  </>}
+ </View>;
+}
