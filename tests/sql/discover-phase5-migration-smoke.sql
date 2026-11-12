@@ -147,9 +147,10 @@ end $$;
 
 -- SKU/package differentiators must prevent a legacy catalog identity merge.
 insert into public.bottle_sightings(
-  id,read_brand,read_product,read_category,read_proof,read_confidence,label_details,reader,reader_version
+  id,product_index_id,match_score,read_brand,read_product,read_category,read_proof,read_confidence,label_details,reader,reader_version
 ) values (
   '30000000-0000-0000-0000-000000000002',
+  '10000000-0000-0000-0000-000000000001',0.99,
   'Example Spirits','Reposado','tequila','80 proof',0.99,
   '{"_field_confidence":{"brand":0.99,"product":0.99}}'::jsonb,
   'discover-live-read','0.3.8'
@@ -158,7 +159,10 @@ select * from public.discover_attach_sighting_to_product('30000000-0000-0000-000
 do $$
 begin
   if (select product_index_id from public.bottle_sightings where id='30000000-0000-0000-0000-000000000002') is not null then
-    raise exception 'proof differentiator must withhold legacy catalog identity';
+    raise exception 'proof differentiator must clear stale legacy catalog identity';
+  end if;
+  if (select match_score from public.bottle_sightings where id='30000000-0000-0000-0000-000000000002') is not null then
+    raise exception 'proof differentiator must clear stale legacy match score';
   end if;
   if (select p.status from public.discover_products p join public.bottle_sightings s on s.discover_product_id=p.id where s.id='30000000-0000-0000-0000-000000000002') <> 'candidate' then
     raise exception 'SKU-differentiated product must remain a candidate';
