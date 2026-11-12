@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { collectSearchResultSources, validateResearchEvidence, type ProposedResearchSource } from "./researchEvidence.ts";
+import { collectSearchResultSources, validateResearchEvidence, type ProposedResearchSource } from "../discover-live-read/researchEvidence.ts";
+import { buildProfilePrompt } from "./researchProfiles.ts";
 
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_RESEARCH_MODEL") || "claude-haiku-5-5";
@@ -20,7 +21,7 @@ const ENRICHMENT_TOOL = {
 const clean=(v:unknown,n:number)=>String(v??"").replace(/\s+/g," ").trim().slice(0,n);
 const unit=(v:unknown)=>{const n=Number(v);return Number.isFinite(n)?Math.max(0,Math.min(1,n)):0;};
 
-async function research(key:string,bottle:Record<string,unknown>){
+async function research(key:string,bottle:Record<string,unknown>,profilePrompt:string,searchUses:number){
   const details=(bottle.label_details&&typeof bottle.label_details==="object"?bottle.label_details:{}) as Record<string,unknown>;
   const known={brand:bottle.read_brand,product:bottle.read_product,category:bottle.read_category,proof:bottle.read_proof,size:bottle.read_size,...details};
   const missing=FIELDS.filter(field=>!clean(details[field],80));
@@ -32,7 +33,7 @@ async function research(key:string,bottle:Record<string,unknown>){
     for(let turn=0;turn<3;turn++){
       const response=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",signal:controller.signal,
         headers:{"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"},
-        body:JSON.stringify({model:MODEL,max_tokens:2600,system:"You are a rigorous beverage product researcher. Search the exact product expression, not merely the brand. Never invent facts. Only return exact-expression claims supported by the search results. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources.",tools:[{type:"web_search_20250305",name:"web_search",max_uses:4},ENRICHMENT_TOOL],tool_choice:{type:"auto"},messages})});
+        body:JSON.stringify({model:MODEL,max_tokens:2600,system:"You are a rigorous beverage product researcher. Search the exact product expression, not merely the brand. Never invent facts. Only return exact-expression claims supported by the search results. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources.",tools:[{type:"web_search_20250305",name:"web_search",max_uses:searchUses},ENRICHMENT_TOOL],tool_choice:{type:"auto"},messages})});
       const payload=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error("anthropic_http_"+response.status);
       const blocks=Array.isArray(payload.content)?payload.content as Array<Record<string,unknown>>:[];
@@ -71,7 +72,20 @@ Deno.serve(async req=>{
     try{
       const {data:sighting,error:readError}=await db.from("bottle_sightings").select("*").eq("id",job.sighting_id).single();
       if(readError||!sighting)throw new Error("sighting_not_found");
-      const result=await research(anthropic,sighting);
+      const profile=buildProfilePrompt(String(sighting.read_category||"other"),{
+        brand:sighting.read_brand,product:sighting.read_product,category:sighting.read_category,
+        proof:sighting.read_proof,size:sighting.read_size,...((sighting.label_details&&typeof sighting.label_details==="object"?sighting.label_details:{}) as Record<string,unknown>)
+      },FIELDS.filter(field=>!clean(((sighting.label_details&&typeof sighting.label_details==="object"?sighting.label_details:{}) as Record<string,unknown>)[field],80)));
+      const {data:budgetOk,error:budgetError}=await db.rpc("discover_reserve_bottle_research_budget",{
+        p_consumer:job.consumer_id,p_jobs:1,p_search_units:profile.searchUses,
+        p_user_jobs_max:5,p_project_jobs_max:100,p_user_search_max:10,p_project_search_max:200
+      });
+      if(budgetError)throw new Error("research_budget_unavailable");
+      if(budgetOk!==true){
+        await db.rpc("discover_finish_bottle_research_job",{p_job:job.id,p_worker:workerId,p_status:"deferred",p_error:"daily_research_budget_exhausted"});
+        empty++; continue;
+      }
+      const result=await research(anthropic,sighting,profile.prompt,profile.searchUses);
       if(Object.keys(result.details).length){
         const current=(sighting.label_details&&typeof sighting.label_details==="object"?sighting.label_details:{}) as Record<string,unknown>;
         const merged={...current,...result.details,_research_field_confidence:{...((current._research_field_confidence&&typeof current._research_field_confidence==="object"?current._research_field_confidence:{}) as Record<string,unknown>),...result.scores},_research_sources:[...((Array.isArray(current._research_sources)?current._research_sources:[])),...result.sources]};
