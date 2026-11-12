@@ -447,7 +447,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   func setTrackingSeeds(_ seeds: [[String: Any]]) {
     visionQueue.async { [weak self] in
       guard let self, self.isActive, self.isRecognitionEnabled else { return }
-      var incomingIDs = Set<Int>()
       for seed in seeds {
         guard let rawID = seed["trackId"] as? NSNumber,
               let timestamp = seed["sourceTimestamp"] as? NSNumber,
@@ -456,7 +455,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
               let confidence = seed["confidence"] as? NSNumber,
               confidence.doubleValue >= 0.55 else { continue }
         let trackID = rawID.intValue
-        incomingIDs.insert(trackID)
         let rect = CGRect(x: x.doubleValue, y: y.doubleValue, width: width.doubleValue, height: height.doubleValue)
         guard trackID > 0, rect.minX >= 0, rect.minY >= 0, rect.width > 0.02, rect.height > 0.02,
               rect.maxX <= 1.001, rect.maxY <= 1.001 else { continue }
@@ -480,10 +478,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self.trackingMisses.removeValue(forKey: trackID)
         }
       }
-      for staleID in Array(self.activeTrackingRequests.keys).filter({ !incomingIDs.contains($0) }) {
-        self.activeTrackingRequests.removeValue(forKey: staleID)
-        self.trackingMisses.removeValue(forKey: staleID)
-      }
+      // Do not prune existing tracks merely because a cloud pass missed a bottle.
+      // Vision continues propagating them until confidence/miss limits expire.
       // Release each cached source frame after its bounded retention window.
       let staleKeys = self.retainedTrackingFrames.keys.filter { timestamp in
         timestamp < (self.retainedTrackingFrames.keys.max() ?? timestamp) - 8.0
