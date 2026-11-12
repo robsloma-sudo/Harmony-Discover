@@ -6,6 +6,7 @@
 // Guards: signed-in Discover user (anonymous users included), exact-origin allow-list, DEV project only,
 // 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { collectSearchResultSources, validateResearchEvidence, type ProposedResearchSource } from "./researchEvidence.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const VERSION = "0.3.7";
