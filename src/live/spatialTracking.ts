@@ -245,6 +245,8 @@ export function updateWorldSpatialTracks(
   const reassociationMeters = options.reassociationMeters ?? 0.45;
   const used = new Set<number>();
   const seenSourceIds = new Set<number>();
+  const occupiedTrackIds = new Set(previous.map(track => track.trackId));
+  let nextSyntheticId = Math.min(-1, ...previous.map(track => track.trackId - 1));
   const next: SpatialTrack[] = [];
   const activePrevious = previous.filter(track => now - track.lastSeenAt <= maxAgeMs);
 
@@ -257,7 +259,11 @@ export function updateWorldSpatialTracks(
   for (const detection of ordered) {
     if (seenSourceIds.has(detection.trackId)) continue;
     seenSourceIds.add(detection.trackId);
-    let prior = activePrevious.find(track => track.trackId === detection.trackId && !used.has(track.trackId));
+    let prior = activePrevious.find(track =>
+      track.trackId === detection.trackId
+      && !used.has(track.trackId)
+      && !(track.identityKey && detection.identityKey && track.identityKey !== detection.identityKey)
+    );
 
     // Detector IDs are only temporal 2D IDs. If they change, reassociate by
     // world-space proximity, predicted motion, and available product evidence.
@@ -291,8 +297,13 @@ export function updateWorldSpatialTracks(
     }
 
     if (!prior) {
+      let stableTrackId = detection.trackId;
+      if (occupiedTrackIds.has(stableTrackId) || used.has(stableTrackId) || next.some(track => track.trackId === stableTrackId)) {
+        while (occupiedTrackIds.has(nextSyntheticId) || used.has(nextSyntheticId) || next.some(track => track.trackId === nextSyntheticId)) nextSyntheticId -= 1;
+        stableTrackId = nextSyntheticId--;
+      }
       next.push({
-        trackId: detection.trackId,
+        trackId: stableTrackId,
         sourceTrackId: detection.trackId,
         identityKey: detection.identityKey,
         box: detection.box,
@@ -301,7 +312,7 @@ export function updateWorldSpatialTracks(
         confidence: detection.confidence,
         lastSeenAt: now,
       });
-      used.add(detection.trackId);
+      used.add(stableTrackId);
       continue;
     }
 
