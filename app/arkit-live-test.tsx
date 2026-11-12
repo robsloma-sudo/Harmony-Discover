@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useCameraPermissions } from 'expo-camera';
 import { Screen, styles } from '../src/ui';
-import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
+import { DiscoverARSurface, type ARTrackingUpdate, type ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 
 export default function ARKitLiveTest() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -11,6 +11,8 @@ export default function ARKitLiveTest() {
   const [tracking, setTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'not_started' });
   const [error, setError] = useState('');
   const [candidates, setCandidates] = useState<Array<{ trackId: number; confidence: number }>>([]);
+  const [depthFrame, setDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  const [depthStatus, setDepthStatus] = useState('waiting_for_lidar_depth');
 
   const start = async () => {
     setError('');
@@ -30,13 +32,15 @@ export default function ARKitLiveTest() {
       <Text style={styles.back} onPress={() => { setActive(false); router.back(); }}>‹  Back to diagnostics</Text>
       <Text style={styles.eyebrow}>DISCOVER DEV · AR SESSION TEST</Text>
       <Text style={styles.title}>Live world tracking</Text>
-      <Text style={styles.sub}>This test starts an on-device ARKit camera session and reports tracking quality. It does not detect bottles, draw object contours, record video, or save images.</Text>
+      <Text style={styles.sub}>This test starts an on-device ARKit camera session and reports world tracking plus real metric LiDAR depth frames. It does not yet detect bottles, reconstruct meshes, record video, or save images.</Text>
       <View style={{ height: 380, overflow: 'hidden', borderRadius: 14, backgroundColor: '#050A12', borderWidth: 1, borderColor: '#34527A', marginVertical: 16 }}>
         <DiscoverARSurface
           style={{ flex: 1 }}
           active={active}
           onTrackingUpdate={event => setTracking(event.nativeEvent)}
           onVisualCandidates={event => setCandidates(event.nativeEvent.candidates)}
+          onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setDepthFrame(value); }}
+          onDepthStatus={event => setDepthStatus(event.nativeEvent.status)}
           onARError={event => { setError(event.nativeEvent.message || 'ARKit session failed.'); setActive(false); }}
           onARReady={() => setError('')}
         />
@@ -48,6 +52,12 @@ export default function ARKitLiveTest() {
         <Text style={styles.itemTitle}>Tracking state</Text>
         <Text style={styles.price}>{tracking.state.toUpperCase().replace('_', ' ')}</Text>
         <Text style={styles.categoryDesc}>{tracking.reason || 'Camera pose tracking is stable.'}</Text>
+      </View>
+      <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+        <Text style={styles.itemTitle}>Native LiDAR depth feed</Text>
+        <Text style={styles.price}>{depthFrame ? 'LIVE METRIC DEPTH RECEIVED' : depthStatus.replace(/_/g, ' ').toUpperCase()}</Text>
+        <Text style={styles.categoryDesc}>{depthFrame ? `${depthFrame.width} × ${depthFrame.height} sampled depth grid · ${depthFrame.depthMeters.filter(value => value > 0).length} valid samples · units: meters · source: ${depthFrame.source}` : 'Waiting for ARKit sceneDepth / smoothedSceneDepth frames. World tracking alone does not prove LiDAR depth is active.'}</Text>
+        {depthFrame ? <Text style={styles.categoryDesc}>Camera calibration and pose metadata: {depthFrame.cameraIntrinsics.length} intrinsics values · {depthFrame.cameraTransform.length} transform values · confidence samples: {depthFrame.confidence.length}</Text> : null}
       </View>
       <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}>
         <Text style={styles.itemTitle}>Live geometry candidates</Text>
