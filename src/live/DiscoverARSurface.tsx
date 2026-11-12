@@ -211,8 +211,11 @@ function WebLiveCamera(props: NativeProps) {
         latestGrayFrame = frame;
         if (!webTracks.length) return;
         webTracks = webTracks
-          .map(track => ({ ...propagateMotionTrack(track, frame), id: track.id, lastSeenAt: track.lastSeenAt }))
-          .filter(track => track.misses < 12 && track.confidence >= 0.12);
+          .map((track): WebTrack => {
+            const propagated = propagateMotionTrack(track, frame);
+            return { ...track, ...propagated, id: track.id, lastSeenAt: track.lastSeenAt };
+          })
+          .filter((track): track is WebTrack => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
           count: webTracks.length,
           candidates: webTracks.map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence })),
