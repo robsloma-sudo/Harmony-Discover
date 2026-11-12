@@ -47,9 +47,13 @@ jobs:
 
       - name: Compile iOS simulator target
         run: |
+          workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          test -n "$workspace"
+          scheme="$(xcodebuild -list -json -workspace "$workspace" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace"]["schemes"][0])')"
+          test -n "$scheme"
           xcodebuild \
-            -workspace ios/HarmonyDiscover.xcworkspace \
-            -scheme HarmonyDiscover \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
             -sdk iphonesimulator \
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
