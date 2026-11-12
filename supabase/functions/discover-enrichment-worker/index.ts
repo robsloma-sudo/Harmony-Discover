@@ -361,11 +361,12 @@ Deno.serve(async (req: Request) => {
     const { data: recentResearchJobs, error } = await db.from("discover_enrichment_jobs")
       .select("id,attempts")
       .eq("job_type", "official_source_lookup")
+      .gt("attempts", 0)
       .gte("updated_at", new Date(Date.now() - 86400000).toISOString())
       .limit(1000);
     if (error) return json({ error: "daily_research_budget_check_failed" }, 503);
     dailyResearchAttempts = (recentResearchJobs ?? []).reduce(
-      (sum: number, item: Record<string, unknown>) => sum + Math.max(1, Number(item.attempts) || 1),
+      (sum: number, item: Record<string, unknown>) => sum + Math.max(0, Number(item.attempts) || 0),
       0,
     );
     dailyCapReached = dailyResearchAttempts >= DAILY_RESEARCH_ATTEMPT_CAP;
