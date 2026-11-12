@@ -101,7 +101,7 @@ Deno.serve(async req=>{
     }
   }
   // Drain a larger save batch in bounded invocations rather than risking a long-running Edge request.
-  if ((jobs || []).length === 2) {
+  if ((jobs || []).length > 0) {
     const workerUrl = url.replace(/\/$/, "") + "/functions/v1/discover-research-worker";
     EdgeRuntime.waitUntil(fetch(workerUrl, {
       method: "POST",
