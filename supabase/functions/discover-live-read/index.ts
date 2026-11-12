@@ -132,12 +132,15 @@ const TOOL = {
 };
 const SYSTEM = "You read one photo taken in a bar, shop or restaurant: bottle labels (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true, return a tight box around the visible paper/menu card when its boundary is visible, and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. For each bottle with a visible label return a tight box around the whole bottle, a separate tight label_box around the paper/foil/sticker label if its boundary is visible, and ONLY what is printed on that label. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Return an independent field_confidence score for every populated field; a low-confidence value must be left empty rather than guessed. Distinguish exact product expression from brand, producer, distillery, bottler, category, legal class, style, appellation, region, origin, package size and SKU/barcode. Extract all legible label and package facts, including bottling/distillation/harvest/disgorgement dates, mash bill/grain/agave, cask/barrel, lot/batch, vineyard/estate, dosage/residual sugar, importer, awards, organic claims and package material when printed or visibly identifiable. Do not infer a SKU or barcode from a product match. Skip glasses, glassware, taps, people, tables, shelves, background objects and bottles facing away. Never return boxes for anything except a bottle and its own label. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. If no labelled bottle is visible return an empty bottles list. Always call the bottles tool.";
 
-async function readFrame(key: string, model: string, b64: string) {
+async function readFrame(key: string, model: string, b64: string, focus: string = "standard") {
+  const instruction = focus === "fine_print"
+    ? "This is a magnified crop of a beverage label. Perform a dedicated fine-print transcription pass. Prioritize tiny text, legal statements, ABV/proof, volume, lot and batch codes, vintage, importer/bottler details, addresses, certification text, dates, and small embossed or high-contrast print. Read only characters actually visible. Do not infer, complete, or guess obscured characters. Return all legible values in the structured fields and leave uncertain fields empty."
+    : "Read the bottle labels and any menu.";
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({ model, max_tokens: 4000, system: SYSTEM, tools: [TOOL], tool_choice: { type: "tool", name: "bottles" },
-      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: "Read the bottle labels and any menu." }] }] }),
+      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] }),
   });
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, j };
@@ -243,7 +246,8 @@ Deno.serve(async (req: Request) => {
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
 
     const providerStartedAt = Date.now();
-    let model = MODEL, r = await readFrame(anthropicKey, model, image);
+    const focus = body.focus === "fine_print" ? "fine_print" : "standard";
+    let model = MODEL, r = await readFrame(anthropicKey, model, image, focus);
     if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { model = FALLBACK; r = await readFrame(anthropicKey, model, image); }
     const usage = r.j?.usage || {};
     await db.rpc("discover_bottle_scan_tokens", { p_subject: subject, p_in: usage.input_tokens || 0, p_out: usage.output_tokens || 0 });
@@ -251,8 +255,10 @@ Deno.serve(async (req: Request) => {
     const input = (Array.isArray(r.j?.content) ? r.j.content : []).find((c: Record<string, unknown>) => c.type === "tool_use" && c.name === "bottles")?.input as Record<string, unknown> | undefined;
     const list = (Array.isArray(input?.bottles) ? input!.bottles as Array<Record<string, unknown>> : []).slice(0, 12).map((b) => {
       const bx = (b.box || {}) as Record<string, unknown>;
+      const lb = (b.label_box || {}) as Record<string, unknown>;
       return {
         box: { x0: unit(bx.x0), y0: unit(bx.y0), x1: unit(bx.x1), y1: unit(bx.y1) },
+        label_box: Number.isFinite(Number(lb.x0)) && Number.isFinite(Number(lb.y0)) && Number.isFinite(Number(lb.x1)) && Number.isFinite(Number(lb.y1)) ? { x0: unit(lb.x0), y0: unit(lb.y0), x1: unit(lb.x1), y1: unit(lb.y1) } : null,
         words: (Array.isArray(b.label_words) ? b.label_words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8),
         brand: clean(b.brand, 80), product: clean(b.product, 80),
         category: CATEGORIES.includes(String(b.category)) ? String(b.category) : "other",
