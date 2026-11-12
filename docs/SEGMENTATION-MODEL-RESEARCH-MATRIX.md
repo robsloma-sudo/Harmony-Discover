@@ -56,11 +56,11 @@ The upstream ONNX wrapper documents the graph outputs as:
 
 The upstream Python wrapper then applies confidence filtering, label filtering, NMS, box rescaling, mask resize to original-image dimensions, thresholding, and mask cleanup. The raw browser adapter must not mistake the raw ONNX mask grid for a full-resolution mask.
 
-Discover now has `adaptDfineSegOnnxOutput`, which consumes the raw output tensors, filters the configured COCO bottle class, rescales boxes into normalized camera coordinates, applies same-class NMS, crops low-resolution masks to their corresponding boxes, thresholds them, and returns per-instance crops to the shared association layer. It intentionally avoids expanding every proposal mask to full camera resolution.
+Discover now has `adaptDfineSegOnnxOutput`, which consumes the raw output tensors, filters the configured COCO bottle class, rescales boxes into normalized camera coordinates, applies NMS, crops low-resolution masks to their corresponding boxes, bilinearly upsamples only each box crop to original-frame resolution, thresholds it, and returns per-instance crops to the shared association layer. It intentionally avoids expanding every proposal mask to full camera resolution.
 
 Preprocessing assumption in this first adapter: direct resize to the model's fixed input dimensions, with independent x/y normalization back to the original frame. Letterbox preprocessing is not supported by this adapter yet and must not be enabled until the inverse pad/scale transform is implemented and fixture-tested.
 
-The adapter is not a model runtime. The ONNX session, preprocessing pipeline, tensor name/shape discovery, model artifact, and real-camera integration are still outstanding.
+The provider includes a direct-resize RGB NCHW float32 preprocessing path and injected WASM-first ONNX session factory. The model artifact still needs to be generated; the app package/lockfile integration and live-camera initialization are not yet connected.
 
 ## Current implementation state
 
@@ -69,7 +69,7 @@ The adapter is not a model runtime. The ONNX session, preprocessing pipeline, te
 - `trackedBottleRegistry.ts`: persistent visual track metadata and bounded contour carry-forward.
 - `segmentationEngine.ts`: provider-neutral interface, one-to-one mask/track association, timestamp/confidence/geometry rejection, single-flight bounded-cadence runner, lifecycle reset/disposal.
 - `tests/segmentation-engine.test.ts`: synthetic fixture tests for association, ambiguity, malformed/stale masks, cadence, and disposal.
-- No actual model weights are bundled, and no concrete ONNX Runtime Web dependency/session loader or real-camera inference is integrated yet. The provider is testable with an injected runtime but is not currently instantiated by the live camera. Synthetic fixture tests validate preprocessing, output adaptation, association, and lifecycle contracts only.
+- No actual model weights are bundled and no ONNX Runtime Web dependency is yet in the app package/lockfile. A manual GitHub Actions workflow now builds D-FINE-seg COCO ONNX artifacts (N/S/M/L/X), records upstream commit and SHA-256, and uploads the model as a short-lived workflow artifact. The provider is testable with an injected runtime but is not currently instantiated by the live camera. Synthetic fixture tests validate preprocessing, output adaptation, association, and lifecycle contracts only.
 
 ## Next implementation sequence
 
