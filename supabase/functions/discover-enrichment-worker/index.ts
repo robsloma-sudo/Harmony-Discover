@@ -39,7 +39,7 @@ const ENRICHMENT_TOOL = {
             supports: { type: "array", items: { type: "string" } },
             source_type: {
               type: "string",
-              enum: ["manufacturer", "distillery", "winery", "brand_owner", "regulator", "gs1", "retailer", "reference"],
+              enum: ["manufacturer", "distillery", "winery", "brand_owner", "regulator", "gs1"],
             },
           },
         },
@@ -145,7 +145,7 @@ async function callOfficialResearch(apiKey: string, product: Record<string, unkn
     body: JSON.stringify({
       model: RESEARCH_MODEL,
       max_tokens: 2200,
-      system: "You research beverage product facts. Search for this exact brand and product expression, not merely the producer or a similar SKU. Prefer official producer, distillery, winery, brand-owner, TTB/regulator and GS1 sources. Retailers and reference sources are secondary. Never infer or invent facts. Return only missing fields explicitly supported for this exact expression. Do not return tasting impressions as technical flavouring facts. Every returned field must have a source URL that directly supports it. If identity is ambiguous, return no fields. Mark field confidence conservatively.",
+      system: "You research beverage product facts. Search for this exact brand and product expression, not merely the producer or a similar SKU. Use only official producer, distillery, winery, brand-owner, TTB/regulator and GS1 sources. Do not use retailers, general reference pages, or aggregator sites as evidence. Never infer or invent facts. Return only missing fields explicitly supported for this exact expression. Do not return tasting impressions as technical flavouring facts. Every returned field must have a source URL that directly supports it. If identity is ambiguous, return no fields. Mark field confidence conservatively.",
       tools: [
         { type: "web_search_20250305", name: "web_search", max_uses: 3 },
         ENRICHMENT_TOOL,
@@ -162,12 +162,19 @@ async function callOfficialResearch(apiKey: string, product: Record<string, unkn
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error("official_source_research_failed_" + response.status);
   const usage = (payload.usage && typeof payload.usage === "object" ? payload.usage : {}) as Record<string, unknown>;
-  const block = (Array.isArray(payload.content) ? payload.content : [])
-    .find((item: Record<string, unknown>) => item.type === "tool_use" && item.name === "bottle_enrichment") as Record<string, unknown> | undefined;
+  const content = (Array.isArray(payload.content) ? payload.content : []) as Array<Record<string, unknown>>;
+  const searchPerformed = content.some(item =>
+    (item.type === "server_tool_use" || item.type === "tool_use") && item.name === "web_search",
+  ) || content.some(item => item.type === "web_search_tool_result");
+  if (!searchPerformed) throw new Error("official_source_web_search_not_performed");
+  const block = content.find(item =>
+    item.type === "tool_use" && item.name === "bottle_enrichment",
+  ) as Record<string, unknown> | undefined;
   return {
     fields: filterResearchFields(block?.input, missing),
     inputTokens: Number(usage.input_tokens) || 0,
     outputTokens: Number(usage.output_tokens) || 0,
+    searchPerformed: true,
   };
 }
 
@@ -305,6 +312,7 @@ async function processOfficialSourceJob(db: any, job: any, worker: string, apiKe
     attribute_conflicts: persisted.conflictCount,
     input_tokens: research.inputTokens,
     output_tokens: research.outputTokens,
+    official_web_search_performed: research.searchPerformed,
   });
   return {
     id: job.id,
