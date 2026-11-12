@@ -312,15 +312,20 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
           const fieldConfidence = { ...bottle.fieldConfidence };
           for (const candidate of candidates.map(c => c.read)) {
             for (const [key, value] of Object.entries(candidate.details || {})) {
-              if (!value) continue;
-              if (!details[key] || (Number(candidate.fieldConfidence?.[key]) > Number(fieldConfidence[key] || 0))) {
+              const score = Number(candidate.fieldConfidence?.[key] || 0);
+              if (!value || score < 0.78) continue;
+              if (!details[key] || score > Number(fieldConfidence[key] || 0)) {
                 details[key] = value;
-                if (candidate.fieldConfidence?.[key] !== undefined) fieldConfidence[key] = candidate.fieldConfidence[key];
+                fieldConfidence[key] = score;
               }
             }
           }
-          return { ...bottle, details, proof: bottle.proof || fine.proof, size: bottle.size || fine.size, origin: bottle.origin || fine.origin,
-            fieldConfidence, words: Array.from(new Set([...(bottle.words || []), ...candidates.flatMap(c => c.read.words || [])])).slice(0, 30) };
+          const supported = (field: string, value: string) => value && Number(fine.fieldConfidence?.[field] || 0) >= 0.78 ? value : '';
+          return { ...bottle, details,
+            proof: bottle.proof || supported('proof', fine.proof),
+            size: bottle.size || supported('size', fine.size),
+            origin: bottle.origin || supported('origin', fine.origin),
+            fieldConfidence };
         });
         patch(i, { status: 'done', bottles: finalBottles, visualBottles: [], visualMenu: null, scanStage: 0, menu: result.menu.visible ? result.menu : null });
       } catch (error) {
