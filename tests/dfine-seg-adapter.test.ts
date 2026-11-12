@@ -6,11 +6,13 @@ function makeOutput() {
   const width = 10, height = 12;
   const masks = new Uint8Array(width * height);
   for (let y = 2; y < 10; y++) for (let x = 3; x < 7; x++) masks[y * width + x] = 1;
+  const secondMask = new Uint8Array(width * height);
+  for (let y = 1; y < 4; y++) for (let x = 1; x < 4; x++) secondMask[y * width + x] = 1;
   return {
     labels: [39, 1],
     boxes: new Float32Array([2, 1, 8, 11, 0, 0, 4, 4]),
     scores: new Float32Array([0.94, 0.99]),
-    masks: new Uint8Array([...masks, ...new Uint8Array(width * height)]),
+    masks: new Uint8Array([...masks, ...secondMask]),
     maskWidth: width,
     maskHeight: height,
   };
