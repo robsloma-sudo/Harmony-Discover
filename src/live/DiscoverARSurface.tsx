@@ -386,7 +386,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
   const next: RecognitionTrack[] = [];
   const tracked = bottles.map(bottle => {
     const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
-    let bestIndex = -1, bestOverlap = 0;
+    let bestIndex = -1, bestScore = 0;
     nativeRecognitionTracks.forEach((prior, index) => {
       if (used.has(index)) return;
       const left = Math.max(prior.x, box.x), top = Math.max(prior.y, box.y);
@@ -394,9 +394,13 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
       const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
       const union = prior.width * prior.height + box.width * box.height - intersection;
       const overlap = union > 0 ? intersection / union : 0;
-      if (overlap > bestOverlap) { bestOverlap = overlap; bestIndex = index; }
+      const dx = (prior.x + prior.width / 2) - (box.x + box.width / 2);
+      const dy = (prior.y + prior.height / 2) - (box.y + box.height / 2);
+      const distance = Math.hypot(dx, dy);
+      const score = overlap >= 0.08 ? overlap : distance <= 0.16 ? 0.08 * (1 - distance / 0.16) : 0;
+      if (score > bestScore) { bestScore = score; bestIndex = index; }
     });
-    const prior = bestIndex >= 0 && bestOverlap >= 0.12 ? nativeRecognitionTracks[bestIndex] : null;
+    const prior = bestIndex >= 0 && bestScore > 0 ? nativeRecognitionTracks[bestIndex] : null;
     if (prior && bestIndex >= 0) used.add(bestIndex);
     const blend = prior ? 0.38 : 1;
     const track: RecognitionTrack = {
@@ -412,7 +416,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
     return track;
   });
   nativeRecognitionTracks.forEach((track, index) => {
-    if (!used.has(index) && now - track.lastSeenAt < 1200) next.push(track);
+    if (!used.has(index) && now - track.lastSeenAt < 7000) next.push(track);
   });
   nativeRecognitionTracks = next;
   return tracked;
