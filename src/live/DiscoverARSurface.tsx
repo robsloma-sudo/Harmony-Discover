@@ -433,13 +433,14 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 }
 
 export function DiscoverARSurface(props: NativeProps) {
-  const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; timestamp: number } | null>(null);
+  const nativeVisionSignals = useRef<Array<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; frameTimestamp: number }>>([]);
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
   return <NativeARView {...props}
     onRecognitionUpdate={event => {
       const value = event.nativeEvent;
-      nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], textItems: value.textItems || [], barcodeItems: value.barcodeItems || [], imageWidth: value.imageWidth, imageHeight: value.imageHeight, timestamp: Date.now() };
+      nativeVisionSignals.current.push({ text: value.text || [], barcodes: value.barcodes || [], textItems: value.textItems || [], barcodeItems: value.barcodeItems || [], imageWidth: value.imageWidth, imageHeight: value.imageHeight, frameTimestamp: value.frameTimestamp });
+      if (nativeVisionSignals.current.length > 16) nativeVisionSignals.current.splice(0, nativeVisionSignals.current.length - 16);
       props.onRecognitionUpdate?.({ nativeEvent: { ...value, barcodeStatus: 'available' } });
     }}
     onFrame={event => {
@@ -447,19 +448,22 @@ export function DiscoverARSurface(props: NativeProps) {
       nativeFrameReadBusy = true;
       const frame = event.nativeEvent;
       void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
-        const signals = nativeVisionSignals.current;
-        const signalsAreFresh = !!signals && Date.now() - signals.timestamp < 3500;
+        const signals = nativeVisionSignals.current.reduce<typeof nativeVisionSignals.current[number] | null>((best, candidate) => {
+          if (!best) return candidate;
+          return Math.abs(candidate.frameTimestamp - frame.timestamp) < Math.abs(best.frameTimestamp - frame.timestamp) ? candidate : best;
+        }, null);
+        const signalsAreSameFrame = !!signals && Math.abs(signals.frameTimestamp - frame.timestamp) <= 0.20;
         const cloudText = result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean);
-        const mergedText = Array.from(new Set([...cloudText, ...(signalsAreFresh ? signals!.text : [])]));
+        const mergedText = Array.from(new Set([...cloudText, ...(signalsAreSameFrame ? signals!.text : [])]));
         props.onRecognitionUpdate?.({ nativeEvent: {
           text: mergedText,
-          barcodes: signalsAreFresh ? signals!.barcodes : [],
-          textItems: signalsAreFresh ? signals!.textItems : [],
-          barcodeItems: signalsAreFresh ? signals!.barcodeItems : [],
-          imageWidth: signalsAreFresh ? signals!.imageWidth : undefined,
-          imageHeight: signalsAreFresh ? signals!.imageHeight : undefined,
+          barcodes: signalsAreSameFrame ? signals!.barcodes : [],
+          textItems: signalsAreSameFrame ? signals!.textItems : [],
+          barcodeItems: signalsAreSameFrame ? signals!.barcodeItems : [],
+          imageWidth: signalsAreSameFrame ? signals!.imageWidth : undefined,
+          imageHeight: signalsAreSameFrame ? signals!.imageHeight : undefined,
           classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
-          frameTimestamp: Date.now(),
+          frameTimestamp: frame.timestamp,
           bottles: result.bottles,
           menu: result.menu,
           diagnostics: result.diagnostics,
