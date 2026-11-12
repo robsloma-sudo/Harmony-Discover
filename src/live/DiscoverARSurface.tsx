@@ -135,7 +135,7 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
-    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead; contour?: Array<{ x: number; y: number }> }>) => {
+    const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead; contour?: Array<{ x: number; y: number }> }>, seedFrame: GrayFrame | null = latestGrayFrame) => {
       const now = Date.now();
       const used = new Set<number>();
       const next: WebTrack[] = [];
