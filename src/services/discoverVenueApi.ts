@@ -80,7 +80,8 @@ export async function findNearbyPhgAtlasVenues(latitude:number,longitude:number,
       const name=String(isLicense?row.business_name??'Unnamed license':row.name??'Unnamed brewery');
       const type:DiscoverVenue['venue_type']=isLicense?(String(row.license_type||'').toLowerCase().includes('restaurant')?'restaurant':'bar'):'brewery';
       if(venueType && venueType!==type && !(venueType==='cocktail_bar'&&type==='bar')) continue;
-      const miles=111*Math.sqrt((latitude-lat)**2+Math.pow((longitude-lng)*Math.cos(latitude*Math.PI/180),2));
+      const miles=111.045*Math.acos(Math.min(1,Math.max(-1,Math.sin(latitude*Math.PI/180)*Math.sin(lat*Math.PI/180)+Math.cos(latitude*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.cos((lng-longitude)*Math.PI/180))));
+      if(miles>radius) continue;
       result.push({
         id:`${page.dataset}:${String(isLicense?row.state+'-'+row.license_no:row.obdb_id)}`,
         name,venue_type:type,description:isLicense?String(row.license_type||'Liquor license'):String(row.brewery_type||'Brewery'),
