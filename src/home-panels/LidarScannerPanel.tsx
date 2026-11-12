@@ -13,7 +13,7 @@ export default function LidarScannerPanel({ onClose }: { onClose: () => void }) 
   const statusColor = tracking.state === 'normal' ? '#66E5A1' : '#E6B76C';
 
   return <View style={{ width: '100%', gap: 12, paddingBottom: 8 }}>
-    <View style={{ height: 210, overflow: 'hidden', borderRadius: 12, backgroundColor: '#030609', borderWidth: 1, borderColor: 'rgba(79,139,255,0.45)' }}>
+    <View style={{ height: 390, overflow: 'hidden', borderRadius: 12, backgroundColor: '#030609', borderWidth: 1, borderColor: 'rgba(79,139,255,0.45)' }}>
       <DiscoverARSurface style={{ flex: 1 }} active={active}
         onTrackingUpdate={e => setTracking(e.nativeEvent)}
         onARError={e => { setError(e.nativeEvent.message || 'AR session failed.'); setActive(false); }}
