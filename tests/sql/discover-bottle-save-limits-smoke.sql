@@ -17,6 +17,12 @@ begin
   if public.discover_bottle_save_allow(user_one, 0, 21) then
     raise exception 'invalid user limit must be rejected';
   end if;
+  if public.discover_bottle_save_allow(user_one, null, 21) then
+    raise exception 'null user limit must fail closed';
+  end if;
+  if public.discover_bottle_save_allow(user_one, 20, null) then
+    raise exception 'null project limit must fail closed';
+  end if;
 
   for i in 1..20 loop
     if not public.discover_bottle_save_allow(user_one, 20, 21) then
