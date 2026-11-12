@@ -27,18 +27,23 @@ const text = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v || ''))
 
 /** The facts worth showing for one bottle, most important first. Only what was printed on the label. */
 function factsOf(b: BottleRead): Array<[string, string]> {
-  const d = b.details || {};
-  const rows: Array<[string, string]> = [
-    ['Brand', b.match?.brand || b.brand], ['Expression', b.product], ['Type', CATEGORY[b.category] || ''],
-    ['Producer', text(d.producer)], ['Vintage', text(d.vintage)], ['Appellation', text(d.appellation)],
-    ['Region', text(d.region) || b.origin || text(d.country)], ['Grapes', text(d.grapes)], ['Class', text(d.classification)],
-    ['Age', text(d.age_statement)], ['Finish', text(d.cask_finish)], ['Flavour', text(d.flavor)],
-    ['Strength', b.proof], ['Size', b.size], ['Batch', text(d.batch)], ['Certified', text(d.certifications)],
+  const d=b.details||{}, fc=b.fieldConfidence||{};
+  const rows: Array<[string,string]> = [
+    ['Brand',b.match?.brand||b.brand],['Producer',text(d.producer)],['Distillery',text(d.distillery)],['Winery / estate',text(d.winery)||text(d.estate)],
+    ['Bottler',text(d.bottler)],['Brand owner',text(d.brand_owner)],['Product expression',b.product],['Category',CATEGORY[b.category]||b.category],
+    ['Class / designation',text(d.classification)||text(d.label_designation)],['Style',text(d.style)],['Subcategory',text(d.subcategory)],
+    ['Origin',b.origin||text(d.country)],['Region',text(d.region)],['Subregion / AVA',text(d.subregion)],['Appellation',text(d.appellation)],['Appellation level',text(d.appellation_level)],
+    ['Vineyard',text(d.vineyard)],['Grapes',text(d.grapes)],['Vintage',text(d.vintage)],['Harvest',text(d.harvested_on)],
+    ['Proof / ABV',b.proof],['Bottle size',b.size||text(d.net_contents)],['Package type',text(d.package_type)],['Package material',text(d.package_material)],
+    ['SKU',text(d.sku)],['UPC / EAN',text(d.upc_ean)],['Age statement',text(d.age_statement)],['Mash bill',text(d.mash_bill)],['Grain',text(d.grain)],['Agave',text(d.agave_type)],
+    ['Production method',text(d.production_method)],['Distillation',text(d.distillation)],['Cask type',text(d.cask_type)],['Cask finish',text(d.cask_finish)],
+    ['Barrel number',text(d.barrel_number)],['Batch',text(d.batch)],['Lot code',text(d.lot_code)],['Distilled on',text(d.distilled_on)],['Bottled on',text(d.bottled_on)],
+    ['Disgorged on',text(d.disgorged_on)],['Dosage',text(d.dosage)],['Residual sugar',text(d.residual_sugar)],['Flavor',text(d.flavor)],
+    ['Importer',text(d.importer)],['Certifications',text(d.certifications)],['Organic claim',text(d.organic_claim)],['Awards',text(d.awards)],
   ];
-  const seen = new Set<string>();
-  return rows.filter(([, v]) => { const k = v.toLowerCase(); if (!v || seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
+  const seen=new Set<string>();
+  return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;});
 }
-
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
 
