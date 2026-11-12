@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type DimensionValue } from 'react-native';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type MenuGlimpse } from '../services/discoverLiveApi';
 import { useScan } from '../state/ScanContext';
@@ -7,6 +7,7 @@ import { useScan } from '../state/ScanContext';
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
 const C = { bg:'#050A1C',line:'rgba(79,139,255,.45)',blue:'#4F8BFF',text:'#F2F8FF',muted:'#B8CBE8',brass:'#D8B878',green:'#7DFFB5',amber:'#FFD27A' };
+const asPercent = (value: number): DimensionValue => `${value}%`;
 const CATEGORY: Record<string,string> = { tequila:'Tequila',mezcal:'Mezcal',whiskey:'Whiskey',vodka:'Vodka',gin:'Gin',rum:'Rum',brandy:'Brandy',liqueur:'Liqueur',amaro_aperitivo:'Amaro / aperitivo',vermouth:'Vermouth',wine:'Wine',sparkling:'Sparkling wine',beer:'Beer',cider:'Cider',non_alcoholic:'Non-alcoholic',other:'Other' };
 const clean = (v: unknown) => Array.isArray(v) ? v.join(', ') : String(v || '');
 const nameOf = (b: BottleRead) => [b.match?.brand || b.brand,b.product].filter(Boolean).join(' ');
@@ -94,7 +95,7 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
   <View pointerEvents="none" style={s.tint}/>
   {waitingForRead&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:waitingBeamY}]}]}/>}
   {showTrace&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:beamY}]}]}/>}
-  {showTrace&&edgeSegments.map(segment=>{const progress=segment.inferred?closeProgress:segment.kind==='hard'?hardProgress:segment.kind==='label'?labelProgress:printProgress;const revealAt=Math.max(0.04,Math.min(0.96,(stage===2||stage===4)?1-segment.top/100:segment.top/100));const opacity=segment.inferred?progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.72,0.72]}):progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.96,0.96]});return <Animated.View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',opacity,transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',borderStyle:segment.inferred?'dashed':'solid'}]}/>;})}
+  {showTrace&&edgeSegments.map(segment=>{const progress=segment.inferred?closeProgress:segment.kind==='hard'?hardProgress:segment.kind==='label'?labelProgress:printProgress;const revealAt=Math.max(0.04,Math.min(0.96,(stage===2||stage===4)?1-segment.top/100:segment.top/100));const opacity=segment.inferred?progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.72,0.72]}):progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.96,0.96]});return <Animated.View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:asPercent(segment.left),top:asPercent(segment.top),width:asPercent(segment.length),opacity,transform:[{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',borderStyle:segment.inferred?'dashed':'solid'}]}/>;})}
 
 
   <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING FINE PRINT':stage===4?'4 · CLOSING BOTTLE GEOMETRY':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
