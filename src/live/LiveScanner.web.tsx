@@ -55,8 +55,8 @@ function researchValue(b: BottleRead, key: string): string {
   const value = aliases[key] ?? d[key];
   return Array.isArray(value) ? value.join(', ') : String(value || '');
 }
-type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
-const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
+type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; scanStage: 0 | 1 | 2 | 3; menu: MenuGlimpse | null; note: string };
+const EMPTY: PhotoState = { status: 'reading', bottles: [], visualBottles: [], scanStage: 0, menu: null, note: '' };
 
 /** One frozen photo with its own sweep line, glowing edges and name tags. */
 function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: PhotoState; compact: boolean; onLoaded: (jpegBase64: string) => void }) {
@@ -69,8 +69,8 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
   useEffect(() => {
     // Only confidently detected bottle regions are eligible for edge tracing.
     // Glassware, tables and background details outside those boxes are excluded.
-    boxesRef.current = state.bottles.filter(b => b.state !== 'unsure').map(b => b.box);
-  }, [state.bottles]);
+    boxesRef.current = (state.visualBottles.length ? state.visualBottles : state.bottles).filter(b => b.state !== 'unsure').map(b => b.box);
+  }, [state.bottles, state.visualBottles]);
 
   useEffect(() => {
     let alive = true, raf = 0;
@@ -118,8 +118,8 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         }
         if (dirty) ctx.putImageData(out, 0, 0, 0, a, EW, b - a + 1);
         lastRow = row;
-        const working = readingRef.current || shownCount < EH;
-        if (lineRef.current) lineRef.current.style.opacity = '0';
+        const working = readingRef.current || (state.scanStage === 3 && shownCount < EH);
+        if (lineRef.current) lineRef.current.style.opacity = state.status === 'reading' && state.scanStage === 0 ? '1' : '0';
         if (working) raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -127,15 +127,20 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
     img.src = uri;
     return () => { alive = false; cancelAnimationFrame(raf); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uri]);
+  }, [uri, state.scanStage]);
 
   return (
     <div style={{ ...fill, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ position: 'relative', aspectRatio: ratio ? String(ratio) : undefined, maxWidth: '100%', maxHeight: '100%', width: ratio >= 1 ? '100%' : undefined, height: ratio && ratio < 1 ? '100%' : undefined, overflow: 'hidden' }}>
         <img src={uri} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
         <div style={{ ...fill, background: 'rgba(5,10,40,.28)' }} />
-        <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 3px #4f8bff) drop-shadow(0 0 9px #2b56f0)' }} />
-        <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />
+        {state.scanStage === 3 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 3px #4f8bff) drop-shadow(0 0 9px #2b56f0)' }} />}
+        {state.scanStage === 0 && <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />}
+        {(state.scanStage === 1 || state.scanStage === 2) && state.visualBottles.map((b, i) => {
+          const box = state.scanStage === 1 ? b.box : b.label_box;
+          if (!box) return null;
+          return <div key={`stage-${state.scanStage}-${i}`} aria-hidden style={{ position: 'absolute', left: `${box.x0 * 100}%`, top: `${box.y0 * 100}%`, width: `${(box.x1 - box.x0) * 100}%`, height: `${(box.y1 - box.y0) * 100}%`, border: state.scanStage === 1 ? '2px solid #a9d4ff' : '2px solid #7dffb5', borderRadius: state.scanStage === 1 ? 18 : 4, boxSizing: 'border-box', boxShadow: state.scanStage === 1 ? '0 0 8px #4f8bff, inset 0 0 8px rgba(79,139,255,.35)' : '0 0 8px #7dffb5, inset 0 0 8px rgba(125,255,181,.25)', transition: 'all .25s ease-out' }} />;
+        })}
         {state.bottles.map((b, i) => {
           const cx = ((b.box.x0 + b.box.x1) / 2) * 100, top = Math.max(compact ? 10 : 6, b.box.y0 * 100 - 2), isUnsure = b.state === 'unsure';
           return <div key={`${keyOf(b) || 'u'}-${i}`} style={{ position: 'absolute', left: `${cx}%`, top: `${top}%`, transform: 'translate(-50%,-100%)', textAlign: 'center', pointerEvents: 'none', animation: 'hdRise .35s ease-out both', animationDelay: `${i * 0.12}s`, maxWidth: '46%' }}>
@@ -169,11 +174,15 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
     setTimeout(async () => {
       try {
         const result = await readLiveFrame(jpeg);
-        // Always show at least one complete up-and-down visualization pass before
-        // revealing any detected bottle or menu data, even when the API is fast.
-        const remaining = Math.max(0, 4600 - (performance.now() - visualStarted));
-        if (remaining) await new Promise(resolve => setTimeout(resolve, remaining));
-        patch(i, { status: 'done', bottles: result.bottles, menu: result.menu.visible ? result.menu : null });
+        // Three distinct visual passes: bottle silhouette, paper/foil/sticker label,
+        // then fine image details inside the bottle region. Keep text data hidden until all finish.
+        patch(i, { visualBottles: result.bottles, scanStage: 1 });
+        await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
+        patch(i, { scanStage: 2 });
+        await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
+        patch(i, { scanStage: 3 });
+        await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
+        patch(i, { status: 'done', bottles: result.bottles, visualBottles: [], scanStage: 0, menu: result.menu.visible ? result.menu : null });
       } catch (error) {
         const remaining = Math.max(0, 4600 - (performance.now() - visualStarted));
         if (remaining) await new Promise(resolve => setTimeout(resolve, remaining));
