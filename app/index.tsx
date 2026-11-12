@@ -28,6 +28,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const isLandscape = screenWidth > screenHeight;
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
+  const [liveReadConsent, setLiveReadConsent] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captureRequestId, setCaptureRequestId] = useState(0);
   const pendingCapture = useRef<'scan'|'menu_page'|null>(null);
@@ -164,7 +165,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
           active={!!permission.granted && !scanPhotos}
-          recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
+          recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
@@ -227,6 +228,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           })}
         </View>
       )}
+      {permission.granted && !scanPhotos && !liveReadConsent && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+58,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
+        <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
+        <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>setLiveReadConsent(true)} style={{marginTop:9,alignSelf:'flex-start',paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
+          <Text style={{color:'#111',fontSize:9,fontWeight:'900',letterSpacing:0.8}}>ENABLE LIVE RECOGNITION</Text>
+        </Pressable>
+      </View>}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
