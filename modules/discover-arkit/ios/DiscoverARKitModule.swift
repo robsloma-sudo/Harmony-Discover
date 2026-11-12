@@ -158,6 +158,59 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     onARReady(["state": "starting"])
   }
 
+  /// Adds small world-anchored point markers; these are not bottle meshes.
+  func updateSpatialAnchors(_ candidates: [[String: Any]]) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { [weak self] in self?.updateSpatialAnchors(candidates) }
+      return
+    }
+    guard isActive else { return }
+    var seen = Set<String>()
+    for candidate in candidates {
+      guard let trackID = candidate["physicalObjectId"] as? String,
+            let x = candidate["x"] as? Double,
+            let y = candidate["y"] as? Double,
+            let z = candidate["z"] as? Double,
+            let state = candidate["state"] as? String,
+            ["confirmed", "potential", "occluded"].contains(state) else { continue }
+      seen.insert(trackID)
+      let previous = spatialAnchors[trackID]
+      let oldPoint = previous.map { SIMD3<Float>($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z) }
+      let newPoint = SIMD3<Float>(Float(x), Float(y), Float(z))
+      let moved = oldPoint.map { simd_distance($0, newPoint) > 0.025 } ?? true
+      guard moved || spatialAnchorStates[trackID] != state else { continue }
+      if let previous { sceneView.session.remove(anchor: previous) }
+      var transform = matrix_identity_float4x4
+      transform.columns.3 = SIMD4<Float>(Float(x), Float(y), Float(z), 1)
+      let anchor = ARAnchor(name: "discover-" + state + "-" + trackID, transform: transform)
+      spatialAnchors[trackID] = anchor
+      spatialAnchorStates[trackID] = state
+      sceneView.session.add(anchor: anchor)
+    }
+    let removed = spatialAnchors.keys.filter { !seen.contains($0) }
+    for trackID in removed {
+      if let anchor = spatialAnchors.removeValue(forKey: trackID) {
+        sceneView.session.remove(anchor: anchor)
+      }
+      spatialAnchorStates.removeValue(forKey: trackID)
+    }
+    onSpatialAnchorStatus(["activeCount": spatialAnchors.count])
+  }
+
+  public func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
+    guard let name = anchor.name, name.hasPrefix("discover-") else { return nil }
+    let parts = name.split(separator: "-", maxSplits: 2).map(String.init)
+    guard parts.count == 3 else { return nil }
+    let color: UIColor = parts[1] == "confirmed"
+      ? UIColor(red: 0.20, green: 1.0, blue: 0.55, alpha: 0.95)
+      : UIColor(red: 1.0, green: 0.22, blue: 0.24, alpha: 0.95)
+    let sphere = SCNSphere(radius: 0.025)
+    sphere.firstMaterial?.diffuse.contents = color
+    sphere.firstMaterial?.emission.contents = color
+    sphere.firstMaterial?.lightingModel = .constant
+    return SCNNode(geometry: sphere)
+  }
+
   /// Captures the current ARKit camera image from the same session used for tracking.
   func captureFrame(_ requestId: Int) {
     guard requestId > 0, requestId != lastCaptureRequestId else { return }
