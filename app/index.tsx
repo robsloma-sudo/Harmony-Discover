@@ -35,6 +35,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
+  const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
+  const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
   const [liveReadAt, setLiveReadAt] = useState<number | null>(null);
   const [cameraMessage, setCameraMessage] = useState('');
@@ -155,6 +157,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
             if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
+            if (value.barcodes) setLiveBarcodes(value.barcodes);
+            if (value.text) setLiveLabelText(value.text);
             if (value.menu) setLiveMenu(value.menu);
           }}
           onARError={event => { pendingCapture.current = null; setCapturing(false); setCameraMessage(event.nativeEvent.message || 'Camera session failed.'); }}
@@ -225,7 +229,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       </View>
       {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} mode={scanMode} onClose={()=>setScanPhotos(null)} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
       {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
-      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} menu={liveMenu} lastReadAt={liveReadAt} /></View>}
+      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} barcodes={liveBarcodes} labelText={liveLabelText} menu={liveMenu} lastReadAt={liveReadAt} /></View>}
       {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:31,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:activePanel==='lidar'?'86%':undefined,maxHeight:activePanel==='lidar'?'88%':'78%',padding:activePanel==='lidar'?12:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>
