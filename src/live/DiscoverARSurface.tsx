@@ -150,6 +150,8 @@ function WebLiveCamera(props: NativeProps) {
     let recognitionBusy = false;
     let segmentationRunner: SegmentationRunner | null = null;
     let segmentationLoading = false;
+    let segmentationLoadFailures = 0;
+    let segmentationRetryAfterMs = 0;
     type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
     let barcodeDetector: BarcodeDetectorLike | null = null;
@@ -335,7 +337,7 @@ function WebLiveCamera(props: NativeProps) {
     };
 
     const ensureSegmentationRunner = async () => {
-      if (disposed || segmentationRunner || segmentationLoading) return;
+      if (disposed || segmentationRunner || segmentationLoading || Date.now() < segmentationRetryAfterMs) return;
       segmentationLoading = true;
       try {
         const ort = await loadDfineBrowserRuntime();
@@ -355,10 +357,17 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
         segmentationRunner = runner;
+        segmentationLoadFailures = 0;
+        segmentationRetryAfterMs = 0;
       } catch (error) {
         // Segmentation is an enhancement: cloud bottle recognition must remain
         // available if model download, WASM initialization, or inference fails.
-        console.warn('[Discover] D-FINE segmentation unavailable', error);
+        // Back off retries so a missing/slow model does not trigger a fetch on
+        // every recognition frame while preserving recovery from transient errors.
+        segmentationLoadFailures = Math.min(6, segmentationLoadFailures + 1);
+        const retryDelayMs = Math.min(60_000, 5_000 * (2 ** (segmentationLoadFailures - 1)));
+        segmentationRetryAfterMs = Date.now() + retryDelayMs;
+        console.warn('[Discover] D-FINE segmentation unavailable; retry in ms:', retryDelayMs, error);
       } finally {
         segmentationLoading = false;
       }
