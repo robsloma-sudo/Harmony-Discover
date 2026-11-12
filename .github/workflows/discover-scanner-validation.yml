@@ -53,6 +53,11 @@ jobs:
       - name: Type-check live reader Edge Function
         run: deno check --node-modules-dir=auto supabase/functions/discover-live-read/index.ts
 
+      - name: Smoke-test actual D-FINE WASM inference
+        run: |
+          node scripts/copy-ort-wasm.mjs
+          node scripts/smoke-dfine-wasm-runtime.mjs
+
       - name: TypeScript validation
         run: npm run typecheck
 
