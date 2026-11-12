@@ -34,7 +34,7 @@ function factsOf(b: BottleRead): Array<[string, string]> {
     ['Class / designation',text(d.classification)||text(d.label_designation)],['Style',text(d.style)],['Subcategory',text(d.subcategory)],
     ['Origin',b.origin||text(d.country)],['Region',text(d.region)],['Subregion / AVA',text(d.subregion)],['Appellation',text(d.appellation)],['Appellation level',text(d.appellation_level)],
     ['Vineyard',text(d.vineyard)],['Grapes',text(d.grapes)],['Vintage',text(d.vintage)],['Harvest',text(d.harvested_on)],
-    ['Proof / ABV',b.proof],['Bottle size',b.size||text(d.net_contents)],['Package type',text(d.package_type)],['Package material',text(d.package_material)],
+    ['Proof / ABV',b.proof],['Bottle size',b.size||text(d.net_contents)||text(d.package_size)],['Package type',text(d.package_type)],['Package material',text(d.package_material)],
     ['SKU',text(d.sku)],['UPC / EAN',text(d.upc_ean)],['Age statement',text(d.age_statement)],['Mash bill',text(d.mash_bill)],['Grain',text(d.grain)],['Agave',text(d.agave_type)],
     ['Production method',text(d.production_method)],['Distillation',text(d.distillation)],['Cask type',text(d.cask_type)],['Cask finish',text(d.cask_finish)],
     ['Barrel number',text(d.barrel_number)],['Batch',text(d.batch)],['Lot code',text(d.lot_code)],['Distilled on',text(d.distilled_on)],['Bottled on',text(d.bottled_on)],
@@ -42,7 +42,7 @@ function factsOf(b: BottleRead): Array<[string, string]> {
     ['Importer',text(d.importer)],['Certifications',text(d.certifications)],['Organic claim',text(d.organic_claim)],['Awards',text(d.awards)],
   ];
   const seen=new Set<string>();
-  return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;});
+  return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;}).map(([label,value])=>{const field=label.toLowerCase().replace(/[^a-z0-9]+/g,'_');const score=fc[field];return [score===undefined?label:`${label} · ${Math.round(score*100)}%`,value] as [string,string];});
 }
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
