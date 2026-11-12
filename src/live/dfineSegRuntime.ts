@@ -1,5 +1,4 @@
 import type { DfineOnnxProviderOptions, DfineSegOnnxProvider } from "./dfineSegOnnxProvider";
-import { DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrity";
 
 export { DFINE_SEG_MODEL_URL, DFINE_SEG_MODEL_SHA256, verifyDfineModelBytes } from "./dfineModelIntegrity";
 
@@ -11,7 +10,5 @@ export { DFINE_SEG_MODEL_URL, DFINE_SEG_MODEL_SHA256, verifyDfineModelBytes } fr
 export async function loadDfineSegOnnxProvider(
   _options: DfineOnnxProviderOptions = {},
 ): Promise<DfineSegOnnxProvider> {
-  void DFINE_SEG_MODEL_URL;
-  void verifyDfineModelBytes;
   throw new Error("D-FINE browser WASM inference is only available on web.");
 }
