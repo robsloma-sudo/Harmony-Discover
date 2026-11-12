@@ -86,7 +86,7 @@ $$;
 \i supabase/migrations/20261112182500_discover_strict_sighting_attach_and_queue_claim.sql
 
 -- The attachment and queue-claim RPCs must be service-role-only.
-do $
+do $phase6$
 begin
   if has_function_privilege('anon', 'public.discover_attach_sighting_to_product(uuid)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.discover_attach_sighting_to_product(uuid)', 'EXECUTE') then
@@ -102,8 +102,7 @@ begin
   if not has_function_privilege('service_role', 'public.discover_claim_enrichment_jobs(text,integer,integer,text[])', 'EXECUTE') then
     raise exception 'service_role must claim enrichment jobs';
   end if;
-end $;
-
+end $phase6$;
 insert into public.product_index(id,brand,product,category)
 values ('10000000-0000-0000-0000-000000000001','Example Spirits','Reposado','tequila');
 insert into public.phg_category_mirror(phg_category_id,name,level)
