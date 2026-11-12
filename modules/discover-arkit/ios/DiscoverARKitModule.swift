@@ -528,7 +528,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       }
       DispatchQueue.main.async { [weak self] in
         guard let self, self.isActive, self.isRecognitionEnabled, self.recognitionGeneration == generation else { return }
-        self.onVisualCandidates(["count": output.count, "timestamp": timestamp, "candidates": output])
+        self.onVisualCandidates(["count": output.count, "timestamp": timestamp, "source": "local", "candidates": output])
       }
     }
   }
