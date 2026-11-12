@@ -45,6 +45,20 @@ function factsOf(b: BottleRead): Array<[string, string]> {
   const aliases:Record<string,string>={brand:'brand','product expression':'product',category:'category','class / designation':'classification','proof / abv':'proof','bottle size':'size',origin:'origin','winery / estate':'winery', 'subregion / ava':'subregion','appellation level':'appellation_level','age statement':'age_statement','cask finish':'cask_finish','barrel number':'barrel_number','lot code':'lot_code','organic claim':'organic_claim','upc / ean':'upc_ean'};
   return rows.filter(([label,value])=>{const key=label.toLowerCase();if(!value||seen.has(key))return false;seen.add(key);return true;}).map(([label,value])=>{const field=aliases[label.toLowerCase()]||label.toLowerCase().replace(/[^a-z0-9]+/g,'_');const score=fc[field];return [score===undefined?label:`${label} · ${Math.round(score*100)}%`,value] as [string,string];});
 }
+const RESEARCH_GROUPS: Array<{ title: string; fields: Array<[string, string]> }> = [
+  { title: 'Identity & SKU', fields: [['Exact expression','product'],['SKU','sku'],['UPC / EAN','upc_ean'],['Package variant','package_type']] },
+  { title: 'Producer & origin', fields: [['Producer','producer'],['Distillery / winery / brewery','distillery'],['Brand owner','brand_owner'],['Country & region','region'],['Appellation','appellation']] },
+  { title: 'Production', fields: [['Ingredients / grapes / agave','grapes'],['Mash bill','mash_bill'],['Production method','production_method'],['Distillation','distillation']] },
+  { title: 'Ageing & release', fields: [['Age statement','age_statement'],['Barrel / cask','cask_type'],['Cask finish','cask_finish'],['Vintage / batch','vintage']] },
+  { title: 'Specifications', fields: [['Proof / ABV','proof'],['Bottle size','size'],['Dosage / residual sugar','dosage'],['Certifications','certifications']] },
+  { title: 'Tasting & provenance', fields: [['Tasting profile','tasting_notes'],['Aroma / palate / finish','aroma'],['Awards','awards'],['Producer history','founding_year']] },
+];
+function researchValue(b: BottleRead, key: string): string {
+  const d = b.details || {};
+  const aliases: Record<string, unknown> = { product: b.product, proof: b.proof, size: b.size, region: d.region || d.subregion || d.country, distillery: d.distillery || d.winery || d.brewery || d.producer, grapes: d.grapes || d.agave_type || d.ingredients, vintage: d.vintage || d.batch };
+  const value = aliases[key] ?? d[key];
+  return Array.isArray(value) ? value.join(', ') : String(value || '');
+}
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
 
@@ -143,6 +157,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
   const [review, setReview] = useState(false);
   const [venue, setVenue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [researchComplete, setResearchComplete] = useState(false);
   const [note, setNote] = useState('');
   const started = useRef<Record<number, true>>({});
 
@@ -200,6 +215,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
           };
         }),
       })));
+      setResearchComplete(true);
       setReview(false); setRemoved(prev => ({ ...prev, ...Object.fromEntries(tally.map(b => [keyOf(b), true as const])) }));
       const researchedFields = result.enriched.reduce((sum, b) => sum + Object.keys(b.details || {}).length, 0);
       setNote(`Saved ${result.saved} bottle${result.saved === 1 ? '' : 's'} · ${researchedFields} researched fields added`);
@@ -216,6 +232,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
         @keyframes hdFlyR{from{opacity:0;transform:translate(-38vw,12vh) scale(.7)}to{opacity:1;transform:none}}
         @keyframes hdRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes hdPulse{0%,100%{opacity:.55}50%{opacity:1}}
+        @media (max-width: 760px){.hd-info-panel,.hd-research-panel{top:31%!important;bottom:112px!important;width:calc(50vw - 18px)!important;padding:8px!important;border-radius:8px!important}.hd-info-panel{left:8px!important}.hd-research-panel{right:8px!important}}
         @media (prefers-reduced-motion: reduce){.hd-fly{animation:none!important}}
       `}</style>
 
@@ -256,7 +273,7 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
       </div>
 
       {facts.length > 0 && (
-        <div key={sideKey} style={{ position: 'absolute', left: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.82)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '10px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+        <div key={sideKey} className="hd-info-panel" style={{ position: 'absolute', left: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.82)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '10px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
           {facts.map(([label, value], i) => (
             <div key={`${label}-${i}`} style={{ display: 'grid', gridTemplateColumns: '38% minmax(0,1fr)', columnGap: 12, alignItems: 'start', padding: '9px 0', borderBottom: '1px solid rgba(153,180,220,.18)' }}>
               <div style={{ ...dim, fontSize: 10, letterSpacing: .45, lineHeight: 1.25 }}>{label}</div>
@@ -266,6 +283,30 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
         </div>
       )}
 
+      {focus && (
+        <div key={sideKey + '-research'} className="hd-research-panel" style={{ position: 'absolute', right: 12, top: '24%', bottom: 92, width: 'min(46vw, 420px)', overflowY: 'auto', overscrollBehavior: 'contain', background: 'rgba(4,8,20,.86)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79,139,255,.35)', borderRadius: 12, padding: '12px 14px', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+          <div style={{ ...word, fontSize: 15, marginBottom: 4 }}>Research targets</div>
+          <div style={{ ...dim, fontSize: 10, lineHeight: 1.4, marginBottom: 12 }}>{saving ? 'Searching trusted sources and matching the exact expression…' : researchComplete ? 'Research results for this saved bottle' : 'Built from the label read. Research runs when you save.'}</div>
+          {RESEARCH_GROUPS.map(group => {
+            const found = group.fields.filter(([, key]) => !!researchValue(focus, key));
+            return <div key={group.title} style={{ marginBottom: 12 }}>
+              <div style={{ ...dim, fontSize: 10, letterSpacing: .8, marginBottom: 5 }}>{group.title.toUpperCase()} · {found.length}/{group.fields.length}</div>
+              {group.fields.map(([label, key]) => {
+                const value = researchValue(focus, key);
+                const state = value ? 'FOUND' : researchComplete ? 'NOT FOUND' : 'QUEUED';
+                return <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', padding: '5px 0', borderBottom: '1px solid rgba(153,180,220,.12)' }}>
+                  <div style={{ ...dim, fontSize: 10, lineHeight: 1.25 }}>{label}</div>
+                  <div style={{ ...word, color: value ? '#7dffb5' : researchComplete ? '#ffd27a' : '#a9bad7', fontSize: 9, whiteSpace: 'nowrap' }}>{state}</div>
+                </div>;
+              })}
+            </div>;
+          })}
+          {(focus.researchSources || []).length > 0 && <div style={{ borderTop: '1px solid rgba(79,139,255,.35)', paddingTop: 9, marginTop: 6 }}>
+            <div style={{ ...word, fontSize: 11, marginBottom: 6 }}>Sources · {focus.researchSources.length}</div>
+            {focus.researchSources.slice(0, 5).map((source, i) => <div key={source.url || i} style={{ ...dim, fontSize: 9, lineHeight: 1.35, marginBottom: 5 }}>{source.title || source.url}</div>)}
+          </div>}
+        </div>
+      )}
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '0 22px max(18px, env(safe-area-inset-bottom))' }}>
         {note ? <div style={{ ...dim, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>{note}</div> : null}
         <div style={{ height: 1, background: '#4f8bff', boxShadow: '0 0 8px #2b56f0', opacity: 0.7, marginBottom: 10 }} />
