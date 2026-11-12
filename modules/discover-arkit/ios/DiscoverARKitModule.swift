@@ -177,10 +177,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
-    let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
-    if shouldSendCloudFrame { lastCloudFrameTime = now }
     guard now - lastVisionFrameTime >= 0.25 else { return }
     lastVisionFrameTime = now
+    let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
+    if shouldSendCloudFrame { lastCloudFrameTime = now }
     let pixelBuffer = frame.capturedImage
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     CVPixelBufferRetain(pixelBuffer)
