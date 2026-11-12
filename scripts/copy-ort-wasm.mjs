@@ -14,4 +14,10 @@ for (const file of files) {
   await copyFile(path.join(source, file), path.join(destination, file));
 }
 
-console.log(`Copied ${files.length} ONNX Runtime Web WASM assets to public/ort`);
+// Metro cannot transform the dynamic-import expression embedded in the ESM
+// entrypoint of onnxruntime-web 1.31.x. Serve its browser UMD bundle as a
+// static asset and load it at runtime from the web camera path instead.
+const browserRuntime = path.join(source, 'ort.min.js');
+await copyFile(browserRuntime, path.join(destination, 'ort.min.js'));
+
+console.log(`Copied ${files.length} ONNX Runtime Web WASM assets and the browser runtime to public/ort`);
