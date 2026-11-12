@@ -38,10 +38,23 @@ function makeSession() {
 }
 function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;state:PhotoState;onPress:()=>void;animate?:boolean;onSequenceComplete?:()=>void}) {
  const progress=useRef(new Animated.Value(0)).current;
+ const waitingSweep=useRef(new Animated.Value(0)).current;
  const [stage,setStage]=useState(0);
  const [sequenceDone,setSequenceDone]=useState(false);
  const onCompleteRef=useRef(onSequenceComplete);
  useEffect(()=>{onCompleteRef.current=onSequenceComplete;},[onSequenceComplete]);
+ // Keep the scanner visibly working while the image is being analyzed.
+ // Previously no animation appeared until OCR returned, making the scan look stalled.
+ useEffect(()=>{
+  if(!animate||state.status!=='reading'||sequenceDone)return;
+  waitingSweep.setValue(0);
+  const loop=Animated.loop(Animated.sequence([
+   Animated.timing(waitingSweep,{toValue:1,duration:1150,useNativeDriver:true}),
+   Animated.timing(waitingSweep,{toValue:0,duration:1150,useNativeDriver:true}),
+  ]));
+  loop.start();
+  return()=>loop.stop();
+ },[animate,state.status,sequenceDone,waitingSweep]);
  useEffect(()=>{
   if(!animate||state.status==='error'||(!state.bottles.length&&!state.menu)||sequenceDone)return;
   let alive=true;
@@ -65,6 +78,8 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  const width=primary?Math.max(.08,Math.min(1-x0,primary.box.x1-primary.box.x0)):.5;
  const height=primary?Math.max(.12,Math.min(1-y0,primary.box.y1-primary.box.y0)):.72;
  const bottleFrame={left:(x0*100)+'%',top:(y0*100)+'%',width:(width*100)+'%',height:(height*100)+'%'};
+ const waitingForRead=animate&&state.status==='reading'&&!sequenceDone;
+ const waitingBeamY=waitingSweep.interpolate({inputRange:[0,1],outputRange:[0,260]});
  const showTrace=animate&&!sequenceDone&&stage>0&&state.bottles.length>0;
  const showLabel=showTrace&&stage===2;
  const showPrint=showTrace&&stage===3;
@@ -72,6 +87,7 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  return <Pressable onPress={onPress} style={s.photo}>
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
+  {waitingForRead&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:waitingBeamY}]}]}/>}
   {showTrace&&<>
    <Animated.View pointerEvents="none" style={[s.bottleTrace,bottleFrame,{opacity:glow,transform:[{scale:drawScale}]}]}>
     <View style={s.bottleNeck}/>
@@ -164,7 +180,7 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
 }
 const s=StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg,paddingTop:8},header:{height:58,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,borderBottomWidth:1,borderBottomColor:C.line},back:{color:C.blue,fontSize:11,fontWeight:'900',letterSpacing:1.2},headerCenter:{alignItems:'center'},kicker:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:2},headline:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1.4,marginTop:4},
- hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.12)'},bottleTrace:{position:'absolute',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:14,elevation:12},bottleNeck:{position:'absolute',top:'-1%',left:'38%',width:'24%',height:'19%',borderWidth:2,borderColor:'#A5D7FF',borderBottomWidth:0,borderTopLeftRadius:7,borderTopRightRadius:7,backgroundColor:'transparent'},bottleShoulders:{position:'absolute',top:'13%',left:'8%',right:'8%',height:'17%',borderTopWidth:2,borderColor:'#75C2FF',borderTopLeftRadius:34,borderTopRightRadius:34},bottleBody:{position:'absolute',top:'27%',left:'1%',right:'1%',bottom:'1%',borderWidth:2,borderColor:'#4F9FFF',borderRadius:28,shadowColor:'#4F9FFF',shadowOpacity:0.9,shadowRadius:8},labelTrace:{position:'absolute',borderWidth:2,borderColor:'#A8D9FF',borderRadius:5,shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:13,elevation:10},printTrace:{position:'absolute',gap:5},printLine:{height:2,width:'100%',borderRadius:2,backgroundColor:'#D8EDFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:7,elevation:6},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
+ hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.12)'},waitingBeam:{position:'absolute',left:0,right:0,top:0,height:2,backgroundColor:'#DDF1FF',shadowColor:'#238BFF',shadowOpacity:1,shadowRadius:14,elevation:10},bottleTrace:{position:'absolute',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:14,elevation:12},bottleNeck:{position:'absolute',top:'-1%',left:'38%',width:'24%',height:'19%',borderWidth:2,borderColor:'#A5D7FF',borderBottomWidth:0,borderTopLeftRadius:7,borderTopRightRadius:7,backgroundColor:'transparent'},bottleShoulders:{position:'absolute',top:'13%',left:'8%',right:'8%',height:'17%',borderTopWidth:2,borderColor:'#75C2FF',borderTopLeftRadius:34,borderTopRightRadius:34},bottleBody:{position:'absolute',top:'27%',left:'1%',right:'1%',bottom:'1%',borderWidth:2,borderColor:'#4F9FFF',borderRadius:28,shadowColor:'#4F9FFF',shadowOpacity:0.9,shadowRadius:8},labelTrace:{position:'absolute',borderWidth:2,borderColor:'#A8D9FF',borderRadius:5,shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:13,elevation:10},printTrace:{position:'absolute',gap:5},printLine:{height:2,width:'100%',borderRadius:2,backgroundColor:'#D8EDFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:7,elevation:6},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
  thumbs:{paddingHorizontal:12,paddingBottom:8,gap:8},thumb:{width:56,height:66,borderWidth:1,borderColor:C.line,borderRadius:8,overflow:'hidden'},thumbOn:{borderColor:C.blue,borderWidth:2},thumbImage:{width:'100%',height:46},thumbLabel:{color:C.muted,textAlign:'center',fontSize:9,paddingTop:2},
  details:{maxHeight:270,borderTopWidth:1,borderTopColor:C.line},detailsContent:{padding:12},product:{color:C.text,fontSize:23,fontWeight:'900',textShadowColor:C.blue,textShadowRadius:10},match:{color:C.green,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginTop:5},empty:{color:C.muted,fontSize:12,lineHeight:18},twoPanels:{flexDirection:'row',gap:10,marginTop:12,alignItems:'flex-start'},factPanel:{flex:1,minWidth:0},researchPanel:{flex:1,minWidth:0,borderLeftWidth:1,borderLeftColor:C.line,paddingLeft:8},panelTitle:{color:C.blue,fontSize:10,fontWeight:'900',letterSpacing:1,marginBottom:8},researchHint:{color:C.muted,fontSize:8,fontWeight:'800',marginBottom:7},fact:{width:'100%',minHeight:38,paddingVertical:7,borderBottomWidth:1,borderBottomColor:C.line},researchRow:{paddingVertical:6,borderBottomWidth:1,borderBottomColor:C.line},researchLabel:{color:C.muted,fontSize:9,lineHeight:12},researchStatus:{fontSize:8,fontWeight:'900',marginTop:3},sourceText:{color:C.muted,fontSize:8,lineHeight:11,marginBottom:5},factLabel:{color:C.blue,fontSize:9,fontWeight:'900',letterSpacing:.6,width:'38%',paddingRight:10},factValue:{color:C.text,fontSize:12,fontWeight:'700',marginTop:0,flex:1},
  note:{color:C.green,fontSize:11,textAlign:'center',paddingVertical:6},footer:{paddingHorizontal:16,paddingTop:10,paddingBottom:24,borderTopWidth:1,borderTopColor:C.line},tally:{color:C.muted,fontSize:9,fontWeight:'900',letterSpacing:1.1},actions:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:8},textAction:{paddingVertical:10},actionText:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1},saveButton:{backgroundColor:C.blue,paddingVertical:12,paddingHorizontal:16,borderRadius:8},saveText:{color:'#061020',fontSize:10,fontWeight:'900',letterSpacing:1},
