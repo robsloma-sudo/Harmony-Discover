@@ -210,7 +210,9 @@ function WebLiveCamera(props: NativeProps) {
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
         const result = await readLiveFrame(jpeg);
         const decodedBarcodes = await barcodePromise;
-        if (disposed) return;
+        // Discard work that completed after the user left scan mode or the
+        // browser backgrounded the camera. Do not publish stale results.
+        if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
@@ -271,7 +273,7 @@ function WebLiveCamera(props: NativeProps) {
           );
           depthEstimator.start();
           depthTimer = window.setInterval(() => {
-            if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
+            if (!disposed && !document.hidden && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
           }, 1700);
         }
 
@@ -296,10 +298,20 @@ function WebLiveCamera(props: NativeProps) {
       if (document.hidden) {
         if (recognitionTimer) window.clearTimeout(recognitionTimer);
         recognitionTimer = 0;
+        if (depthTimer) window.clearInterval(depthTimer);
+        depthTimer = 0;
         stream?.getVideoTracks().forEach(track => { track.enabled = false; });
         return;
       }
       stream?.getVideoTracks().forEach(track => { track.enabled = true; });
+      if (browserDepthRef.current && depthEstimator && !depthTimer) {
+        depthTimer = window.setInterval(() => {
+          const currentVideo = videoRef.current;
+          if (!disposed && !document.hidden && currentVideo?.readyState && currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            depthEstimator?.submit(currentVideo);
+          }
+        }, 1700);
+      }
       const video = videoRef.current;
       if (video && video.paused) {
         void video.play().then(() => scheduleRecognition(0)).catch(error => {
