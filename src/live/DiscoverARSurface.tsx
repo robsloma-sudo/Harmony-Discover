@@ -25,6 +25,8 @@ type NativeProps = ViewProps & {
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
+  /** Web only: run the in-browser relative depth model. Off by default (12 Nov audit: its output was unused and it ran every 1.7 s). */
+  browserDepth?: boolean;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
@@ -50,6 +52,8 @@ function WebLiveCamera(props: NativeProps) {
   const recognitionSchedulerRef = useRef<(() => void) | null>(null);
   const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
   callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
+  const browserDepthRef = useRef(!!props.browserDepth);
+  browserDepthRef.current = !!props.browserDepth;
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -247,14 +251,16 @@ function WebLiveCamera(props: NativeProps) {
         video.playsInline = true;
         await video.play();
 
-        depthEstimator = new BrowserDepthEstimator(
-          depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
-          status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
-        );
-        depthEstimator.start();
-        depthTimer = window.setInterval(() => {
-          if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
-        }, 1700);
+        if (browserDepthRef.current) {
+          depthEstimator = new BrowserDepthEstimator(
+            depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
+            status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
+          );
+          depthEstimator.start();
+          depthTimer = window.setInterval(() => {
+            if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
+          }, 1700);
+        }
 
         const verifyFrame = () => {
           if (disposed) return;

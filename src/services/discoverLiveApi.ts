@@ -57,7 +57,7 @@ export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fin
 export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
   const result = await call({
     action: 'save', scan_session_id: scanSessionId, venue_name: venueName,
-    bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details, field_confidence: b.fieldConfidence, research_sources: b.researchSources })),
+    bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details, fieldConfidence: b.fieldConfidence, research_sources: b.researchSources })),
   });
   const enriched = Array.isArray(result.enriched_bottles) ? result.enriched_bottles.map((b: Record<string,unknown>) => ({
     brand: String(b.brand || ''), product: String(b.product || ''),
