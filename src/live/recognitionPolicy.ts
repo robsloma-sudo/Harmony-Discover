@@ -3,6 +3,8 @@ export type LiveRecognitionIntent = {
   reviewingCapture: boolean;
   scanMode: 'bottle' | 'menu' | 'auto';
   activePanel: string | null;
+  /** LiDAR is native-only; opening its diagnostics panel on web must not start paid reads. */
+  platform?: 'web' | 'ios' | 'android' | string;
 };
 
 /**
@@ -11,5 +13,6 @@ export type LiveRecognitionIntent = {
  */
 export function shouldEnableLiveRecognition(intent: LiveRecognitionIntent): boolean {
   if (!intent.cameraGranted || intent.reviewingCapture) return false;
+  if (intent.activePanel === 'lidar' && intent.platform === 'web') return intent.scanMode !== 'auto';
   return intent.scanMode !== 'auto' || intent.activePanel === 'inventory' || intent.activePanel === 'lidar';
 }
