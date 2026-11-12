@@ -254,9 +254,14 @@ export function updateWorldSpatialTracks(
 
   // Process the strongest observations first so a weak/ambiguous detection
   // cannot steal the best world-space match from a clearer one.
-  const ordered = [...detections]
-    .filter(detection => [detection.point.x, detection.point.y, detection.point.z, detection.confidence].every(Number.isFinite))
-    .sort((a, b) => b.confidence - a.confidence);
+  const bestBySourceId = new Map<number, WorldSpatialDetection>();
+  for (const detection of detections) {
+    if (![detection.point.x, detection.point.y, detection.point.z, detection.confidence].every(Number.isFinite)) continue;
+    const existing = bestBySourceId.get(detection.trackId);
+    // Preserve the first detection on ties; replace it only with stronger evidence.
+    if (!existing || detection.confidence > existing.confidence) bestBySourceId.set(detection.trackId, detection);
+  }
+  const ordered = [...bestBySourceId.values()].sort((a, b) => b.confidence - a.confidence);
 
   for (const detection of ordered) {
     if (seenSourceIds.has(detection.trackId)) continue;
