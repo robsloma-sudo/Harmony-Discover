@@ -233,11 +233,11 @@ export default function LiveScanner({ photos, onClose, source = 'camera' }: { ph
       </div>
 
       {facts.length > 0 && [left, right].map((col, side) => (
-        <div key={`${sideKey}-${side}`} style={{ position: 'absolute', top: '30%', [side ? 'right' : 'left']: 12, width: '31vw', maxWidth: 190, textAlign: side ? 'right' : 'left', pointerEvents: 'none' }}>
-          {col.slice(0, 6).map(([label, value], i) => (
+        <div key={`${sideKey}-${side}`} style={{ position: 'absolute', top: '28%', bottom: 92, overflowY: 'auto', overscrollBehavior: 'contain', [side ? 'right' : 'left']: 12, width: '31vw', maxWidth: 230, textAlign: side ? 'right' : 'left', pointerEvents: 'auto' }}>
+          {col.map(([label, value], i) => (
             <div key={`${label}-${value}`} className="hd-fly" style={{ marginBottom: 14, animation: `${side ? 'hdFlyR' : 'hdFlyL'} .55s cubic-bezier(.2,.8,.2,1) both`, animationDelay: `${(i * 2 + side) * 0.11}s` }}>
-              <div style={{ ...dim, fontSize: 10, letterSpacing: 0.6 }}>{label}</div>
-              <div style={{ ...word, fontSize: 14, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{value}</div>
+              <div style={{ ...dim, fontSize: 9, letterSpacing: 0.5 }}>{label}</div>
+              <div style={{ ...word, fontSize: 12, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{value}</div>
             </div>
           ))}
         </div>
