@@ -17,8 +17,8 @@ describe('persistent physical bottle tracking', () => {
   it('does not confirm incomplete or low-confidence geometry', () => {
     const tracker = new SpatialBottleTracker();
     const result = tracker.update([{ worldPoint: point(0), confidence: 0.99, geometryComplete: false }], 1000);
-    expect(result.observed[0].state).toBe('potential');
-    expect(result.observed[0].reason).toBe('incomplete_geometry');
+    expect(result.observed[0]?.state).toBe('potential');
+    expect(result.observed[0]?.reason).toBe('incomplete_geometry');
   });
 
   it('preserves a confirmed physical identity during temporary occlusion', () => {
@@ -30,7 +30,7 @@ describe('persistent physical bottle tracking', () => {
     expect(occluded.tracks[0].physicalObjectId).toBe(id);
     expect(occluded.tracks[0].state).toBe('occluded');
     const reacquired = tracker.update([{ worldPoint: point(0.03), confidence: 0.9, geometryComplete: true }], 2600);
-    expect(reacquired.observed[0].physicalObjectId).toBe(id);
+    expect(reacquired.observed[0]!.physicalObjectId).toBe(id);
   });
 
   it('does not merge two separate bottles at different world positions', () => {
@@ -39,7 +39,7 @@ describe('persistent physical bottle tracking', () => {
       { worldPoint: point(0), confidence: 0.9, geometryComplete: true, visualKey: 'same-label' },
       { worldPoint: point(0.8), confidence: 0.9, geometryComplete: true, visualKey: 'same-label' },
     ], 1000);
-    expect(result.observed[0].physicalObjectId).not.toBe(result.observed[1].physicalObjectId);
+    expect(result.observed[0]!.physicalObjectId).not.toBe(result.observed[1]!.physicalObjectId);
   });
 
   it('does not associate a visually conflicting object even when spatially close', () => {
