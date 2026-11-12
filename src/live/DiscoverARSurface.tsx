@@ -5,6 +5,8 @@ import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { grayscaleFrame, propagateMotionTrack, seedMotionFeatures, type GrayFrame, type MotionTrack } from './patchMotionTracker';
+import { associateInstanceMasks, SegmentationRunner, type SegmentationSeed } from './segmentationEngine';
+import { createDfineSegOnnxProvider, type DfineOrtRuntime } from './dfineSegOnnxProvider';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -116,6 +118,8 @@ function WebLiveCamera(props: NativeProps) {
     let recognitionCanvas: HTMLCanvasElement | null = null;
     let recognitionContext: CanvasRenderingContext2D | null = null;
     let recognitionBusy = false;
+    let segmentationRunner: SegmentationRunner | null = null;
+    let segmentationLoading = false;
     type BarcodeDetectorLike = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>> };
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
     let barcodeDetector: BarcodeDetectorLike | null = null;
@@ -125,9 +129,38 @@ function WebLiveCamera(props: NativeProps) {
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
-    type WebTrack = MotionTrack & { id: number; lastSeenAt: number; bottle?: BottleRead; contour?: Array<{ x: number; y: number }> };
+    type WebTrack = MotionTrack & {
+      id: number;
+      lastSeenAt: number;
+      bottle?: BottleRead;
+      contour?: Array<{ x: number; y: number }>;
+      contourReferenceBounds?: { x: number; y: number; width: number; height: number };
+      maskUpdatedAt?: number;
+      maskDetectionConfidence?: number;
+    };
     let webTracks: WebTrack[] = [];
     let nextWebTrackId = 1;
+    const carryContour = (
+      previous: WebTrack,
+      nextBox: { x: number; y: number; width: number; height: number },
+      now: number,
+    ) => {
+      if (!previous.contour?.length || !previous.maskUpdatedAt || now - previous.maskUpdatedAt > 3500 ||
+          previous.width <= 0 || previous.height <= 0 || nextBox.width <= 0 || nextBox.height <= 0) {
+        return { contour: [] as Array<{ x: number; y: number }>, contourReferenceBounds: undefined };
+      }
+      const source = previous.contourReferenceBounds ?? {
+        x: previous.x, y: previous.y, width: previous.width, height: previous.height,
+      };
+      if (source.width <= 0 || source.height <= 0) {
+        return { contour: [] as Array<{ x: number; y: number }>, contourReferenceBounds: undefined };
+      }
+      const contour = previous.contour.map(point => ({
+        x: Number((nextBox.x + ((point.x - source.x) / source.width) * nextBox.width).toFixed(6)),
+        y: Number((nextBox.y + ((point.y - source.y) / source.height) * nextBox.height).toFixed(6)),
+      }));
+      return { contour, contourReferenceBounds: nextBox };
+    };
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
       const right = Math.min(a.x + a.width, b.x + b.width), bottom = Math.min(a.y + a.height, b.y + b.height);
@@ -154,22 +187,32 @@ function WebLiveCamera(props: NativeProps) {
         if (bestIndex >= 0) used.add(bestIndex);
         const blend = previous ? 0.38 : 1;
         const id = previous?.id ?? nextWebTrackId++;
-        const track: WebTrack = {
-          id,
-          trackId: id,
+        const nextBox = {
           x: previous ? previous.x * (1 - blend) + detection.x * blend : detection.x,
           y: previous ? previous.y * (1 - blend) + detection.y * blend : detection.y,
           width: previous ? previous.width * (1 - blend) + detection.width * blend : detection.width,
           height: previous ? previous.height * (1 - blend) + detection.height * blend : detection.height,
+        };
+        const carried = previous ? carryContour(previous, nextBox, now) : {
+          contour: [] as Array<{ x: number; y: number }>,
+          contourReferenceBounds: undefined,
+        };
+        const track: WebTrack = {
+          id,
+          trackId: id,
+          ...nextBox,
           confidence: detection.confidence,
           lastSeenAt: now,
           misses: 0,
           features: [],
           bottle: detection.bottle,
+          ...carried,
+          maskUpdatedAt: previous?.maskUpdatedAt,
+          maskDetectionConfidence: previous?.maskDetectionConfidence,
         };
         if (seedFrame) track.features = seedMotionFeatures(seedFrame, track);
         next.push(track);
-        return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence };
+        return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle, contour: track.contour };
       });
       webTracks.forEach((track, index) => {
         if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
@@ -229,7 +272,16 @@ function WebLiveCamera(props: NativeProps) {
         webTracks = webTracks
           .map((track): WebTrack => {
             const propagated = propagateMotionTrack(track, frame);
-            return { ...track, ...propagated, id: track.id, lastSeenAt: propagated.misses === 0 ? Date.now() : track.lastSeenAt };
+            const carried = carryContour(track, {
+              x: propagated.x, y: propagated.y, width: propagated.width, height: propagated.height,
+            }, Date.now());
+            return {
+              ...track,
+              ...propagated,
+              ...carried,
+              id: track.id,
+              lastSeenAt: propagated.misses === 0 ? Date.now() : track.lastSeenAt,
+            };
           })
           .filter((track): track is WebTrack => track.misses < 12 && track.confidence >= 0.12);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
@@ -252,11 +304,42 @@ function WebLiveCamera(props: NativeProps) {
       trackingTimer = 0;
     };
 
+    const ensureSegmentationRunner = async () => {
+      if (disposed || segmentationRunner || segmentationLoading) return;
+      segmentationLoading = true;
+      try {
+        const ort = await import('onnxruntime-web');
+        if (disposed) return;
+        const provider = await createDfineSegOnnxProvider(
+          ort as unknown as DfineOrtRuntime,
+          '/models/dfine_seg_n_coco.onnx',
+          { inputSize: 640, minimumScore: 0.5, modelId: 'dfine-seg-n-coco' },
+        );
+        const runner = new SegmentationRunner(provider, {
+          minimumIntervalMs: 1000,
+          maximumFrameAgeMs: 3000,
+          maximumTracksPerFrame: 8,
+        });
+        if (disposed) {
+          await runner.dispose();
+          return;
+        }
+        segmentationRunner = runner;
+      } catch (error) {
+        // Segmentation is an enhancement: cloud bottle recognition must remain
+        // available if model download, WASM initialization, or inference fails.
+        console.warn('[Discover] D-FINE segmentation unavailable', error);
+      } finally {
+        segmentationLoading = false;
+      }
+    };
+
     // Keep a single request in flight and pace requests by start time, not by
     // adding a full delay after the provider response. This stays below the
     // server's 30/minute limit even when inference is fast.
     const scheduleRecognition = (delay = recognitionIntervalMs) => {
       if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled) return;
+      void ensureSegmentationRunner();
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay);
     };
@@ -294,10 +377,20 @@ function WebLiveCamera(props: NativeProps) {
         const context = recognitionContext;
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        const frameTimestampMs = Date.now();
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        // Seed local motion features from the exact cropped image sent to cloud
-        // recognition, not a later camera frame captured after the response.
+        // Seed local motion features and segmentation from the exact cropped
+        // frame sent to cloud recognition, not a later camera frame.
         const seedFrame = captureTrackingFrameFromCanvas(canvas);
+        let segmentationPromise: Promise<Awaited<ReturnType<SegmentationRunner['runInference']>>> = Promise.resolve([]);
+        if (segmentationRunner) {
+          try {
+            const segmentationFrame = context.getImageData(0, 0, canvas.width, canvas.height);
+            segmentationPromise = segmentationRunner.runInference(segmentationFrame, frameTimestampMs).catch(() => []);
+          } catch (error) {
+            console.warn('[Discover] Could not capture segmentation frame', error);
+          }
+        }
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
         const result = await readLiveFrame(jpeg);
         const decodedBarcodes = await barcodePromise;
@@ -306,9 +399,52 @@ function WebLiveCamera(props: NativeProps) {
         if (disposed || document.hidden || !callbacksRef.current.recognitionEnabled) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp: frameTimestampMs, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.confidence, bottle: b })), seedFrame);
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: trackedCandidates.length, source: 'cloud', candidates: trackedCandidates } });
+
+        // Run model inference in parallel with the cloud read, then associate
+        // the returned masks to the exact persistent track IDs from this frame.
+        const maskInstances = await segmentationPromise;
+        if (!disposed && !document.hidden && callbacksRef.current.recognitionEnabled && maskInstances.length > 0) {
+          const seeds: SegmentationSeed[] = trackedCandidates.map(candidate => ({
+            trackId: candidate.trackId,
+            bounds: { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height },
+            detectionConfidence: candidate.confidence,
+            sourceTimestampMs: frameTimestampMs,
+          }));
+          const segmented = associateInstanceMasks(seeds, maskInstances);
+          if (segmented.length > 0) {
+            const byTrack = new Map(segmented.map(mask => [mask.trackId, mask]));
+            const seedByTrack = new Map(seeds.map(seed => [seed.trackId, seed]));
+            webTracks = webTracks.map(track => {
+              const mask = byTrack.get(track.id);
+              const seed = seedByTrack.get(track.id);
+              if (!mask || !seed) return track;
+              return {
+                ...track,
+                contour: mask.contour.points,
+                contourReferenceBounds: seed.bounds,
+                maskUpdatedAt: frameTimestampMs,
+                maskDetectionConfidence: mask.detectionConfidence,
+              };
+            });
+            callbacksRef.current.onVisualCandidates?.({ nativeEvent: {
+              count: webTracks.length,
+              source: 'local',
+              candidates: webTracks.map(track => ({
+                trackId: track.id,
+                x: track.x,
+                y: track.y,
+                width: track.width,
+                height: track.height,
+                confidence: track.confidence,
+                bottle: track.bottle,
+                contour: track.contour ?? [],
+              })),
+            } });
+          }
+        }
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
@@ -388,6 +524,8 @@ function WebLiveCamera(props: NativeProps) {
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        segmentationRunner?.reset();
+        webTracks = webTracks.map(track => ({ ...track, contour: [], contourReferenceBounds: undefined }));
         if (recognitionTimer) window.clearTimeout(recognitionTimer);
         recognitionTimer = 0;
         if (depthTimer) window.clearInterval(depthTimer);
@@ -436,6 +574,8 @@ function WebLiveCamera(props: NativeProps) {
       trackingContext = null;
       latestGrayFrame = null;
       webTracks = [];
+      void segmentationRunner?.dispose();
+      segmentationRunner = null;
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
