@@ -16,9 +16,7 @@ on:
       - ".github/workflows/discover-scanner-validation.yml"
   push:
     branches:
-      - release/scanner-settings-mainline-2026-11-11
-      - fix/spatial-frame-sync-2026-11-12
-      - feat/phase4-web-camera-segmentation
+      - main
   workflow_dispatch:
 
 permissions:
@@ -61,8 +59,8 @@ jobs:
       - name: TypeScript validation
         run: npm run typecheck
 
-      - name: Run scanner unit tests
-        run: npx vitest run tests/live-recognition-policy.test.ts tests/overlay-track-association.test.ts tests/spatial-bottle-tracker.test.ts tests/patch-motion-tracker.test.ts tests/tracked-bottle-registry.test.ts tests/mask-contour.test.ts tests/contour-geometry.test.ts tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts tests/dfine-seg-runtime.test.ts tests/bottle-identity-gate.test.ts
+      - name: Run complete unit test suite
+        run: npm run test:all
 
       - name: Export web build
         run: npm run build:web

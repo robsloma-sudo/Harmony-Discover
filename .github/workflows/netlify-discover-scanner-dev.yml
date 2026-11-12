@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - release/scanner-settings-mainline-2026-11-11
+      - integration/release-candidate-2026-11-12
     paths:
       - "app/**"
       - "src/**"

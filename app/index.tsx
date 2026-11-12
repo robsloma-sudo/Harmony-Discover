@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
+import { MaskContourOverlay } from '../src/live/MaskContourOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
@@ -28,13 +29,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const isLandscape = screenWidth > screenHeight;
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
+  const [liveReadConsent, setLiveReadConsent] = useState(false);
+  const [liveReadNoticeDismissed, setLiveReadNoticeDismissed] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captureRequestId, setCaptureRequestId] = useState(0);
   const pendingCapture = useRef<'scan'|'menu_page'|null>(null);
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;contour?:Array<{x:number;y:number}>;bottle?:BottleRead}>>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
@@ -164,7 +167,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <DiscoverARSurface
           style={StyleSheet.absoluteFill}
           active={!!permission.granted && !scanPhotos}
-          recognitionEnabled={shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
+          recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
@@ -193,40 +196,39 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveBottles.length > 0 && (
         <View pointerEvents="none" style={s.liveDetectionLayer}>
-          {liveBottles.slice(0, 8).filter(bottle => bottle.confidence >= 0.58).map((bottle, index) => {
-            const x = Math.max(0, Math.min(1, bottle.box.x0));
-            const y = Math.max(0, Math.min(1, bottle.box.y0));
-            const right = Math.max(x, Math.min(1, bottle.box.x1));
-            const bottom = Math.max(y, Math.min(1, bottle.box.y1));
-            const width = Math.max(0.035, right - x);
-            const height = Math.max(0.045, bottom - y);
-            const candidate = liveCandidates.reduce((best, item) => {
-              const left = Math.max(x, item.x), top = Math.max(y, item.y);
-              const r = Math.min(right, item.x + item.width), b = Math.min(bottom, item.y + item.height);
-              const intersection = Math.max(0, r - left) * Math.max(0, b - top);
-              const union = width * height + item.width * item.height - intersection;
-              const score = union > 0 ? intersection / union : 0;
-              return score > best.score ? { item, score } : best;
-            }, { item: null as typeof liveCandidates[number] | null, score: 0 });
-            // Render only a confirmed temporal track, using its smoothed geometry.
-            if (!candidate.item || candidate.score < 0.08) return null;
-            const tracked = candidate.item;
-            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
+          {liveCandidates.filter(track => track.bottle && track.bottle.confidence >= 0.58).map(tracked => {
+            const bottle = tracked.bottle!;
             const left = Math.max(0, Math.min(1, tracked.x));
             const top = Math.max(0, Math.min(1, tracked.y));
             const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
+            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
             return (
-              <View key={tracked.trackId} style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
-                <View style={s.liveDetectionLabel}>
-                  <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
-                  <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · TRACKED</Text>
+              <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
+                <MaskContourOverlay points={tracked.contour} color="#55D9FF" strokeWidth={2.2} />
+                <View style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
+                  <View style={s.liveDetectionLabel}>
+                    <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
+                    <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · TRACKED</Text>
+                  </View>
                 </View>
               </View>
             );
           })}
         </View>
       )}
+      {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
+        <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
+        <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
+        <View style={{flexDirection:'row',alignItems:'center',gap:9,marginTop:9}}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>{setLiveReadConsent(true);setLiveReadNoticeDismissed(true);}} style={{paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
+            <Text style={{color:'#111',fontSize:9,fontWeight:'900',letterSpacing:0.8}}>ENABLE LIVE RECOGNITION</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Not now, keep live recognition off" onPress={()=>setLiveReadNoticeDismissed(true)} style={{paddingHorizontal:11,paddingVertical:9,borderRadius:8,borderWidth:1,borderColor:C.line}}>
+            <Text style={{color:C.muted,fontSize:9,fontWeight:'800',letterSpacing:0.6}}>NOT NOW</Text>
+          </Pressable>
+        </View>
+      </View>}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
@@ -281,6 +283,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Screen orientation is automatic. Rotate your device to change the layout.')}><Ionicons name="phone-portrait-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Screen orientation</Text><Text style={s.menuDesc}>Automatic · portrait and landscape</Text></View><Text style={s.menuValue}>AUTO</Text></Pressable>
           <Pressable style={s.menuRow} onPress={async()=>{const p=permission?.granted?permission:await requestPermission();setCameraMessage(p.granted?'Camera access is enabled.':'Camera access was not granted. Check iOS Settings.');}}><Ionicons name="camera-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Camera access</Text><Text style={s.menuDesc}>Manage camera permission</Text></View><Text style={s.menuValue}>{permission.granted?'ON':'CHECK'}</Text></Pressable>
+          <Pressable style={s.menuRow} onPress={()=>{setLiveReadConsent(value=>!value);setLiveReadNoticeDismissed(true);}}><Ionicons name="scan-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live recognition uploads</Text><Text style={s.menuDesc}>Allow or pause automatic frame processing</Text></View><Text style={s.menuValue}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Photos are processed only after you select or capture them.')}><Ionicons name="images-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Photo processing</Text><Text style={s.menuDesc}>Review selected photos before processing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('privacy');}}><Ionicons name="shield-checkmark-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Measure & contribution permissions</Text><Text style={s.menuDesc}>Optional research and measurement sharing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <View style={{height:1,backgroundColor:C.line,marginVertical:8}}/>

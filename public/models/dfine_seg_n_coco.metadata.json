@@ -5,6 +5,14 @@
   "upstream_repository": "https://github.com/ArgoHA/D-FINE-seg",
   "upstream_commit": "89ee33abe4b9eeae5f6a1d315bfc30168611da32",
   "package_version": "0.7.0",
+  "license": "Apache-2.0",
+  "license_basis": "The upstream README at the pinned commit explicitly states that COCO detection, instance-segmentation, and keypoint weights are released under Apache-2.0. The non-commercial restriction described upstream applies to separate Cityscapes semantic-segmentation weights, not this COCO instance-segmentation checkpoint.",
+  "training_data": {
+    "dataset": "COCO",
+    "annotation_license": "CC-BY-4.0",
+    "note": "The upstream model-weight license is recorded here; COCO source images retain their respective original source licenses."
+  },
+  "checkpoint_sha256": "064477a85ea102cb2652797987aacecfc7e870a798afb4d848fa7b75b665fdb2",
   "export": {
     "format": "ONNX",
     "precision": "FP32",
@@ -16,6 +24,6 @@
     ],
     "dynamic_input": false
   },
-  "sha256": "999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30",
-  "license_review": "research artifact; verify upstream code, weight, and dataset terms before any redistribution or commercial use"
+  "onnx_sha256": "999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30",
+  "license_review": "COCO instance-segmentation checkpoint; retain upstream Apache-2.0 license and attribution. This is not the separately restricted Cityscapes semantic-segmentation checkpoint."
 }

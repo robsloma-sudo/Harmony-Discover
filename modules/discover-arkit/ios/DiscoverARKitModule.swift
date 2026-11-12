@@ -4,6 +4,11 @@ import SceneKit
 import Vision
 import CoreImage
 import UIKit
+import CoreVideo
+
+private struct SendablePixelBuffer: @unchecked Sendable {
+  let value: CVPixelBuffer
+}
 
 public class DiscoverARKitModule: Module {
   public func definition() -> ModuleDefinition {
@@ -167,12 +172,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     }
     lastCaptureRequestId = requestId
     pendingCaptureRequestId = nil
-    let pixelBuffer = frame.capturedImage
-    CVPixelBufferRetain(pixelBuffer)
+    let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
     let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
-    visionQueue.async { [weak self] in
-      defer { CVPixelBufferRelease(pixelBuffer) }
+    visionQueue.async { [weak self, pixelBufferBox] in
+      let pixelBuffer = pixelBufferBox.value
       let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
       let context = CIContext()
       guard let cgImage = context.createCGImage(image, from: image.extent),
@@ -219,9 +223,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     lastVisionFrameTime = now
     let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
     if shouldSendCloudFrame { lastCloudFrameTime = now }
-    let pixelBuffer = frame.capturedImage
+    let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
+    let pixelBuffer = pixelBufferBox.value
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
-    CVPixelBufferRetain(pixelBuffer)
     let rawWidth = CVPixelBufferGetWidth(pixelBuffer)
     let rawHeight = CVPixelBufferGetHeight(pixelBuffer)
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
@@ -229,12 +233,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let imageWidth = swapsDimensions ? rawHeight : rawWidth
     let imageHeight = swapsDimensions ? rawWidth : rawHeight
 
-    visionQueue.async { [weak self] in
-      defer {
-        CVPixelBufferRelease(pixelBuffer)
-        self?.visionFrameGate.signal()
-      }
+    visionQueue.async { [weak self, pixelBufferBox] in
+      defer { self?.visionFrameGate.signal() }
       guard let self else { return }
+      let pixelBuffer = pixelBufferBox.value
       let textRequest = VNRecognizeTextRequest()
       textRequest.recognitionLevel = .fast
       textRequest.usesLanguageCorrection = false
@@ -244,7 +246,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       barcodeRequest.symbologies = [.ean13, .ean8, .upce, .code128, .code39, .qr]
 
       let classifyRequest = VNClassifyImageRequest()
-      classifyRequest.imageCropAndScaleOption = .centerCrop
       var cloudFrameBase64: String? = nil
       if shouldSendCloudFrame {
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
@@ -322,8 +323,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private func emitDepthFrame(_ frame: ARFrame) {
     guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return }
     guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return }
-    let depthMap = depthData.depthMap
-    let confidenceMap = depthData.confidenceMap
+    guard let depthMap = depthData.depthMap, let confidenceMap = depthData.confidenceMap else {
+      onDepthStatus(["status": "depth_pixel_buffer_unavailable"])
+      return
+    }
     let rawWidth = CVPixelBufferGetWidth(depthMap)
     let rawHeight = CVPixelBufferGetHeight(depthMap)
     guard rawWidth > 0, rawHeight > 0 else { return }
