@@ -37,41 +37,41 @@ function makeSession() {
  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r.toString(16):(r&3|8).toString(16));});
 }
 function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;state:PhotoState;onPress:()=>void;animate?:boolean;onSequenceComplete?:()=>void}) {
- const progress=useRef(new Animated.Value(0)).current;
- const waitingSweep=useRef(new Animated.Value(0)).current;
+ const hardProgress=useRef(new Animated.Value(0)).current;
+ const labelProgress=useRef(new Animated.Value(0)).current;
+ const printProgress=useRef(new Animated.Value(0)).current;
+ const closeProgress=useRef(new Animated.Value(0)).current;
+ const beamProgress=useRef(new Animated.Value(0)).current;
  const [stage,setStage]=useState(0);
  const [sequenceDone,setSequenceDone]=useState(false);
  const onCompleteRef=useRef(onSequenceComplete);
  useEffect(()=>{onCompleteRef.current=onSequenceComplete;},[onSequenceComplete]);
- // Keep the scanner visibly working while the image is being analyzed.
- // Previously no animation appeared until OCR returned, making the scan look stalled.
  useEffect(()=>{
   if(!animate||state.status!=='reading'||sequenceDone)return;
-  waitingSweep.setValue(0);
+  beamProgress.setValue(0);
   const loop=Animated.loop(Animated.sequence([
-   Animated.timing(waitingSweep,{toValue:1,duration:1150,useNativeDriver:true}),
-   Animated.timing(waitingSweep,{toValue:0,duration:1150,useNativeDriver:true}),
+   Animated.timing(beamProgress,{toValue:1,duration:1150,useNativeDriver:true}),
+   Animated.timing(beamProgress,{toValue:0,duration:1150,useNativeDriver:true}),
   ]));
   loop.start();
   return()=>loop.stop();
- },[animate,state.status,sequenceDone,waitingSweep]);
+ },[animate,state.status,sequenceDone,beamProgress]);
  useEffect(()=>{
   if(!animate||state.status==='error'||(!state.bottles.length&&!state.menu)||sequenceDone)return;
   let alive=true;
-  const run=(duration:number)=>new Promise<void>(resolve=>{
-   progress.setValue(0);
-   Animated.timing(progress,{toValue:1,duration,useNativeDriver:true}).start(({finished})=>resolve());
+  const sweep=(value:Animated.Value,duration:number)=>new Promise<void>(resolve=>{
+   value.setValue(0);
+   Animated.timing(value,{toValue:1,duration,useNativeDriver:true}).start(()=>resolve());
   });
   void(async()=>{
-   setStage(1);await run(1450);if(!alive)return;
-   setStage(2);await run(1350);if(!alive)return;
-   setStage(3);await run(900);if(!alive)return;
+   setStage(1);await sweep(hardProgress,1350);if(!alive)return;
+   setStage(2);await sweep(labelProgress,1350);if(!alive)return;
+   setStage(3);await sweep(printProgress,1100);if(!alive)return;
+   setStage(4);await sweep(closeProgress,1400);if(!alive)return;
    setSequenceDone(true);onCompleteRef.current?.();
   })();
-  return()=>{alive=false;progress.stopAnimation();};
- },[animate,state.status,state.bottles.length,Boolean(state.menu),sequenceDone,progress]);
- const glow=progress.interpolate({inputRange:[0,1],outputRange:[0.15,1]});
- const drawScale=progress.interpolate({inputRange:[0,1],outputRange:[0.72,1]});
+  return()=>{alive=false;hardProgress.stopAnimation();labelProgress.stopAnimation();printProgress.stopAnimation();closeProgress.stopAnimation();};
+ },[animate,state.status,state.bottles.length,Boolean(state.menu),sequenceDone,hardProgress,labelProgress,printProgress,closeProgress]);
  const primary=state.bottles[0];
  const x0=primary?Math.max(0,Math.min(1,primary.box.x0)):0.25;
  const y0=primary?Math.max(0,Math.min(1,primary.box.y0)):0.12;
@@ -79,40 +79,47 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  const height=primary?Math.max(.12,Math.min(1-y0,primary.box.y1-primary.box.y0)):.72;
  const bottleFrame={left:(x0*100)+'%',top:(y0*100)+'%',width:(width*100)+'%',height:(height*100)+'%'};
  const waitingForRead=animate&&state.status==='reading'&&!sequenceDone;
- const waitingBeamY=waitingSweep.interpolate({inputRange:[0,1],outputRange:[0,260]});
+ const activeProgress=stage===1?hardProgress:stage===2?labelProgress:stage===3?printProgress:closeProgress;
+ const beamY=activeProgress.interpolate({inputRange:[0,1],outputRange:stage===2||stage===4?[260,0]:[0,260]});
+ const waitingBeamY=beamProgress.interpolate({inputRange:[0,1],outputRange:[0,260]});
  const showTrace=animate&&!sequenceDone&&stage>0&&state.bottles.length>0;
- const showLabel=showTrace&&stage===2;
- const showPrint=showTrace&&stage===3;
  const revealResults=!animate||sequenceDone;
  return <Pressable onPress={onPress} style={s.photo}>
   <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
   {waitingForRead&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:waitingBeamY}]}]}/>}
+  {showTrace&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:beamY}]}]}/>}
   {showTrace&&<>
    <View pointerEvents="none" style={[s.bottleTrace,bottleFrame]}>
-    <Animated.View style={[s.traceNeckTop,{opacity:progress.interpolate({inputRange:[0,.10,.18,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.traceNeckLeft,{transform:[{scaleY:progress.interpolate({inputRange:[0,.08,.20,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceNeckRight,{transform:[{scaleY:progress.interpolate({inputRange:[0,.08,.20,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceShoulderLeft,{transform:[{scaleX:progress.interpolate({inputRange:[0,.18,.36,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceShoulderRight,{transform:[{scaleX:progress.interpolate({inputRange:[0,.30,.48,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceBodyLeft,{transform:[{scaleY:progress.interpolate({inputRange:[0,.38,.62,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceBodyRight,{transform:[{scaleY:progress.interpolate({inputRange:[0,.50,.74,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.traceBase,{transform:[{scaleX:progress.interpolate({inputRange:[0,.68,.88,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceNeckTop,{opacity:hardProgress.interpolate({inputRange:[0,.10,.18,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.traceNeckLeft,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.08,.20,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceNeckRight,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.08,.20,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceShoulderLeft,{transform:[{scaleX:hardProgress.interpolate({inputRange:[0,.18,.36,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceShoulderRight,{transform:[{scaleX:hardProgress.interpolate({inputRange:[0,.30,.48,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceBodyLeft,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.38,.62,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceBodyRight,{transform:[{scaleY:hardProgress.interpolate({inputRange:[0,.50,.74,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.traceBase,{transform:[{scaleX:hardProgress.interpolate({inputRange:[0,.68,.88,1],outputRange:[0,0,1,1]})}]}]}/>
    </View>
    {showLabel&&<View pointerEvents="none" style={[s.labelTrace,{left:(x0*100+width*18)+'%',top:(y0*100+height*39)+'%',width:(width*64)+'%',height:(height*31)+'%'}]}>
-    <Animated.View style={[s.labelTop,{transform:[{scaleX:progress.interpolate({inputRange:[0,.05,.30,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.labelRight,{transform:[{scaleY:progress.interpolate({inputRange:[0,.25,.52,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.labelBottom,{transform:[{scaleX:progress.interpolate({inputRange:[0,.48,.76,1],outputRange:[0,0,1,1]})}]}]}/>
-    <Animated.View style={[s.labelLeft,{transform:[{scaleY:progress.interpolate({inputRange:[0,.70,.96,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.labelTop,{transform:[{scaleX:labelProgress.interpolate({inputRange:[0,.05,.30,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.labelRight,{transform:[{scaleY:labelProgress.interpolate({inputRange:[0,.25,.52,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.labelBottom,{transform:[{scaleX:labelProgress.interpolate({inputRange:[0,.48,.76,1],outputRange:[0,0,1,1]})}]}]}/>
+    <Animated.View style={[s.labelLeft,{transform:[{scaleY:labelProgress.interpolate({inputRange:[0,.70,.96,1],outputRange:[0,0,1,1]})}]}]}/>
    </View>}
    {showPrint&&<View pointerEvents="none" style={[s.printTrace,{left:(x0*100+width*19)+'%',top:(y0*100+height*43)+'%',width:(width*62)+'%'}]}>
-    <Animated.View style={[s.printLine,{opacity:progress.interpolate({inputRange:[0,.10,.34,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.printLine,{opacity:progress.interpolate({inputRange:[0,.36,.62,1],outputRange:[0,0,1,1]})}]}/>
-    <Animated.View style={[s.printLine,{opacity:progress.interpolate({inputRange:[0,.64,.90,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.printLine,{opacity:printProgress.interpolate({inputRange:[0,.10,.34,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.printLine,{opacity:printProgress.interpolate({inputRange:[0,.36,.62,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.printLine,{opacity:printProgress.interpolate({inputRange:[0,.64,.90,1],outputRange:[0,0,1,1]})}]}/>
+   </View>}
+   {stage===4&&<View pointerEvents="none" style={[s.closureTrace,bottleFrame]}>
+    <Animated.View style={[s.closeNeckShoulder,{opacity:closeProgress.interpolate({inputRange:[0,.18,.40,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.closeShoulderBody,{opacity:closeProgress.interpolate({inputRange:[0,.34,.58,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.closeBaseJoin,{opacity:closeProgress.interpolate({inputRange:[0,.54,.78,1],outputRange:[0,0,1,1]})}]}/>
+    <Animated.View style={[s.closeLabelJoin,{opacity:closeProgress.interpolate({inputRange:[0,.72,.94,1],outputRange:[0,0,1,1]})}]}/>
    </View>}
   </>}
-  {revealResults&&state.bottles.map((b,i)=><View key={keyOf(b)+i} style={[s.tag,{left:(((b.box.x0+b.box.x1)/2*100)+'%') as `${number}%`,top:(Math.max(8,b.box.y0*100-2)+'%') as `${number}%`}]}><Text numberOfLines={1} style={[s.tagText,b.state==='unsure'&&{color:C.amber}]}>{b.state==='unsure'?'Unsure':nameOf(b)||'Bottle'}</Text></View>)}
-  <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING PRINT':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
+
+  <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING FINE PRINT':stage===4?'4 · CLOSING BOTTLE GEOMETRY':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
 export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
@@ -194,7 +201,7 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
 }
 const s=StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg,paddingTop:8},header:{height:58,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,borderBottomWidth:1,borderBottomColor:C.line},back:{color:C.blue,fontSize:11,fontWeight:'900',letterSpacing:1.2},headerCenter:{alignItems:'center'},kicker:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:2},headline:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1.4,marginTop:4},
- hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.12)'},waitingBeam:{position:'absolute',left:0,right:0,top:0,height:2,backgroundColor:'#DDF1FF',shadowColor:'#238BFF',shadowOpacity:1,shadowRadius:14,elevation:10},bottleTrace:{position:'absolute',overflow:'visible'},traceNeckTop:{position:'absolute',top:0,left:'38%',width:'24%',height:2,backgroundColor:'#BCE5FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:9,elevation:8},traceNeckLeft:{position:'absolute',top:0,left:'38%',height:'19%',width:2,backgroundColor:'#A5D7FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceNeckRight:{position:'absolute',top:0,right:'38%',height:'19%',width:2,backgroundColor:'#A5D7FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceShoulderLeft:{position:'absolute',top:'18%',left:'8%',width:'30%',height:2,backgroundColor:'#75C2FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceShoulderRight:{position:'absolute',top:'18%',right:'8%',width:'30%',height:2,backgroundColor:'#75C2FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceBodyLeft:{position:'absolute',top:'18%',left:'8%',height:'81%',width:2,backgroundColor:'#4F9FFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:9},traceBodyRight:{position:'absolute',top:'18%',right:'8%',height:'81%',width:2,backgroundColor:'#4F9FFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:9},traceBase:{position:'absolute',bottom:0,left:'8%',width:'84%',height:2,backgroundColor:'#8BCBFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:9},labelTrace:{position:'absolute'},labelTop:{position:'absolute',top:0,left:0,right:0,height:2,backgroundColor:'#C5E8FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},labelRight:{position:'absolute',top:0,right:0,bottom:0,width:2,backgroundColor:'#A8D9FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},labelBottom:{position:'absolute',bottom:0,left:0,right:0,height:2,backgroundColor:'#C5E8FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},labelLeft:{position:'absolute',top:0,left:0,bottom:0,width:2,backgroundColor:'#A8D9FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},printTrace:{position:'absolute',gap:5},printLine:{height:2,width:'100%',borderRadius:2,backgroundColor:'#D8EDFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:7,elevation:6},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
+ hero:{flex:1,minHeight:180,padding:12},photo:{flex:1,width:'100%',height:'100%',overflow:'hidden',borderWidth:1,borderColor:C.line,borderRadius:14,backgroundColor:'#091126'},tint:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(4,12,42,.12)'},waitingBeam:{position:'absolute',left:0,right:0,top:0,height:2,backgroundColor:'#DDF1FF',shadowColor:'#238BFF',shadowOpacity:1,shadowRadius:14,elevation:10},bottleTrace:{position:'absolute',overflow:'visible'},traceNeckTop:{position:'absolute',top:0,left:'38%',width:'24%',height:2,backgroundColor:'#BCE5FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:9,elevation:8},traceNeckLeft:{position:'absolute',top:0,left:'38%',height:'19%',width:2,backgroundColor:'#A5D7FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceNeckRight:{position:'absolute',top:0,right:'38%',height:'19%',width:2,backgroundColor:'#A5D7FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceShoulderLeft:{position:'absolute',top:'18%',left:'8%',width:'30%',height:2,backgroundColor:'#75C2FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceShoulderRight:{position:'absolute',top:'18%',right:'8%',width:'30%',height:2,backgroundColor:'#75C2FF',shadowColor:'#278BFF',shadowOpacity:1,shadowRadius:8},traceBodyLeft:{position:'absolute',top:'18%',left:'8%',height:'81%',width:2,backgroundColor:'#4F9FFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:9},traceBodyRight:{position:'absolute',top:'18%',right:'8%',height:'81%',width:2,backgroundColor:'#4F9FFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:9},traceBase:{position:'absolute',bottom:0,left:'8%',width:'84%',height:2,backgroundColor:'#8BCBFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:9},labelTrace:{position:'absolute'},labelTop:{position:'absolute',top:0,left:0,right:0,height:2,backgroundColor:'#C5E8FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},labelRight:{position:'absolute',top:0,right:0,bottom:0,width:2,backgroundColor:'#A8D9FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},labelBottom:{position:'absolute',bottom:0,left:0,right:0,height:2,backgroundColor:'#C5E8FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},labelLeft:{position:'absolute',top:0,left:0,bottom:0,width:2,backgroundColor:'#A8D9FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:8},closureTrace:{position:'absolute',overflow:'visible'},closeNeckShoulder:{position:'absolute',top:'17%',left:'36%',width:'28%',height:2,backgroundColor:'#E1F5FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:10},closeShoulderBody:{position:'absolute',top:'27%',left:'8%',width:'84%',height:2,backgroundColor:'#C6E9FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:10},closeBaseJoin:{position:'absolute',bottom:'1%',left:'4%',width:'92%',height:2,backgroundColor:'#E1F5FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:10},closeLabelJoin:{position:'absolute',top:'54%',left:'18%',width:'64%',height:2,backgroundColor:'#E1F5FF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:10},printTrace:{position:'absolute',gap:5},printLine:{height:2,width:'100%',borderRadius:2,backgroundColor:'#D8EDFF',shadowColor:'#4F9FFF',shadowOpacity:1,shadowRadius:7,elevation:6},tag:{position:'absolute',maxWidth:'80%',transform:[{translateX:-40}],paddingHorizontal:8,paddingVertical:4,backgroundColor:'rgba(5,10,28,.85)',borderRadius:6,borderWidth:1,borderColor:C.line},tagText:{color:C.text,fontSize:10,fontWeight:'800',textShadowColor:C.blue,textShadowRadius:8},photoStatus:{position:'absolute',left:10,right:10,bottom:10,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'rgba(5,10,28,.82)',padding:7,borderRadius:8},statusText:{color:C.text,fontSize:9,fontWeight:'900',letterSpacing:1},
  thumbs:{paddingHorizontal:12,paddingBottom:8,gap:8},thumb:{width:56,height:66,borderWidth:1,borderColor:C.line,borderRadius:8,overflow:'hidden'},thumbOn:{borderColor:C.blue,borderWidth:2},thumbImage:{width:'100%',height:46},thumbLabel:{color:C.muted,textAlign:'center',fontSize:9,paddingTop:2},
  details:{maxHeight:270,borderTopWidth:1,borderTopColor:C.line},detailsContent:{padding:12},product:{color:C.text,fontSize:23,fontWeight:'900',textShadowColor:C.blue,textShadowRadius:10},match:{color:C.green,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginTop:5},empty:{color:C.muted,fontSize:12,lineHeight:18},twoPanels:{flexDirection:'row',gap:10,marginTop:12,alignItems:'flex-start'},factPanel:{flex:1,minWidth:0},researchPanel:{flex:1,minWidth:0,borderLeftWidth:1,borderLeftColor:C.line,paddingLeft:8},panelTitle:{color:C.blue,fontSize:10,fontWeight:'900',letterSpacing:1,marginBottom:8},researchHint:{color:C.muted,fontSize:8,fontWeight:'800',marginBottom:7},fact:{width:'100%',minHeight:38,paddingVertical:7,borderBottomWidth:1,borderBottomColor:C.line},researchRow:{paddingVertical:6,borderBottomWidth:1,borderBottomColor:C.line},researchLabel:{color:C.muted,fontSize:9,lineHeight:12},researchStatus:{fontSize:8,fontWeight:'900',marginTop:3},sourceText:{color:C.muted,fontSize:8,lineHeight:11,marginBottom:5},factLabel:{color:C.blue,fontSize:9,fontWeight:'900',letterSpacing:.6,width:'38%',paddingRight:10},factValue:{color:C.text,fontSize:12,fontWeight:'700',marginTop:0,flex:1},
  note:{color:C.green,fontSize:11,textAlign:'center',paddingVertical:6},footer:{paddingHorizontal:16,paddingTop:10,paddingBottom:24,borderTopWidth:1,borderTopColor:C.line},tally:{color:C.muted,fontSize:9,fontWeight:'900',letterSpacing:1.1},actions:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:8},textAction:{paddingVertical:10},actionText:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1},saveButton:{backgroundColor:C.blue,paddingVertical:12,paddingHorizontal:16,borderRadius:8},saveText:{color:'#061020',fontSize:10,fontWeight:'900',letterSpacing:1},
