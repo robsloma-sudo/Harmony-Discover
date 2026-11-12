@@ -146,7 +146,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
   );
 }
 
-export default function LiveScanner({ photos, onClose, source = 'camera' }: { photos: string[]; onClose: () => void; source?: 'camera' | 'gallery' }) {
+export default function LiveScanner({ photos, onClose, source = 'camera', mode = 'auto' }: { photos: string[]; onClose: () => void; source?: 'camera' | 'gallery'; mode?: 'bottle' | 'menu' | 'auto' }) {
   const uris = useMemo(() => photos.slice(0, MAX_PHOTOS), [photos]);
   const many = uris.length > 1;
   const { addPages } = useScan();
