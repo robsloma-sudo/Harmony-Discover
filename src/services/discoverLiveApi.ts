@@ -9,6 +9,7 @@ export type BottleRead = {
   words: string[];
   brand: string; product: string; category: string;
   proof: string; size: string; origin: string; confidence: number;
+  fieldConfidence: Record<string, number>;
   details: Record<string, string | string[]>;
   match: { id: string; brand: string | null; product: string | null; score: number } | null;
   state: BottleState;
