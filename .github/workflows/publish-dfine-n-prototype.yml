@@ -38,7 +38,9 @@ jobs:
           set -euo pipefail
           MODEL="model-artifacts/dfine_seg_n_coco.onnx"
           test -s "$MODEL"
-          sha256sum -c model-artifacts/dfine_seg_n_coco.onnx.sha256
+          EXPECTED_SHA="$(awk '{print $1}' model-artifacts/dfine_seg_n_coco.onnx.sha256)"
+          ACTUAL_SHA="$(sha256sum "$MODEL" | awk '{print $1}')"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
           cat > model-artifacts/dfine_seg_graph_contract.json <<'JSON'
           {
             "graph_name": "D-FINE-seg-N COCO instance segmentation",
