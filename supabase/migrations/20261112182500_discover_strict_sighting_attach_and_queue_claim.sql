@@ -40,11 +40,23 @@ begin
     nullif(btrim(coalesce(s.read_proof, '')), '') is not null or
     nullif(btrim(coalesce(s.read_size, '')), '') is not null or s.read_vintage is not null or
     nullif(btrim(coalesce(details ->> 'package_size', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'package_type', '')), '') is not null or
     nullif(btrim(coalesce(details ->> 'sku', '')), '') is not null or
     nullif(btrim(coalesce(details ->> 'barcode', '')), '') is not null or
     nullif(btrim(coalesce(details ->> 'upc_ean', '')), '') is not null or
     nullif(btrim(coalesce(details ->> 'batch', '')), '') is not null or
-    nullif(btrim(coalesce(details ->> 'lot_code', '')), '') is not null;
+    nullif(btrim(coalesce(details ->> 'lot_code', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'age_statement', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'cask_finish', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'cask_type', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'barrel_number', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'flavor', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'style', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'appellation', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'appellation_level', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'classification', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'dosage', '')), '') is not null or
+    nullif(btrim(coalesce(details ->> 'residual_sugar', '')), '') is not null;
 
   -- Only a unique exact brand+expression row with independent >=0.90 field reads
   -- can link to the legacy catalog. Fuzzy similarity is candidate retrieval only.
