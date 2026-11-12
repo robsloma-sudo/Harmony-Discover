@@ -71,7 +71,74 @@ async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Pro
   if (!ctx) return null;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.88).split(',')[1] || '';
+  return canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '';
+}
+
+type EnhancementVariant = { name: string; jpeg: string; score: number };
+
+/** Generate a bounded set of local-only label enhancements; original pixels remain untouched. */
+async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant[]> {
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('enhancement_image_load_failed'));
+    image.src = `data:image/jpeg;base64,${base64}`;
+  });
+  const width = image.naturalWidth, height = image.naturalHeight;
+  const source = document.createElement('canvas');
+  source.width = width; source.height = height;
+  const sourceContext = source.getContext('2d', { willReadFrequently: true });
+  if (!sourceContext) return [{ name: 'original', jpeg: base64, score: 0 }];
+  sourceContext.drawImage(image, 0, 0);
+  const original = sourceContext.getImageData(0, 0, width, height);
+  const recipes = [
+    { name: 'shadow-lift', exposure: 1.28, contrast: 1.22, gamma: 0.78, saturation: 1.05, red: 1.08 },
+    { name: 'highlight-control', exposure: 0.92, contrast: 1.38, gamma: 1.08, saturation: 1.12, red: 1.18 },
+    { name: 'red-ink-separation', exposure: 1.08, contrast: 1.28, gamma: 0.92, saturation: 1.65, red: 1.42 },
+    { name: 'luminance-detail', exposure: 1.12, contrast: 1.55, gamma: 0.88, saturation: 0, red: 1 },
+    { name: 'dark-label-recovery', exposure: 1.48, contrast: 1.34, gamma: 0.68, saturation: 1.22, red: 1.12 },
+    { name: 'fine-print-neutral', exposure: 1.02, contrast: 1.72, gamma: 0.96, saturation: 0.82, red: 1 },
+  ];
+  const variants: EnhancementVariant[] = [{ name: 'original', jpeg: base64, score: 0 }];
+  for (const recipe of recipes) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) continue;
+    const frame = context.createImageData(width, height);
+    const src = original.data, dst = frame.data;
+    const mean = new Float64Array(3);
+    for (let p = 0; p < src.length; p += 4) { mean[0] += src[p]; mean[1] += src[p + 1]; mean[2] += src[p + 2]; }
+    const count = Math.max(1, width * height);
+    mean[0] /= count; mean[1] /= count; mean[2] /= count;
+    let sum = 0, sumSq = 0;
+    for (let p = 0; p < src.length; p += 4) {
+      const r0 = src[p], g0 = src[p + 1], b0 = src[p + 2];
+      const lum = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
+      const gamma = (v: number) => 255 * Math.pow(Math.max(0, Math.min(1, v / 255 * recipe.exposure)), recipe.gamma);
+      let r = gamma(r0), g = gamma(g0), b = gamma(b0);
+      r = (r - 128) * recipe.contrast + 128;
+      g = (g - 128) * recipe.contrast + 128;
+      b = (b - 128) * recipe.contrast + 128;
+      if (recipe.saturation === 0) r = g = b = (lum - 128) * recipe.contrast + 128;
+      else {
+        const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        r = y + (r - y) * recipe.saturation;
+        g = y + (g - y) * recipe.saturation;
+        b = y + (b - y) * recipe.saturation;
+      }
+      r = Math.max(0, Math.min(255, r * recipe.red));
+      g = Math.max(0, Math.min(255, g));
+      b = Math.max(0, Math.min(255, b));
+      dst[p] = r; dst[p + 1] = g; dst[p + 2] = b; dst[p + 3] = src[p + 3];
+      const outLum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      sum += outLum; sumSq += outLum * outLum;
+    }
+    const variance = Math.max(0, sumSq / count - Math.pow(sum / count, 2));
+    context.putImageData(frame, 0, 0);
+    variants.push({ name: recipe.name, jpeg: canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '', score: Math.sqrt(variance) });
+  }
+  return variants.filter(v => !!v.jpeg).sort((a, b) => b.score - a.score);
 }
 
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4; menu: MenuGlimpse | null; note: string };
@@ -113,7 +180,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         const gy = -gray[i - EW - 1] - 2 * gray[i - EW] - gray[i - EW + 1] + gray[i + EW - 1] + 2 * gray[i + EW] + gray[i + EW + 1];
         const m = Math.abs(gx) + Math.abs(gy);
         const nx = x / EW, ny = y / EH;
-        const threshold = state.scanStage === 3 ? 42 : state.scanStage === 2 ? 58 : 72;
+        const threshold = state.scanStage >= 3 ? 42 : state.scanStage === 2 ? 58 : 72;
         alpha[i] = m < threshold ? 0 : Math.min(170, (m - threshold) * 0.9);
       }
       const canvas = canvasRef.current; if (!canvas) return;
@@ -123,7 +190,10 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       const shown = new Uint8Array(EH); let lastRow = -1, shownCount = 0; const t0 = performance.now();
       const tick = (now: number) => {
         if (!alive) return;
-        let p = Math.max(0, Math.min(1, (now - t0) / SWEEP_MS)); if (state.scanStage === 2) p = 1 - p; p = p * p * (3 - 2 * p);
+        let p = Math.max(0, Math.min(1, (now - t0) / SWEEP_MS));
+        if (state.scanStage === 2 || state.scanStage === 4) p = 1 - p;
+        if (state.scanStage === 5) { const cycle = ((now - t0) / SWEEP_MS) % 2; p = cycle <= 1 ? cycle : 2 - cycle; }
+        p = p * p * (3 - 2 * p);
         const row = Math.round(p * (EH - 1));
         if (lastRow < 0) lastRow = row;
         const a = Math.min(row, lastRow), b = Math.max(row, lastRow); let dirty = false;
@@ -139,7 +209,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
         }
         if (dirty) ctx.putImageData(out, 0, 0, 0, a, EW, b - a + 1);
         lastRow = row;
-        const working = readingRef.current || (state.scanStage >= 1 && state.scanStage <= 3 && shownCount < EH);
+        const working = readingRef.current || (state.scanStage >= 1 && state.scanStage <= 5 && shownCount < EH);
         if (lineRef.current) lineRef.current.style.opacity = state.status === 'reading' && state.scanStage === 0 ? '1' : '0';
         if (working) raf = requestAnimationFrame(tick);
       };
@@ -155,7 +225,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       <div style={{ position: 'relative', aspectRatio: ratio ? String(ratio) : undefined, maxWidth: '100%', maxHeight: '100%', width: ratio >= 1 ? '100%' : undefined, height: ratio && ratio < 1 ? '100%' : undefined, overflow: 'hidden' }}>
         <img src={uri} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
         <div style={{ ...fill, background: 'rgba(5,10,40,.28)' }} />
-        {state.scanStage >= 1 && state.scanStage <= 3 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 1px rgba(79,139,255,.55)) drop-shadow(0 0 3px rgba(43,86,240,.3))' }} />}
+        {state.scanStage >= 1 && state.scanStage <= 5 && <canvas ref={canvasRef} aria-hidden style={{ ...fill, filter: 'drop-shadow(0 0 1px rgba(79,139,255,.55)) drop-shadow(0 0 3px rgba(43,86,240,.3))' }} />}
         {state.scanStage === 4 && <div aria-hidden style={{ position: 'absolute', left: '50%', top: '12%', transform: 'translateX(-50%)', padding: '5px 9px', border: '1px solid rgba(169,212,255,.45)', borderRadius: 6, background: 'rgba(5,12,30,.58)', color: 'rgba(225,239,255,.9)', fontSize: 10, letterSpacing: 1.4, whiteSpace: 'nowrap', textShadow: '0 0 4px rgba(79,139,255,.35)' }}>FINE-PRINT EXTRACTION</div>}
         {state.scanStage === 0 && <div ref={lineRef} aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 3, marginTop: -1, background: '#bcd4ff', boxShadow: '0 0 8px 2px #4f8bff,0 0 22px 6px #2b56f0,0 0 46px 10px #1d3fd8', opacity: state.status === 'reading' ? 1 : 0, animation: state.status === 'reading' ? 'hdPreScan 4.6s ease-in-out infinite' : 'none', transition: 'opacity .35s' }} />}
         {state.bottles.map((b, i) => {
@@ -199,23 +269,46 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
         await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
         patch(i, { scanStage: 3 });
         await new Promise(resolve => setTimeout(resolve, SWEEP_MS));
-        // Fourth pass: magnify each detected label from the original photo, then ask
-        // the vision model specifically for fine print. Keep the original read if this fails.
+        // Pass 4 magnifies each label. Pass 5 keeps sweeping while local enhancement
+        // variants are generated and the strongest candidates are sent for fine-print OCR.
         patch(i, { scanStage: 4 });
         const fineReads = await Promise.all(result.bottles.slice(0, 4).map(async bottle => {
           try {
             const crop = await makeFinePrintCrop(uris[i], bottle.label_box || null);
-            return crop ? await readLiveFrame(crop, 'fine_print') : null;
-          } catch { return null; }
+            if (!crop) return [];
+            patch(i, { scanStage: 5 });
+            const variants = await makeFinePrintVariants(crop);
+            // Keep the original plus the three highest-contrast enhanced candidates.
+            const selected = [variants.find(v => v.name === 'original'), ...variants.filter(v => v.name !== 'original').slice(0, 3)].filter((v): v is EnhancementVariant => !!v);
+            const reads = await Promise.all(selected.map(async variant => {
+              try {
+                const response = await readLiveFrame(variant.jpeg, 'fine_print');
+                return { name: variant.name, bottles: response.bottles };
+              } catch { return null; }
+            }));
+            return reads.filter((v): v is { name: string; bottles: BottleRead[] } => !!v).flatMap(v => v.bottles.map(read => ({ name: v.name, read })));
+          } catch { return []; }
         }));
         const finalBottles = result.bottles.map((bottle, index) => {
-          const fine = index < 4 ? fineReads[index]?.bottles?.[0] : null;
+          const candidates = fineReads[index] || [];
+          const fine = candidates.map(c => c.read).filter(Boolean).sort((a, b) => {
+            const confidence = (x: BottleRead) => Object.values(x.fieldConfidence || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+            return confidence(b) - confidence(a);
+          })[0];
           if (!fine) return bottle;
           const details = { ...bottle.details };
-          for (const [key, value] of Object.entries(fine.details || {})) if (!details[key] && value) details[key] = value;
+          const fieldConfidence = { ...bottle.fieldConfidence };
+          for (const candidate of candidates.map(c => c.read)) {
+            for (const [key, value] of Object.entries(candidate.details || {})) {
+              if (!value) continue;
+              if (!details[key] || (Number(candidate.fieldConfidence?.[key]) > Number(fieldConfidence[key] || 0))) {
+                details[key] = value;
+                if (candidate.fieldConfidence?.[key] !== undefined) fieldConfidence[key] = candidate.fieldConfidence[key];
+              }
+            }
+          }
           return { ...bottle, details, proof: bottle.proof || fine.proof, size: bottle.size || fine.size, origin: bottle.origin || fine.origin,
-            fieldConfidence: { ...bottle.fieldConfidence, ...Object.fromEntries(Object.entries(fine.fieldConfidence || {}).filter(([key]) => !bottle.details?.[key])) },
-            words: Array.from(new Set([...(bottle.words || []), ...(fine.words || [])])).slice(0, 20) };
+            fieldConfidence, words: Array.from(new Set([...(bottle.words || []), ...candidates.flatMap(c => c.read.words || [])])).slice(0, 30) };
         });
         patch(i, { status: 'done', bottles: finalBottles, visualBottles: [], visualMenu: null, scanStage: 0, menu: result.menu.visible ? result.menu : null });
       } catch (error) {
