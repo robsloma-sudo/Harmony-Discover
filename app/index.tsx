@@ -247,7 +247,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   };
 
   const labelSignalsByBottle = associateLabelSignalsToBottles(liveBottles.map(bottle => bottle.box), liveTextItems, liveBarcodeItems);
-  const overlayTracks = matchDetectionsToTracks(liveBottles.map(bottle => ({ x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 })), liveCandidates);
+  const overlayTracks = Platform.OS === 'web'
+    // The browser tracker preserves detection order for the active seed set,
+    // then appends retained occluded tracks. Use that stable per-result order
+    // so the overlay can follow a bottle after it moves beyond the seed IOU.
+    ? liveCandidates.slice(0, liveBottles.length).map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height }))
+    : matchDetectionsToTracks(liveBottles.map(bottle => ({ x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 })), liveCandidates);
 
   if (!permission) return <View style={s.loading}><Text style={s.loadingText}>DISCOVER</Text></View>;
 
