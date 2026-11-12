@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
-import { readLiveFrame } from '../services/discoverLiveApi';
+import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 
 export type ARTrackingUpdate = {
