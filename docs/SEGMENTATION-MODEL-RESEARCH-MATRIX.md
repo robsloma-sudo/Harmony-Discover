@@ -46,6 +46,22 @@ Never compare a high-resolution model run against a lower-resolution candidate w
 7. No mask means no bottle silhouette. Never substitute a rectangle or generic motion region as a bottle outline.
 8. Segmentation runs at a bounded cadence, not at the 10 Hz tracking cadence. Keep one in-flight inference per camera session and discard stale results after lifecycle resets.
 
+## D-FINE-seg ONNX integration contract
+
+The upstream ONNX wrapper documents the graph outputs as:
+- labels: [B, K]
+- boxes: [B, K, 4], absolute xyxy coordinates in network-input pixel space
+- scores: [B, K]
+- instance masks: [B, K, Hm, Wm] for the segment task
+
+The upstream Python wrapper then applies confidence filtering, label filtering, NMS, box rescaling, mask resize to original-image dimensions, thresholding, and mask cleanup. The raw browser adapter must not mistake the raw ONNX mask grid for a full-resolution mask.
+
+Discover now has `adaptDfineSegOnnxOutput`, which consumes the raw output tensors, filters the configured COCO bottle class, rescales boxes into normalized camera coordinates, applies same-class NMS, crops low-resolution masks to their corresponding boxes, thresholds them, and returns per-instance crops to the shared association layer. It intentionally avoids expanding every proposal mask to full camera resolution.
+
+Preprocessing assumption in this first adapter: direct resize to the model's fixed input dimensions, with independent x/y normalization back to the original frame. Letterbox preprocessing is not supported by this adapter yet and must not be enabled until the inverse pad/scale transform is implemented and fixture-tested.
+
+The adapter is not a model runtime. The ONNX session, preprocessing pipeline, tensor name/shape discovery, model artifact, and real-camera integration are still outstanding.
+
 ## Current implementation state
 
 - `maskContour.ts`: mask-to-contour extraction and validation.
