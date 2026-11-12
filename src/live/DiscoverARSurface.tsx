@@ -433,13 +433,13 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 }
 
 export function DiscoverARSurface(props: NativeProps) {
-  const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
+  const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; timestamp: number } | null>(null);
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
   return <NativeARView {...props}
     onRecognitionUpdate={event => {
       const value = event.nativeEvent;
-      nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], timestamp: Date.now() };
+      nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], textItems: value.textItems || [], barcodeItems: value.barcodeItems || [], imageWidth: value.imageWidth, imageHeight: value.imageHeight, timestamp: Date.now() };
       props.onRecognitionUpdate?.({ nativeEvent: { ...value, barcodeStatus: 'available' } });
     }}
     onFrame={event => {
@@ -454,6 +454,10 @@ export function DiscoverARSurface(props: NativeProps) {
         props.onRecognitionUpdate?.({ nativeEvent: {
           text: mergedText,
           barcodes: signalsAreFresh ? signals!.barcodes : [],
+          textItems: signalsAreFresh ? signals!.textItems : [],
+          barcodeItems: signalsAreFresh ? signals!.barcodeItems : [],
+          imageWidth: signalsAreFresh ? signals!.imageWidth : undefined,
+          imageHeight: signalsAreFresh ? signals!.imageHeight : undefined,
           classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
           frameTimestamp: Date.now(),
           bottles: result.bottles,
