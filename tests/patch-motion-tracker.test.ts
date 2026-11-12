@@ -68,6 +68,6 @@ describe('browser patch-motion tracker', () => {
   it('converts RGBA image data to grayscale', () => {
     const gray = grayscaleFrame(2, 1, new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255]));
     expect(gray.pixels).toHaveLength(2);
-    expect(gray.pixels[0]).toBeGreaterThan(gray.pixels[1]);
+    expect(gray.pixels[0]).toBeLessThan(gray.pixels[1]);
   });
 });
