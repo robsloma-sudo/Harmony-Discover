@@ -47,7 +47,7 @@ jobs:
       - name: Prepare COCO instance-segmentation configuration
         working-directory: .research/dfine-seg
         env:
-          MODEL_SIZE: ${{ inputs.model_size }}
+          MODEL_SIZE: ${{ inputs.model_size || 'n' }}
         run: |
           dfine init --task segment --model "$MODEL_SIZE" --force
           python "$GITHUB_WORKSPACE/scripts/prepare-dfine-seg-export.py" --size "$MODEL_SIZE" --output-root "$PWD"
@@ -59,7 +59,7 @@ jobs:
       - name: Package model and provenance
         working-directory: .research/dfine-seg
         env:
-          MODEL_SIZE: ${{ inputs.model_size }}
+          MODEL_SIZE: ${{ inputs.model_size || 'n' }}
         run: |
           set -euo pipefail
           MODEL_PATH="$(find output/models -type f -name model.onnx -print -quit)"
@@ -93,7 +93,7 @@ jobs:
       - name: Upload research model artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dfine-seg-${{ inputs.model_size }}-coco-onnx
+          name: dfine-seg-${{ inputs.model_size || 'n' }}-coco-onnx
           path: model-artifacts/
           if-no-files-found: error
           retention-days: 14
