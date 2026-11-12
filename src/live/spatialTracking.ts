@@ -208,3 +208,79 @@ export function arkitOrientationFromRawValue(value: number): ARKitImageOrientati
     default: return null;
   }
 }
+
+
+export type WorldPoint = { x: number; y: number; z: number };
+
+export type WorldSpatialDetection = {
+  trackId: number;
+  point: WorldPoint;
+  confidence: number;
+};
+
+/**
+ * Maintains bottle-centre estimates in ARKit world coordinates across frames.
+ * Rejects implausible jumps instead of dragging an established shelf track to
+ * a bad depth sample or a mismatched 2D association.
+ */
+export function updateWorldSpatialTracks(
+  previous: SpatialTrack[],
+  detections: WorldSpatialDetection[],
+  now: number,
+  options: { smoothing?: number; maxAgeMs?: number; maxJumpMeters?: number } = {},
+): SpatialTrack[] {
+  const alpha = Math.max(0.05, Math.min(1, options.smoothing ?? 0.28));
+  const maxAgeMs = options.maxAgeMs ?? 7000;
+  const maxJumpMeters = options.maxJumpMeters ?? 0.65;
+  const old = new Map(previous.map(track => [track.trackId, track]));
+  const seen = new Set<number>();
+  const next: SpatialTrack[] = [];
+
+  for (const detection of detections) {
+    if (seen.has(detection.trackId)) continue;
+    seen.add(detection.trackId);
+    const target = detection.point;
+    if (![target.x, target.y, target.z, detection.confidence].every(Number.isFinite)) continue;
+    const prior = old.get(detection.trackId);
+    if (!prior) {
+      next.push({
+        trackId: detection.trackId,
+        position: { x: target.x, y: target.y, z: target.z },
+        velocity: { x: 0, y: 0, z: 0 },
+        confidence: detection.confidence,
+        lastSeenAt: now,
+      });
+      continue;
+    }
+
+    const dx = target.x - prior.position.x;
+    const dy = target.y - prior.position.y;
+    const dz = target.z - prior.position.z;
+    const jump = Math.hypot(dx, dy, dz);
+    if (jump > maxJumpMeters) {
+      // Do not refresh lastSeenAt: repeated rejected measurements must not
+      // keep a stale or incorrectly associated object alive indefinitely.
+      if (now - prior.lastSeenAt <= maxAgeMs) next.push(prior);
+      continue;
+    }
+
+    const dt = Math.max(0.001, (now - prior.lastSeenAt) / 1000);
+    const position = {
+      x: prior.position.x + dx * alpha,
+      y: prior.position.y + dy * alpha,
+      z: prior.position.z + dz * alpha,
+    };
+    const velocityAlpha = 0.25;
+    const velocity = {
+      x: prior.velocity.x * (1 - velocityAlpha) + ((position.x - prior.position.x) / dt) * velocityAlpha,
+      y: prior.velocity.y * (1 - velocityAlpha) + ((position.y - prior.position.y) / dt) * velocityAlpha,
+      z: prior.velocity.z * (1 - velocityAlpha) + ((position.z - prior.position.z) / dt) * velocityAlpha,
+    };
+    next.push({ trackId: detection.trackId, position, velocity, confidence: detection.confidence, lastSeenAt: now });
+  }
+
+  for (const track of previous) {
+    if (!seen.has(track.trackId) && now - track.lastSeenAt <= maxAgeMs) next.push(track);
+  }
+  return next;
+}
