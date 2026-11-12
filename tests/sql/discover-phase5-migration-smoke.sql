@@ -241,7 +241,13 @@ begin
   select count(*) into claimed_count from public.discover_claim_enrichment_jobs(
     'smoke-worker-2', 5, 600, array['official_source_lookup']::text[]
   );
-  if claimed_count <> 3 then raise exception 'expected three official-source jobs, got %', claimed_count; end if;
+  if claimed_count <> 1 then raise exception 'only the catalog-exact product may be researched, got %', claimed_count; end if;
+  if (select count(*) from public.discover_enrichment_jobs j
+      join public.discover_products p on p.id=j.discover_product_id
+      where j.job_type='official_source_lookup' and j.status='queued'
+        and p.status in ('candidate','needs_review')) <> 2 then
+    raise exception 'unresolved product research jobs must remain queued until identity review';
+  end if;
 end $$;
 
 -- Expired locks are reclaimable; a worker cannot claim an active lock twice.
