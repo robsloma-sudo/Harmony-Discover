@@ -213,6 +213,7 @@ end $$;
 do $$
 declare
   claimed record;
+  second_claimed record;
   claimed_count integer;
 begin
   select * into claimed from public.discover_claim_enrichment_jobs(
@@ -231,7 +232,18 @@ begin
     'smoke-worker-2', 5, 600, array['official_source_lookup']::text[]
   );
   if claimed_count <> 3 then raise exception 'expected three official-source jobs, got %', claimed_count; end if;
-end $$;
+
+  -- A second worker identity receives a different unlocked identity job.
+  select * into second_claimed from public.discover_claim_enrichment_jobs(
+    'smoke-worker-2', 1, 600, array['identity_match']::text[]
+  );
+  if second_claimed.id is null or second_claimed.id = claimed.id then
+    raise exception 'second worker must claim a distinct identity job';
+  end if;
+  if second_claimed.locked_by <> 'smoke-worker-2' or second_claimed.status <> 'processing' then
+    raise exception 'second worker lock ownership was not recorded';
+  end if;
+end $;
 
 -- Expired locks are reclaimable; a worker cannot claim an active lock twice.
 do $$
@@ -241,9 +253,11 @@ declare
 begin
   update public.discover_enrichment_jobs set status='complete',locked_at=null,locked_by=null
   where job_type='identity_match' and status='queued';
-  update public.discover_enrichment_jobs set locked_at=now()-interval '2 hours'
+  select id into stale_id from public.discover_enrichment_jobs
   where job_type='identity_match' and status='processing'
-  returning id into stale_id;
+  order by created_at asc limit 1;
+  update public.discover_enrichment_jobs set locked_at=now()-interval '2 hours'
+  where id=stale_id;
   select * into reclaimed from public.discover_claim_enrichment_jobs(
     'recovery-worker', 1, 600, array['identity_match']::text[]
   );
