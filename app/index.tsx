@@ -316,7 +316,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const renderBox = record;
             return (
               <Fragment key={renderBox.trackId}>
-              <View style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
+              <View style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%`, ...(record.contour?.length ? { borderWidth: 0, backgroundColor: 'transparent' } : {}) }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
                   <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · READ</Text>
