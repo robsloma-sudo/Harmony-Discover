@@ -87,6 +87,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onCapturedImage = EventDispatcher()
   let onFrame = EventDispatcher()
   private var lastCaptureRequestId = 0
+  private var pendingCaptureRequestId: Int?
   private var lastCloudFrameTime: TimeInterval = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
@@ -154,11 +155,18 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   /// Captures the current ARKit camera image from the same session used for tracking.
   func captureFrame(_ requestId: Int) {
     guard requestId > 0, requestId != lastCaptureRequestId else { return }
-    lastCaptureRequestId = requestId
-    guard isActive, let frame = sceneView.session.currentFrame else {
-      onARError(["message": "The shared AR camera is not ready to capture."])
+    guard isActive else {
+      onARError(["message": "The shared AR camera is paused."])
       return
     }
+    guard let frame = sceneView.session.currentFrame else {
+      // ARKit can mount before its first camera frame. Keep the shutter request
+      // pending and fulfill it from the first session update instead of failing.
+      pendingCaptureRequestId = requestId
+      return
+    }
+    lastCaptureRequestId = requestId
+    pendingCaptureRequestId = nil
     let pixelBuffer = frame.capturedImage
     CVPixelBufferRetain(pixelBuffer)
     let timestamp = frame.timestamp
@@ -197,6 +205,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
   public func session(_ session: ARSession, didUpdate frame: ARFrame) {
     guard isActive else { return }
+    if let pendingRequest = pendingCaptureRequestId {
+      captureFrame(pendingRequest)
+    }
     let now = frame.timestamp
     if now - lastDepthFrameTime >= 0.50 {
       lastDepthFrameTime = now
