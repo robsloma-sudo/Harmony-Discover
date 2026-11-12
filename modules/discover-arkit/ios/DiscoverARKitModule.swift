@@ -39,9 +39,15 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage", "onFrame")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
+      }
+      Prop("recognitionEnabled") { (view: DiscoverARView, enabled: Bool) in
+        view.setRecognitionEnabled(enabled)
+      }
+      Prop("captureRequestId") { (view: DiscoverARView, requestId: Int) in
+        view.captureFrame(requestId)
       }
       AsyncFunction("pause") { (view: DiscoverARView) in
         view.setActive(false)
@@ -68,6 +74,7 @@ public class DiscoverARKitModule: Module {
 /// separately validated vision/geometry pipeline.
 public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var isActive = false
+  private var isRecognitionEnabled = false
   private var lastTrackingState = ""
 
   let onTrackingUpdate = EventDispatcher()
@@ -77,6 +84,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onRecognitionUpdate = EventDispatcher()
   let onDepthEstimate = EventDispatcher()
   let onDepthStatus = EventDispatcher()
+  let onCapturedImage = EventDispatcher()
+  let onFrame = EventDispatcher()
+  private var lastCaptureRequestId = 0
+  private var pendingCaptureRequestId: Int?
+  private var lastCloudFrameTime: TimeInterval = 0
   private let visionQueue = DispatchQueue(label: "com.harmony.discover.vision", qos: .userInitiated)
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
@@ -110,6 +122,14 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     }
   }
 
+  func setRecognitionEnabled(_ enabled: Bool) {
+    guard enabled != isRecognitionEnabled else { return }
+    isRecognitionEnabled = enabled
+    if !enabled {
+      onVisualCandidates(["count": 0, "candidates": []])
+    }
+  }
+
   func setActive(_ active: Bool) {
     guard active != isActive else { return }
     isActive = active
@@ -132,15 +152,73 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     onARReady(["state": "starting"])
   }
 
+  /// Captures the current ARKit camera image from the same session used for tracking.
+  func captureFrame(_ requestId: Int) {
+    guard requestId > 0, requestId != lastCaptureRequestId else { return }
+    guard isActive else {
+      onARError(["message": "The shared AR camera is paused."])
+      return
+    }
+    guard let frame = sceneView.session.currentFrame else {
+      // ARKit can mount before its first camera frame. Keep the shutter request
+      // pending and fulfill it from the first session update instead of failing.
+      pendingCaptureRequestId = requestId
+      return
+    }
+    lastCaptureRequestId = requestId
+    pendingCaptureRequestId = nil
+    let pixelBuffer = frame.capturedImage
+    CVPixelBufferRetain(pixelBuffer)
+    let timestamp = frame.timestamp
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    visionQueue.async { [weak self] in
+      defer { CVPixelBufferRelease(pixelBuffer) }
+      let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+      let context = CIContext()
+      guard let cgImage = context.createCGImage(image, from: image.extent),
+            let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.88) else {
+        DispatchQueue.main.async { [weak self] in
+          self?.onARError(["message": "Could not encode the current AR camera frame."])
+        }
+        return
+      }
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("discover-camera-\(UUID().uuidString).jpg")
+      do {
+        try jpeg.write(to: url, options: .atomic)
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          self.onCapturedImage([
+            "uri": url.absoluteString,
+            "width": cgImage.width,
+            "height": cgImage.height,
+            "timestamp": timestamp
+          ])
+        }
+      } catch {
+        DispatchQueue.main.async { [weak self] in
+          self?.onARError(["message": "Could not save the captured camera frame: \(error.localizedDescription)"])
+        }
+      }
+    }
+  }
+
   public func session(_ session: ARSession, didUpdate frame: ARFrame) {
     guard isActive else { return }
+    if let pendingRequest = pendingCaptureRequestId {
+      captureFrame(pendingRequest)
+    }
     let now = frame.timestamp
-    if now - lastDepthFrameTime >= 0.20 {
+    if now - lastDepthFrameTime >= 0.50 {
       lastDepthFrameTime = now
       emitDepthFrame(frame)
     }
-    guard now - lastVisionFrameTime >= 0.25 else { return }
+    guard isRecognitionEnabled else { return }
+    // Run local OCR/barcode/classification at 2 Hz; cloud bottle identification remains paced at 2.5 seconds.
+    guard now - lastVisionFrameTime >= 0.50 else { return }
     lastVisionFrameTime = now
+    let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
+    if shouldSendCloudFrame { lastCloudFrameTime = now }
     let pixelBuffer = frame.capturedImage
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
     CVPixelBufferRetain(pixelBuffer)
@@ -167,6 +245,23 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
       let classifyRequest = VNClassifyImageRequest()
       classifyRequest.imageCropAndScaleOption = .centerCrop
+      var cloudFrameBase64: String? = nil
+      if shouldSendCloudFrame {
+        let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+        let scale = min(1.0, 960.0 / max(image.extent.width, image.extent.height))
+        let resized = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let context = CIContext()
+        if let cgImage = context.createCGImage(resized, from: resized.extent),
+           let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.62) {
+          cloudFrameBase64 = jpeg.base64EncodedString()
+        }
+      }
+      if let cloudFrameBase64 {
+        DispatchQueue.main.async { [weak self] in
+          guard let self, self.isActive else { return }
+          self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
+        }
+      }
       do {
         try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
           .perform([textRequest, barcodeRequest, classifyRequest])
@@ -187,9 +282,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          self.rectangleOverlay.path = nil
-          self.previousCandidates.removeAll()
-          self.onVisualCandidates(["count": 0, "candidates": []])
           self.onRecognitionUpdate([
             "text": Array(recognizedText),
             "barcodes": Array(barcodes),
@@ -211,9 +303,15 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return }
     let depthMap = depthData.depthMap
     let confidenceMap = depthData.confidenceMap
-    let sourceWidth = CVPixelBufferGetWidth(depthMap)
-    let sourceHeight = CVPixelBufferGetHeight(depthMap)
-    guard sourceWidth > 0, sourceHeight > 0 else { return }
+    let rawWidth = CVPixelBufferGetWidth(depthMap)
+    let rawHeight = CVPixelBufferGetHeight(depthMap)
+    guard rawWidth > 0, rawHeight > 0 else { return }
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    let rotates = orientation == .right || orientation == .left
+    // Rotate the depth/confidence grids into the same upright image orientation
+    // used by the bottle-read JPEG before projecting image-space boxes.
+    let sourceWidth = rotates ? rawHeight : rawWidth
+    let sourceHeight = rotates ? rawWidth : rawHeight
     let outputWidth = 64
     let outputHeight = max(1, Int((Double(sourceHeight) / Double(sourceWidth) * Double(outputWidth)).rounded()))
     CVPixelBufferLockBaseAddress(depthMap, .readOnly)
@@ -227,18 +325,59 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     var meters: [Double] = []; var confidence: [Int] = []
     meters.reserveCapacity(outputWidth * outputHeight); confidence.reserveCapacity(outputWidth * outputHeight)
     for y in 0..<outputHeight {
-      let sy = min(sourceHeight - 1, y * sourceHeight / outputHeight)
+      let orientedY = min(sourceHeight - 1, y * sourceHeight / outputHeight)
       for x in 0..<outputWidth {
-        let sx = min(sourceWidth - 1, x * sourceWidth / outputWidth)
-        let value = depthValues[sy * depthStride + sx]
+        let orientedX = min(sourceWidth - 1, x * sourceWidth / outputWidth)
+        let raw: (x: Int, y: Int)
+        switch orientation {
+        case .right: raw = (orientedY, rawHeight - 1 - orientedX)
+        case .left: raw = (rawWidth - 1 - orientedY, orientedX)
+        case .down: raw = (rawWidth - 1 - orientedX, rawHeight - 1 - orientedY)
+        default: raw = (orientedX, orientedY)
+        }
+        let value = depthValues[raw.y * depthStride + raw.x]
         meters.append(value.isFinite && value > 0 ? Double(value) : 0)
-        confidence.append(Int(confidenceValues[sy * confidenceStride + sx]))
+        confidence.append(Int(confidenceValues[raw.y * confidenceStride + raw.x]))
       }
     }
-    let intrinsics = frame.camera.intrinsics; let transform = frame.camera.transform
-    let intrinsicsValues = (0..<3).flatMap { row in (0..<3).map { column in Double(intrinsics[row, column]) } }
-    let transformValues = (0..<4).flatMap { row in (0..<4).map { column in Double(transform[row, column]) } }
-    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth"]
+
+    // ARCamera intrinsics are expressed in captured-image pixels. Scale them
+    // into the depth grid, rotate them with that grid, then scale to our
+    // compact output grid so normalized bottle boxes unproject correctly.
+    let cameraImageWidth = Double(CVPixelBufferGetWidth(frame.capturedImage))
+    let cameraImageHeight = Double(CVPixelBufferGetHeight(frame.capturedImage))
+    let sx = Double(rawWidth) / max(1, cameraImageWidth)
+    let sy = Double(rawHeight) / max(1, cameraImageHeight)
+    let rawK = frame.camera.intrinsics
+    let fxRaw = Double(rawK[0, 0]) * sx
+    let fyRaw = Double(rawK[1, 1]) * sy
+    let cxRaw = Double(rawK[2, 0]) * sx
+    let cyRaw = Double(rawK[2, 1]) * sy
+    let fxOriented: Double, fyOriented: Double, cxOriented: Double, cyOriented: Double
+    switch orientation {
+    case .right:
+      fxOriented = fyRaw; fyOriented = fxRaw
+      cxOriented = Double(rawHeight) - cyRaw; cyOriented = cxRaw
+    case .left:
+      fxOriented = fyRaw; fyOriented = fxRaw
+      cxOriented = cyRaw; cyOriented = Double(rawWidth) - cxRaw
+    case .down:
+      fxOriented = fxRaw; fyOriented = fyRaw
+      cxOriented = Double(rawWidth) - cxRaw; cyOriented = Double(rawHeight) - cyRaw
+    default:
+      fxOriented = fxRaw; fyOriented = fyRaw
+      cxOriented = cxRaw; cyOriented = cyRaw
+    }
+    let scaleX = Double(outputWidth) / Double(sourceWidth)
+    let scaleY = Double(outputHeight) / Double(sourceHeight)
+    let intrinsicsValues = [
+      fxOriented * scaleX, 0, cxOriented * scaleX,
+      0, fyOriented * scaleY, cyOriented * scaleY,
+      0, 0, 1
+    ]
+    let transform = frame.camera.transform
+    let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
+    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
     DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
   }
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {

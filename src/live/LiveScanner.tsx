@@ -5,9 +5,15 @@ import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead
 import { useScan } from '../state/ScanContext';
 
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; menu: MenuGlimpse | null; note: string };
+
+export type JourneyScanItem = {
+  id: string;
+  kind: 'bottle' | 'menu_item';
+  name: string;
+  subtitle: string;
+};
 const EMPTY: PhotoState = { status: 'reading', bottles: [], menu: null, note: '' };
-const C = { bg:'#050A1C',line:'rgba(79,139,255,.45)',blue:'#4F8BFF',text:'#F2F8FF',muted:'#B8CBE8',brass:'#D8B878',green:'#7DFFB5',amber:'#FFD27A' };
-const CATEGORY: Record<string,string> = { tequila:'Tequila',mezcal:'Mezcal',whiskey:'Whiskey',vodka:'Vodka',gin:'Gin',rum:'Rum',brandy:'Brandy',liqueur:'Liqueur',amaro_aperitivo:'Amaro / aperitivo',vermouth:'Vermouth',wine:'Wine',sparkling:'Sparkling wine',beer:'Beer',cider:'Cider',non_alcoholic:'Non-alcoholic',other:'Other' };
+const C = { bg:'#050A1C',line:'rgba(79,139,255,.45)',blue:'#4F8BFF',text:'#F2F8FF',muted:'#B8CBE8',brass:'#D8B878',green:'#7DFFB5',amber:'#FFD27A' };const CATEGORY: Record<string,string> = { tequila:'Tequila',mezcal:'Mezcal',whiskey:'Whiskey',vodka:'Vodka',gin:'Gin',rum:'Rum',brandy:'Brandy',liqueur:'Liqueur',amaro_aperitivo:'Amaro / aperitivo',vermouth:'Vermouth',wine:'Wine',sparkling:'Sparkling wine',beer:'Beer',cider:'Cider',non_alcoholic:'Non-alcoholic',other:'Other' };
 const clean = (v: unknown) => Array.isArray(v) ? v.join(', ') : String(v || '');
 const nameOf = (b: BottleRead) => [b.match?.brand || b.brand,b.product].filter(Boolean).join(' ');
 const keyOf = (b: BottleRead) => nameOf(b).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
@@ -44,6 +50,8 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  const beamProgress=useRef(new Animated.Value(0)).current;
  const [stage,setStage]=useState(0);
  const [sequenceDone,setSequenceDone]=useState(false);
+ const [frameSize,setFrameSize]=useState({width:0,height:0});
+ const [sourceSize,setSourceSize]=useState({width:0,height:0});
  const onCompleteRef=useRef(onSequenceComplete);
  useEffect(()=>{onCompleteRef.current=onSequenceComplete;},[onSequenceComplete]);
  useEffect(()=>{
@@ -88,19 +96,22 @@ function Photo({uri,state,onPress,animate=false,onSequenceComplete}:{uri:string;
  const revealResults=!animate||sequenceDone;
  const edgeKinds=stage===1?['hard']:stage===2?['hard','label']:['hard','label','print'];
  const detectedEdges=(primary?.edgePaths||[]).filter(edge=>edge.confidence>=0.55&&(edge.inferred?stage===4:edgeKinds.includes(edge.kind)));
- const edgeSegments=detectedEdges.flatMap((edge,edgeIndex)=>edge.points.slice(1).map((point,pointIndex)=>{const prev=edge.points[pointIndex];const dx=point.x-prev.x,dy=point.y-prev.y;return {key:edgeIndex+'-'+pointIndex,left:(prev.x+point.x)*50,top:(prev.y+point.y)*50,length:Math.hypot(dx,dy)*100,angle:Math.atan2(dy,dx)*180/Math.PI,kind:edge.kind,inferred:!!edge.inferred};}));
- return <Pressable onPress={onPress} style={s.photo}>
-  <Image source={{uri}} resizeMode="contain" style={StyleSheet.absoluteFill}/>
+ const containScale=sourceSize.width>0&&sourceSize.height>0&&frameSize.width>0&&frameSize.height>0?Math.min(frameSize.width/sourceSize.width,frameSize.height/sourceSize.height):0;
+ const renderedWidth=sourceSize.width*containScale,renderedHeight=sourceSize.height*containScale;
+ const imageOffsetX=(frameSize.width-renderedWidth)/2,imageOffsetY=(frameSize.height-renderedHeight)/2;
+ const edgeSegments=detectedEdges.flatMap((edge,edgeIndex)=>edge.points.slice(1).map((point,pointIndex)=>{const prev=edge.points[pointIndex];const x1=imageOffsetX+prev.x*renderedWidth,y1=imageOffsetY+prev.y*renderedHeight,x2=imageOffsetX+point.x*renderedWidth,y2=imageOffsetY+point.y*renderedHeight,dx=x2-x1,dy=y2-y1;return {key:edgeIndex+'-'+pointIndex,left:(x1+x2)/2,top:(y1+y2)/2,length:Math.hypot(dx,dy),angle:Math.atan2(dy,dx),kind:edge.kind,inferred:!!edge.inferred};}));
+ return <Pressable onPress={onPress} onLayout={({nativeEvent})=>setFrameSize({width:nativeEvent.layout.width,height:nativeEvent.layout.height})} style={s.photo}>
+  <Image source={{uri}} resizeMode="contain" onLoad={({nativeEvent})=>setSourceSize({width:nativeEvent.source.width,height:nativeEvent.source.height})} style={StyleSheet.absoluteFill}/>
   <View pointerEvents="none" style={s.tint}/>
   {waitingForRead&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:waitingBeamY}]}]}/>}
   {showTrace&&<Animated.View pointerEvents="none" style={[s.waitingBeam,{transform:[{translateY:beamY}]}]}/>}
-  {showTrace&&edgeSegments.map(segment=>{const progress=segment.inferred?closeProgress:segment.kind==='hard'?hardProgress:segment.kind==='label'?labelProgress:printProgress;const revealAt=Math.max(0.04,Math.min(0.96,(stage===2||stage===4)?1-segment.top/100:segment.top/100));const opacity=segment.inferred?progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.72,0.72]}):progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.96,0.96]});return <Animated.View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left+'%',top:segment.top+'%',width:segment.length+'%',opacity,transform:[{translateX:'-50%'},{translateY:'-50%'},{rotate:segment.angle+'deg'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',borderStyle:segment.inferred?'dashed':'solid'}]}/>;})}
+  {showTrace&&edgeSegments.map(segment=>{const progress=segment.inferred?closeProgress:segment.kind==='hard'?hardProgress:segment.kind==='label'?labelProgress:printProgress;const revealAt=Math.max(0.04,Math.min(0.96,(stage===2||stage===4)?1-segment.top/100:segment.top/100));const opacity=segment.inferred?progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.72,0.72]}):progress.interpolate({inputRange:[0,revealAt,Math.min(1,revealAt+0.02),1],outputRange:[0,0,0.96,0.96]});return <Animated.View key={segment.key} pointerEvents="none" style={[s.detectedEdge,{left:segment.left,top:segment.top,width:segment.length,opacity,transform:[{translateX:-segment.length/2},{translateY:-0.75},{rotate:segment.angle+'rad'}],backgroundColor:segment.kind==='hard'?'#72BDFF':segment.kind==='label'?'#C6E8FF':'#F0F8FF',borderStyle:segment.inferred?'dashed':'solid'}]}/>;})}
 
 
   <View style={s.photoStatus}>{state.status==='reading'||(animate&&!sequenceDone)?<><ActivityIndicator size="small" color={C.blue}/><Text style={s.statusText}>{stage===1?'1 · TRACING BOTTLE':stage===2?'2 · TRACING LABEL':stage===3?'3 · READING FINE PRINT':stage===4?'4 · CLOSING BOTTLE GEOMETRY':'IDENTIFYING BOTTLE'}</Text></>:<Text style={s.statusText}>{state.status==='error'?'READ FAILED':state.menu?'MENU FOUND':state.bottles.length+' BOTTLES FOUND'}</Text>}</View>
  </Pressable>;
 }
-export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
+export default function LiveScanner({photos,onClose,onKeepMenu,onJourneyItems,source='camera',mode='auto'}:{photos:string[];onClose:()=>void;onKeepMenu?: (menuPages:string[])=>void;onJourneyItems?:(items:JourneyScanItem[])=>void;source?:'camera'|'gallery';mode?:'bottle'|'menu'|'auto'}) {
  const uris=useMemo(()=>photos.slice(0,6),[photos]);
  const {addPages}=useScan();
  const session=useMemo(()=>makeSession(),[]);
@@ -139,6 +150,32 @@ export default function LiveScanner({photos,onClose,onKeepMenu,source='camera',m
   return Object.values(map);
  },[states,removed]);
  const menuPages=uris.filter((_,i)=>!!states[i]?.menu);
+ useEffect(()=>{
+  const items:JourneyScanItem[]=[];
+  const seen=new Set<string>();
+  states.forEach((photo,index)=>{
+   if(photo.status!=='done')return;
+   photo.bottles.forEach(bottle=>{
+    if(bottle.state==='unsure')return;
+    const name=[bottle.match?.brand||bottle.brand,bottle.product].filter(Boolean).join(' ').trim();
+    if(!name)return;
+    const id='bottle:'+keyOf(bottle);
+    if(seen.has(id))return;
+    seen.add(id);
+    items.push({id,kind:'bottle',name,subtitle:[CATEGORY[bottle.category]||bottle.category,bottle.details?.vintage].filter(Boolean).join(' · ')});
+   });
+   photo.menu?.items.forEach((item,itemIndex)=>{
+    const name=String(item.name||'').trim();
+    if(!name)return;
+    const id='menu:'+name.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if(seen.has(id))return;
+    seen.add(id);
+    items.push({id:id+':'+itemIndex,kind:'menu_item',name,subtitle:[item.type,item.price].filter(Boolean).join(' · ')});
+   });
+  });
+  onJourneyItems?.(items);
+ },[states,removed,onJourneyItems]);
+
  const menuItems=states.reduce((n,x)=>n+(x.menu?.items.length||0),0);
  const current=states[active]||EMPTY;
  const focus=current.bottles.filter(b=>b.state!=='unsure').sort((a,b)=>Math.abs((a.box.x0+a.box.x1)/2-.5)-Math.abs((b.box.x0+b.box.x1)/2-.5))[0];

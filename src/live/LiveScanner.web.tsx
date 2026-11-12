@@ -221,6 +221,7 @@ async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant
   return variants.filter(v => !!v.jpeg).sort((a, b) => b.score - a.score);
 }
 
+type JourneyScanItem = { id: string; kind: 'bottle' | 'menu_item'; name: string; subtitle: string };
 type PhotoState = { status: 'reading' | 'done' | 'error'; bottles: BottleRead[]; visualBottles: BottleRead[]; visualMenu: MenuGlimpse | null; scanStage: 0 | 1 | 2 | 3 | 4 | 5; menu: MenuGlimpse | null; note: string };
 const EMPTY: PhotoState = { status: 'reading', bottles: [], visualBottles: [], visualMenu: null, scanStage: 0, menu: null, note: '' };
 
@@ -319,7 +320,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
   );
 }
 
-export default function LiveScanner({ photos, onClose, source = 'camera', mode = 'auto' }: { photos: string[]; onClose: () => void; source?: 'camera' | 'gallery'; mode?: 'bottle' | 'menu' | 'auto' }) {
+export default function LiveScanner({ photos, onClose, onJourneyItems, source = 'camera', mode = 'auto' }: { photos: string[]; onClose: () => void; onJourneyItems?: (items: JourneyScanItem[]) => void; source?: 'camera' | 'gallery'; mode?: 'bottle' | 'menu' | 'auto' }) {
   const uris = useMemo(() => photos.slice(0, MAX_PHOTOS), [photos]);
   const many = uris.length > 1;
   const { addPages } = useScan();
@@ -411,6 +412,33 @@ export default function LiveScanner({ photos, onClose, source = 'camera', mode =
   const reading = states.filter(s => s.status === 'reading').length;
   const menuPages = uris.filter((_, i) => states[i]?.menu);
   const menuItems = states.reduce((sum, s) => sum + (s.menu?.items.length || 0), 0);
+  useEffect(() => {
+    const items: JourneyScanItem[] = [];
+    const seen = new Set<string>();
+    states.forEach(photo => {
+      if (photo.status !== 'done') return;
+      photo.bottles.forEach(bottle => {
+        if (bottle.state === 'unsure') return;
+        const name = nameOf(bottle).trim();
+        if (!name) return;
+        const key = keyOf(bottle);
+        const id = 'bottle:' + key;
+        if (seen.has(id)) return;
+        seen.add(id);
+        items.push({ id, kind: 'bottle', name, subtitle: [CATEGORY[bottle.category] || bottle.category, bottle.details?.vintage].filter(Boolean).join(' · ') });
+      });
+      photo.menu?.items.forEach((item, index) => {
+        const name = String(item.name || '').trim();
+        if (!name) return;
+        const key = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const id = 'menu:' + key;
+        if (seen.has(id)) return;
+        seen.add(id);
+        items.push({ id: id + ':' + index, kind: 'menu_item', name, subtitle: [item.type, item.price].filter(Boolean).join(' · ') });
+      });
+    });
+    onJourneyItems?.(items);
+  }, [states, onJourneyItems]);
   const cur = open === null ? null : states[open];
   const focus = cur ? cur.bottles.filter(b => b.state !== 'unsure').sort((a, b) => Math.abs((a.box.x0 + a.box.x1) / 2 - 0.5) - Math.abs((b.box.x0 + b.box.x1) / 2 - 0.5))[0] || null : null;
   const showMenu = !!cur && !focus && !!cur.menu;

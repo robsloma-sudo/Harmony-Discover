@@ -1,5 +1,5 @@
 /**
- * Camera-space 3D reconstruction primitives for the Discover web scanner.
+ * Calibrated camera-space and world-space reconstruction primitives for Discover.
  *
  * Inputs must be metric depth in metres from a calibrated depth provider.
  * Relative monocular depth must NOT be passed here as metres.
@@ -9,6 +9,8 @@ export type MetricDepthMap = {
   height: number;
   /** Row-major depth values in metres; invalid samples are 0, NaN, or Infinity. */
   metres: ArrayLike<number>;
+  /** Optional ARKit confidence values: 0=low, 1=medium, 2=high. */
+  confidence?: ArrayLike<number>;
 };
 
 export type CameraIntrinsics = {
@@ -38,7 +40,13 @@ export type SpatialDetection = {
 };
 
 export type SpatialTrack = {
+  /** Stable world-track ID; can survive changes to the detector's 2D ID. */
   trackId: number;
+  /** Most recent detector ID, retained for joining current-frame UI metadata. */
+  sourceTrackId?: number;
+  identityKey?: string;
+  categoryKey?: string;
+  box?: ImageBox;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
   confidence: number;
@@ -58,6 +66,7 @@ function median(values: number[]): number | null {
 /** Samples the inner 50% of a box to reduce background-edge contamination. */
 export function sampleBoxDepth(depth: MetricDepthMap, box: ImageBox): { metres: number; sampleCount: number } | null {
   if (depth.width < 1 || depth.height < 1 || depth.metres.length < depth.width * depth.height) return null;
+  if (depth.confidence && depth.confidence.length < depth.width * depth.height) return null;
   const left = Math.max(0, Math.min(depth.width - 1, Math.floor((box.x0 * 0.75 + box.x1 * 0.25) * depth.width)));
   const right = Math.max(left + 1, Math.min(depth.width, Math.ceil((box.x0 * 0.25 + box.x1 * 0.75) * depth.width)));
   const top = Math.max(0, Math.min(depth.height - 1, Math.floor((box.y0 * 0.75 + box.y1 * 0.25) * depth.height)));
@@ -65,8 +74,10 @@ export function sampleBoxDepth(depth: MetricDepthMap, box: ImageBox): { metres: 
   const values: number[] = [];
   for (let y = top; y < bottom; y++) {
     for (let x = left; x < right; x++) {
-      const value = Number(depth.metres[y * depth.width + x]);
-      if (finitePositive(value) && value <= 100) values.push(value);
+      const index = y * depth.width + x;
+      const value = Number(depth.metres[index]);
+      const confidence = depth.confidence ? Number(depth.confidence[index]) : 1;
+      if (confidence > 0 && finitePositive(value) && value <= 100) values.push(value);
     }
   }
   const value = median(values);
@@ -133,4 +144,238 @@ export function updateSpatialTracks(
     if (!seen.has(track.trackId) && now - track.lastSeenAt <= maxAgeMs) next.push(track);
   }
   return next;
+}
+
+
+export type ARKitImageOrientation = 'up' | 'right' | 'down' | 'left';
+
+/** ARKit's 4x4 camera transform is serialized column-major (simd matrix order). */
+export function cameraPointToWorld(
+  point: CameraSpacePoint,
+  cameraTransform: ArrayLike<number>,
+  imageOrientation: ARKitImageOrientation,
+): { x: number; y: number; z: number } | null {
+  if (cameraTransform.length < 16) return null;
+  const m = Array.from({ length: 16 }, (_, index) => Number(cameraTransform[index]));
+  if (!m.every(Number.isFinite)) return null;
+
+  // Detection unprojection uses the upright scan-image axes (right/up/forward).
+  // Rotate those axes back into ARKit's camera-local basis, whose optical axis
+  // points along -Z, before applying the world-from-camera transform.
+  let cameraX: number;
+  let cameraY: number;
+  switch (imageOrientation) {
+    case 'right':
+      cameraX = -point.y;
+      cameraY = point.x;
+      break;
+    case 'left':
+      cameraX = point.y;
+      cameraY = -point.x;
+      break;
+    case 'down':
+      cameraX = -point.x;
+      cameraY = -point.y;
+      break;
+    default:
+      cameraX = point.x;
+      cameraY = point.y;
+      break;
+  }
+  const cameraZ = -point.z;
+  const world = {
+    x: m[0] * cameraX + m[4] * cameraY + m[8] * cameraZ + m[12],
+    y: m[1] * cameraX + m[5] * cameraY + m[9] * cameraZ + m[13],
+    z: m[2] * cameraX + m[6] * cameraY + m[10] * cameraZ + m[14],
+  };
+  return Object.values(world).every(Number.isFinite) ? world : null;
+}
+
+/** Reads the row-major 3x3 intrinsic matrix emitted in depth-grid pixel units. */
+export function intrinsicsFromARKitDepth(frame: { cameraIntrinsics: ArrayLike<number> }): CameraIntrinsics | null {
+  const k = frame.cameraIntrinsics;
+  if (k.length < 9) return null;
+  const fx = Number(k[0]);
+  const cx = Number(k[2]);
+  const fy = Number(k[4]);
+  const cy = Number(k[5]);
+  if (![fx, fy, cx, cy].every(Number.isFinite) || !finitePositive(fx) || !finitePositive(fy)) return null;
+  return { fx, fy, cx, cy };
+}
+
+
+/** Maps CGImagePropertyOrientation raw values emitted by the native module. */
+export function arkitOrientationFromRawValue(value: number): ARKitImageOrientation | null {
+  switch (value) {
+    case 1: return 'up';
+    case 3: return 'down';
+    case 6: return 'right';
+    case 8: return 'left';
+    default: return null;
+  }
+}
+
+
+export type WorldPoint = { x: number; y: number; z: number };
+
+export type WorldSpatialDetection = {
+  /** Transient 2D detector ID, not a permanent object identity. */
+  trackId: number;
+  point: WorldPoint;
+  confidence: number;
+  /** Stable product/category evidence when available; normalized by caller. */
+  identityKey?: string;
+  categoryKey?: string;
+  /** Current normalized image-space box, used only as a weak tie-breaker. */
+  box?: ImageBox;
+};
+
+/**
+ * Maintains bottle-centre estimates in ARKit world coordinates across frames.
+ * Rejects implausible jumps instead of dragging an established shelf track to
+ * a bad depth sample or a mismatched 2D association.
+ */
+export function updateWorldSpatialTracks(
+  previous: SpatialTrack[],
+  detections: WorldSpatialDetection[],
+  now: number,
+  options: { smoothing?: number; maxAgeMs?: number; maxJumpMeters?: number; reassociationMeters?: number } = {},
+): SpatialTrack[] {
+  const alpha = Math.max(0.05, Math.min(1, options.smoothing ?? 0.28));
+  const maxAgeMs = options.maxAgeMs ?? 7000;
+  const maxJumpMeters = options.maxJumpMeters ?? 0.65;
+  // Bottles on a shelf can be only a few centimetres apart; keep the
+  // default instance-reassociation radius tight to avoid merging neighbours.
+  const reassociationMeters = options.reassociationMeters ?? 0.22;
+  const used = new Set<number>();
+  const seenSourceIds = new Set<number>();
+  const occupiedTrackIds = new Set(previous.map(track => track.trackId));
+  let nextSyntheticId = Math.min(-1, ...previous.map(track => track.trackId - 1));
+  const next: SpatialTrack[] = [];
+  const activePrevious = previous.filter(track => now - track.lastSeenAt <= maxAgeMs);
+
+  // Process the strongest observations first so a weak/ambiguous detection
+  // cannot steal the best world-space match from a clearer one.
+  const bestBySourceId = new Map<number, WorldSpatialDetection>();
+  for (const detection of detections) {
+    if (![detection.point.x, detection.point.y, detection.point.z, detection.confidence].every(Number.isFinite)) continue;
+    const existing = bestBySourceId.get(detection.trackId);
+    // Preserve the first detection on ties; replace it only with stronger evidence.
+    if (!existing || detection.confidence > existing.confidence) bestBySourceId.set(detection.trackId, detection);
+  }
+  const ordered = [...bestBySourceId.values()].sort((a, b) => b.confidence - a.confidence);
+
+  for (const detection of ordered) {
+    if (seenSourceIds.has(detection.trackId)) continue;
+    seenSourceIds.add(detection.trackId);
+    let prior = activePrevious.find(track =>
+      track.trackId === detection.trackId
+      && !used.has(track.trackId)
+      && !(track.categoryKey && detection.categoryKey && track.categoryKey !== detection.categoryKey)
+    );
+
+    // Detector IDs are only temporal 2D IDs. If they change, reassociate by
+    // world-space proximity, predicted motion, and available product evidence.
+    if (!prior) {
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (const candidate of activePrevious) {
+        if (used.has(candidate.trackId)) continue;
+        if (candidate.categoryKey && detection.categoryKey && candidate.categoryKey !== detection.categoryKey) continue;
+        const elapsed = Math.max(0, Math.min(2, (now - candidate.lastSeenAt) / 1000));
+        const predicted = {
+          x: candidate.position.x + candidate.velocity.x * elapsed,
+          y: candidate.position.y + candidate.velocity.y * elapsed,
+          z: candidate.position.z + candidate.velocity.z * elapsed,
+        };
+        const distance = Math.hypot(
+          detection.point.x - predicted.x,
+          detection.point.y - predicted.y,
+          detection.point.z - predicted.z,
+        );
+        if (distance > reassociationMeters) continue;
+        const identityBonus = candidate.identityKey && candidate.identityKey === detection.identityKey ? 0.08 : 0;
+        const identityPenalty = candidate.identityKey && detection.identityKey && candidate.identityKey !== detection.identityKey ? 0.035 : 0;
+        const boxPenalty = candidate.box && detection.box
+          ? 0.04 * (1 - boxIoU(candidate.box, detection.box))
+          : 0.02;
+        const score = distance - identityBonus + identityPenalty + boxPenalty;
+        if (score < bestScore) {
+          bestScore = score;
+          prior = candidate;
+        }
+      }
+    }
+
+    if (!prior) {
+      let stableTrackId = detection.trackId;
+      if (occupiedTrackIds.has(stableTrackId) || used.has(stableTrackId) || next.some(track => track.trackId === stableTrackId)) {
+        while (occupiedTrackIds.has(nextSyntheticId) || used.has(nextSyntheticId) || next.some(track => track.trackId === nextSyntheticId)) nextSyntheticId -= 1;
+        stableTrackId = nextSyntheticId--;
+      }
+      next.push({
+        trackId: stableTrackId,
+        sourceTrackId: detection.trackId,
+        identityKey: detection.identityKey,
+        categoryKey: detection.categoryKey,
+        box: detection.box,
+        position: { x: detection.point.x, y: detection.point.y, z: detection.point.z },
+        velocity: { x: 0, y: 0, z: 0 },
+        confidence: detection.confidence,
+        lastSeenAt: now,
+      });
+      used.add(stableTrackId);
+      continue;
+    }
+
+    used.add(prior.trackId);
+    const dx = detection.point.x - prior.position.x;
+    const dy = detection.point.y - prior.position.y;
+    const dz = detection.point.z - prior.position.z;
+    const jump = Math.hypot(dx, dy, dz);
+    if (jump > maxJumpMeters) {
+      // Keep the previous stable track but do not refresh its timestamp.
+      next.push(prior);
+      continue;
+    }
+
+    const dt = Math.max(0.001, (now - prior.lastSeenAt) / 1000);
+    const position = {
+      x: prior.position.x + dx * alpha,
+      y: prior.position.y + dy * alpha,
+      z: prior.position.z + dz * alpha,
+    };
+    const velocityAlpha = 0.25;
+    const velocity = {
+      x: prior.velocity.x * (1 - velocityAlpha) + ((position.x - prior.position.x) / dt) * velocityAlpha,
+      y: prior.velocity.y * (1 - velocityAlpha) + ((position.y - prior.position.y) / dt) * velocityAlpha,
+      z: prior.velocity.z * (1 - velocityAlpha) + ((position.z - prior.position.z) / dt) * velocityAlpha,
+    };
+    next.push({
+      trackId: prior.trackId,
+      sourceTrackId: detection.trackId,
+      identityKey: detection.identityKey ?? prior.identityKey,
+      categoryKey: detection.categoryKey ?? prior.categoryKey,
+      box: detection.box ?? prior.box,
+      position,
+      velocity,
+      confidence: detection.confidence,
+      lastSeenAt: now,
+    });
+  }
+
+  for (const track of activePrevious) {
+    if (!used.has(track.trackId)) next.push(track);
+  }
+  return next;
+}
+
+/** Intersection-over-union for normalized image boxes; zero for invalid boxes. */
+function boxIoU(a: ImageBox, b: ImageBox): number {
+  const aw = a.x1 - a.x0, ah = a.y1 - a.y0;
+  const bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+  if (![aw, ah, bw, bh].every(value => Number.isFinite(value) && value > 0)) return 0;
+  const intersection = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0))
+    * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const union = aw * ah + bw * bh - intersection;
+  return union > 0 ? intersection / union : 0;
 }
