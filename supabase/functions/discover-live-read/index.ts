@@ -60,7 +60,6 @@ const DETAILS: Record<string, string> = {
   dosage: "dosage as printed for sparkling wine",
   residual_sugar: "residual sugar as printed",
   lot_code: "lot or production code as printed",
-  sku: "SKU or item number printed on the package",
   upc_ean: "UPC or EAN digits only when actually decoded from a barcode",
   label_designation: "other legally meaningful designation or statement printed on the label",
   appellation_level: "appellation level or legal designation as printed",
@@ -279,7 +278,7 @@ Deno.serve(async (req: Request) => {
       const m = found.find((f) => f.q === queries[i]);
       // A fuzzy result is not an identity proof. Require the returned catalogue brand
       // to agree with the printed brand and require a real product/SKU row.
-      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
+      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
       const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
