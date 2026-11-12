@@ -1,0 +1,81 @@
+name: Add ONNX Runtime Web to Discover
+
+on:
+  workflow_run:
+    workflows:
+      - Build D-FINE-seg research model
+    types:
+      - completed
+    branches:
+      - fix/spatial-frame-sync-2026-11-12
+
+concurrency:
+  group: discover-ort-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  install-runtime:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current scanner branch
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/${{ github.event.workflow_run.head_branch }}
+
+      - name: Confirm N model asset exists
+        id: model
+        run: |
+          if [ -f public/models/dfine_seg_n_coco.onnx ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.model.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Add ONNX Runtime Web and WASM build hook
+        if: steps.model.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          npm install onnxruntime-web@latest --save --package-lock-only --no-audit --no-fund
+          node <<'JS'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.scripts['prebuild:web'] = 'node scripts/copy-ort-wasm.mjs';
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          JS
+          npm install --package-lock-only --no-audit --no-fund
+
+      - name: Validate locked runtime and web build
+        if: steps.model.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npx vitest run tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts
+          npm run build:web
+          test -f public/ort/ort-wasm-simd-threaded.wasm || find public/ort -maxdepth 1 -name '*.wasm' -print
+
+      - name: Commit runtime dependency and WASM hook
+        if: steps.model.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "ONNX Runtime Web dependency already current."
+          else
+            git commit -m "build(discover): add ONNX Runtime Web WASM dependency"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
