@@ -93,18 +93,18 @@ Product identity confidence, bottle detection confidence, mask confidence, and p
 
 ## Current phase status
 
-**Not complete.** The mask-to-contour and overlay plumbing exists, but no model/runtime is integrated, no real camera-frame mask has been produced, and no device benchmark has been run. Synthetic mask unit tests are not model validation.
+**Not complete.** Mask-to-contour and overlay plumbing exists. D-FINE model-specific preprocessing, raw output tensor decoding, NMS, crop/resize, and the provider contract are implemented with synthetic fixtures. A GitHub Actions export job is currently building the COCO instance-segmentation ONNX artifact; the scanner typecheck/test/web-export workflow is also running. No actual camera-frame mask has yet been produced, and no physical iPhone benchmark has been run.
 
 ## Immediate implementation sequence
 
-1. Add a provider-neutral segmentation contract and lifecycle scheduler.
-2. Add ONNX Runtime Web dependency and reproducible lockfile update.
-3. Acquire and verify the exact D-FINE-seg-N COCO instance-segmentation ONNX artifact; do not commit an unverified or license-ambiguous model.
-4. Implement preprocessing, output decoding, per-instance mask extraction, and track association against the actual exported graph.
-5. Add fixture-based model-output tests and negative/ambiguous association tests.
-6. Wire accepted contours into the existing persistent track registry.
-7. Run browser CI and obtain physical iPhone Safari measurements.
-8. Compare D-FINE-seg-S and native Vision only after the N baseline is functional.
+1. Complete the active D-FINE-seg COCO ONNX export and retain its artifact + provenance.
+2. Verify the exported graph's real tensor names, ranks, dimensions, and output values against the implemented adapter; adjust from real graph metadata if needed.
+3. Add ONNX Runtime Web as a pinned app dependency and regenerate the lockfile in a network-enabled CI environment.
+4. Load the verified model through the WASM provider and connect bounded frame capture to the live browser camera.
+5. Associate masks with persistent bottle track IDs and render accepted contours only.
+6. Run typecheck, focused tests, full regression, web export, and real-frame parity tests.
+7. Benchmark desktop Chrome and iOS Safari WASM; obtain physical iPhone battery/thermal/latency measurements.
+8. Compare D-FINE-seg-S/M, MobileSAM, SAM 2.1 Tiny, and native Vision after the N baseline works.
 
 ## References
 
