@@ -1,4 +1,4 @@
-import reference from "../../docs/research/journeys-research-profiles.reference.json" with { type: "json" };
+import reference from "../../../docs/research/journeys-research-profiles.reference.json" with { type: "json" };
 
 type Group = { group: string; weight: number; topics: string[]; ask: string };
 type Profile = { label: string; groups: Group[] };
