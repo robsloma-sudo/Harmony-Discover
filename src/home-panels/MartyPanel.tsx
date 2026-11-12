@@ -11,7 +11,7 @@ type Line = { id: string; who: 'you' | 'marty' | 'system'; text: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 
-export function MartyPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettings: () => void; onNavigateCommand: (name: string, args: Record<string, unknown>) => Promise<string> }) {
   const { session } = useAuth();
   const [consent, setConsent] = useState(false);
   const [loadingConsent, setLoadingConsent] = useState(true);
@@ -79,25 +79,15 @@ export function MartyPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
     dcRef.current = null; pcRef.current = null; streamRef.current = null; audioRef.current = null;
   }, []);
 
-  function runMartyNavigationTool(name: string, rawArguments: string): string {
-    let args: any;
-    try { args = JSON.parse(rawArguments || "{}"); } catch { return "I couldn't understand that request."; }
-    const screens: Record<string, string> = { discover: "camera", nearby: "Nearby Atlas", library: "Favorites", taste: "Taste", settings: "Settings" };
-    if (name === "navigate_discover") {
-      const screen = screens[String(args.screen)];
-      return screen
-        ? `I can bring up ${screen} as a panel on the camera screen. I won't navigate away from your viewfinder.`
-        : "That panel is not available.";
-    }
-    if (name === "control_nearby_atlas") {
-      const action = String(args.action);
-      if (action === "set_radius" && [1,5,10,15,20].includes(Number(args.radius_miles))) return "I'll apply that radius in the Nearby Atlas panel on the camera screen.";
-      if (action === "set_category" && ["all","bar","cocktail_bar","restaurant","brewery","winery","distillery"].includes(String(args.category))) return "I'll apply that category in the Nearby Atlas panel on the camera screen.";
-      if (action === "search" && typeof args.search === "string" && args.search.trim()) return "I'll search that phrase in the Nearby Atlas panel on the camera screen.";
-      if (action === "recenter") return "I'll recenter the Nearby Atlas panel on the camera screen.";
-      return "I need a valid radius, category, or search phrase to do that.";
-    }
-    return "That action is not supported.";
+  async function runMartyNavigationTool(name: string, rawArguments: string): Promise<string> {
+    let args: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(rawArguments || "{}");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "I couldn't understand that request.";
+      args = parsed as Record<string, unknown>;
+    } catch { return "I couldn't understand that request."; }
+    try { return await onNavigateCommand(name, args); }
+    catch { return "I couldn't complete that app action. Try the control on screen."; }
   }
 
   async function connectTransport(grant: VoiceSessionGrant) {
@@ -122,10 +112,13 @@ export function MartyPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
         }
         if (data.type === 'conversation.item.input_audio_transcription.completed' && data.transcript) addLine('you', data.transcript);
         if (data.type === 'response.function_call_arguments.done' && typeof data.name === 'string' && typeof data.call_id === 'string') {
-          const result = runMartyNavigationTool(data.name, data.arguments || "{}");
-          addLine('system', result);
-          dc.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: data.call_id, output: result } }));
-          dc.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
+          void (async () => {
+            const result = await runMartyNavigationTool(data.name, data.arguments || "{}");
+            if (dc.readyState !== 'open') return;
+            addLine('system', result);
+            dc.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: data.call_id, output: result } }));
+            dc.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
+          })();
         }
         if (data.type === 'response.output_audio_transcript.done' && data.transcript) addLine('marty', data.transcript);
         if (data.type === 'response.output_audio_transcript.delta' && data.delta) setStatus('MARTY IS SPEAKING');
