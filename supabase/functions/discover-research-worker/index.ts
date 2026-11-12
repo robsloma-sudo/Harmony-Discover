@@ -78,7 +78,7 @@ Deno.serve(async req=>{
       },FIELDS.filter(field=>!clean(((sighting.label_details&&typeof sighting.label_details==="object"?sighting.label_details:{}) as Record<string,unknown>)[field],80)));
       const {data:budgetOk,error:budgetError}=await db.rpc("discover_reserve_bottle_research_budget",{
         p_consumer:job.consumer_id,p_jobs:1,p_search_units:profile.searchUses,
-        p_user_jobs_max:5,p_project_jobs_max:100,p_user_search_max:50,p_project_search_max:1000
+        p_user_jobs_max:5,p_project_jobs_max:100,p_user_search_max:10,p_project_search_max:200
       });
       if(budgetError)throw new Error("research_budget_unavailable");
       if(budgetOk!==true){
