@@ -1,0 +1,96 @@
+name: Build D-FINE-seg research model
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_size:
+        description: D-FINE-seg COCO instance-segmentation size
+        required: true
+        type: choice
+        default: n
+        options:
+          - n
+          - s
+          - m
+          - l
+          - x
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Harmony Discover
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Clone upstream D-FINE-seg
+        run: git clone --depth 1 https://github.com/ArgoHA/D-FINE-seg.git .research/dfine-seg
+
+      - name: Install upstream export dependencies
+        working-directory: .research/dfine-seg
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[export]"
+
+      - name: Prepare COCO instance-segmentation configuration
+        working-directory: .research/dfine-seg
+        env:
+          MODEL_SIZE: ${{ inputs.model_size }}
+        run: |
+          dfine init --task segment --model "$MODEL_SIZE" --force
+          python "$GITHUB_WORKSPACE/scripts/prepare-dfine-seg-export.py" --size "$MODEL_SIZE" --output-root "$PWD"
+
+      - name: Export FP32 ONNX model and run upstream parity check
+        working-directory: .research/dfine-seg
+        run: dfine export
+
+      - name: Package model and provenance
+        working-directory: .research/dfine-seg
+        env:
+          MODEL_SIZE: ${{ inputs.model_size }}
+        run: |
+          set -euo pipefail
+          MODEL_PATH="$(find output/models -type f -name model.onnx -print -quit)"
+          test -n "$MODEL_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/model-artifacts"
+          DEST="$GITHUB_WORKSPACE/model-artifacts/dfine_seg_${MODEL_SIZE}_coco.onnx"
+          cp "$MODEL_PATH" "$DEST"
+          sha256sum "$DEST" > "$DEST.sha256"
+          UPSTREAM_SHA="$(git rev-parse HEAD)"
+          DFINE_VERSION="$(dfine version)"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "model-artifacts"
+          size = os.environ["MODEL_SIZE"]
+          model = root / f"dfine_seg_{size}_coco.onnx"
+          upstream = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          version = subprocess.check_output(["dfine", "version"], text=True).strip()
+          checksum = subprocess.check_output(["sha256sum", str(model)], text=True).split()[0]
+          metadata = {
+              "model": f"D-FINE-seg-{size}",
+              "task": "COCO instance segmentation",
+              "checkpoint": f"dfine_seg_{size}_coco.pt",
+              "upstream_repository": "https://github.com/ArgoHA/D-FINE-seg",
+              "upstream_commit": upstream,
+              "package_version": version,
+              "export": {"format": "ONNX", "precision": "FP32", "input": [1, 3, 640, 640], "dynamic_input": False},
+              "sha256": checksum,
+              "license_review": "research artifact; verify upstream code, weight, and dataset terms before any redistribution or commercial use"
+          }
+          (root / f"dfine_seg_{size}_coco.metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+          PY
+
+      - name: Upload research model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dfine-seg-${{ inputs.model_size }}-coco-onnx
+          path: model-artifacts/
+          if-no-files-found: error
+          retention-days: 14
