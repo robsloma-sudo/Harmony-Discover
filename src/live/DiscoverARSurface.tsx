@@ -252,14 +252,22 @@ function WebLiveCamera(props: NativeProps) {
         video.playsInline = true;
         await video.play();
 
-        depthEstimator = new BrowserDepthEstimator(
-          depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
-          status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
-        );
-        depthEstimator.start();
-        depthTimer = window.setInterval(() => {
-          if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
-        }, 1700);
+        // The relative-depth transformer is a large additional WASM/WebGPU
+        // allocation. Mobile browsers have a much tighter camera-process memory
+        // budget, so keep it off the mobile web path; native iOS uses ARKit depth.
+        const mobileBrowser = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (mobileBrowser) {
+          callbacksRef.current.onDepthStatus?.({ nativeEvent: { status: 'Mobile browser depth paused for camera stability; use native iPhone ARKit for metric depth.' } });
+        } else {
+          depthEstimator = new BrowserDepthEstimator(
+            depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
+            status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
+          );
+          depthEstimator.start();
+          depthTimer = window.setInterval(() => {
+            if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
+          }, 1700);
+        }
 
         const verifyFrame = () => {
           if (disposed) return;
