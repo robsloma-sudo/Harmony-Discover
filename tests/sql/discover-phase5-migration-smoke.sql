@@ -273,7 +273,7 @@ begin
   );
   select status into terminal_status from public.discover_enrichment_jobs where id=stale_id;
   if terminal_status <> 'failed' then raise exception 'exhausted stale job must become terminal failed'; end if;
-end $;
+end $$;
 
 -- Existing legacy brand-only "identified" rows must be reconciled, not returned
 -- unchanged by the new idempotency guard.
