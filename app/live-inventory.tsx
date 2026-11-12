@@ -18,9 +18,9 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>; bottles?: BottleRead[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
 
-export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],menu,lastReadAt}:LiveInventoryProps={}) {
+export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],barcodes=[],labelText=[],menu,lastReadAt}:LiveInventoryProps={}) {
   const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
   const toggle=(id:string)=>setExpanded(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id]);
   const metricDepthSamples=depthFrame?.depthMeters.filter(value=>Number.isFinite(value)&&value>0).length ?? 0;
@@ -47,6 +47,9 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
       <Text style={s.section}>LIVE RECOGNITION · {bottles.length}</Text>
       {bottles.length ? bottles.map((bottle,index)=><View key={`${bottle.box.x0}-${bottle.box.y0}-${index}`} style={s.group}><View style={s.groupButton}><View style={{flex:1}}><Text style={s.groupTitle}>{[bottle.brand,bottle.product].filter(Boolean).join(' ') || 'Unidentified beverage'}</Text><Text style={s.groupHint}>{bottle.category.toUpperCase()} · {Math.round(bottle.confidence*100)}% confidence · {bottle.state.toUpperCase()}</Text></View></View><View style={s.groupBody}><Text style={s.emptyHint}>{[bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ') || 'No additional label facts returned yet.'}</Text></View></View>):<Text style={s.emptyHint}>Hold a labelled bottle in the viewfinder. Recognition results will appear here as they arrive.</Text>}
       {menu?.visible && <View style={s.group}><Text style={s.groupTitle}>{menu.title || 'Menu detected'}</Text><Text style={s.groupHint}>{menu.items.length} menu items found</Text></View>}
+      <Text style={s.section}>LIVE LABEL SIGNALS · {barcodes.length} BARCODES · {labelText.length} TEXT READS</Text>
+      {barcodes.length ? barcodes.map((barcode,index)=><View key={barcode.value+'-'+index} style={s.group}><View style={s.groupBody}><Text style={s.groupTitle}>{barcode.value}</Text><Text style={s.groupHint}>BARCODE · {barcode.symbology.toUpperCase()}</Text></View></View>) : <Text style={s.emptyHint}>No barcode decoded in the latest camera frames.</Text>}
+      {labelText.length>0 && <View style={s.group}><View style={s.groupBody}><Text style={s.groupTitle}>OCR TEXT</Text><Text style={s.emptyHint}>{labelText.slice(0,18).join(' · ')}</Text></View></View>}
       <Text style={s.section}>PRODUCT PROFILE</Text>
       {GROUPS.map(([id,title,hint])=><View key={id} style={s.group}>
         <Pressable accessibilityRole="button" accessibilityState={{expanded:expanded.includes(id)}} onPress={()=>toggle(id)} style={s.groupButton}>
