@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { ARKitDepthFrame, ARTrackingUpdate } from '../live/DiscoverARSurface';
 import type { BottleRead } from '../services/discoverLiveApi';
-import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection } from '../live/spatialTracking';
+import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection, updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
 
 const ink = '#F1EEE7';
 const muted = '#9DA7B5';
@@ -38,9 +38,48 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
         );
         if (!point) return [];
         const world = cameraPointToWorld(point, depthFrame.cameraTransform, orientation);
-        return world ? [{ key: `${bottle.category}-${index}`, name: bottle.match?.brand || bottle.brand || bottle.product || bottle.category.replace(/_/g, ' '), world, samples: point.sampleCount }] : [];
+        if (!world) return [];
+        const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
+        let best: { trackId: number; score: number } | null = null;
+        for (const candidate of candidates) {
+          const left = Math.max(box.x, candidate.x), top = Math.max(box.y, candidate.y);
+          const right = Math.min(box.x + box.width, candidate.x + candidate.width);
+          const bottom = Math.min(box.y + box.height, candidate.y + candidate.height);
+          const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+          const union = box.width * box.height + candidate.width * candidate.height - intersection;
+          const overlap = union > 0 ? intersection / union : 0;
+          const dx = (box.x + box.width / 2) - (candidate.x + candidate.width / 2);
+          const dy = (box.y + box.height / 2) - (candidate.y + candidate.height / 2);
+          const distance = Math.hypot(dx, dy);
+          const score = overlap >= 0.05 ? overlap : distance <= 0.16 ? 0.05 * (1 - distance / 0.16) : 0;
+          if (score > (best?.score ?? 0)) best = { trackId: candidate.trackId, score };
+        }
+        return [{
+          key: `${bottle.category}-${index}`,
+          trackId: best?.trackId ?? null,
+          name: bottle.match?.brand || bottle.brand || bottle.product || bottle.category.replace(/_/g, ' '),
+          world,
+          samples: point.sampleCount,
+        }];
       })
     : [];
+
+  const worldTracksRef = React.useRef<SpatialTrack[]>([]);
+  React.useEffect(() => {
+    if (tracking.state !== 'normal') {
+      worldTracksRef.current = [];
+      return;
+    }
+    const updates = spatialPoints
+      .filter(point => point.trackId !== null)
+      .map(point => ({ trackId: point.trackId as number, point: point.world, confidence: 1 }));
+    worldTracksRef.current = updateWorldSpatialTracks(worldTracksRef.current, updates, Date.now());
+  }, [depthFrame?.timestamp, bottles, candidates, tracking.state]);
+  const persistentWorldPoints = worldTracksRef.current.map(track => {
+    const source = spatialPoints.find(point => point.trackId === track.trackId);
+    return source ? { ...source, world: track.position, velocity: track.velocity, trackAge: Date.now() - track.lastSeenAt } : null;
+  }).filter((point): point is NonNullable<typeof point> => point !== null);
+  const displayedSpatialPoints = persistentWorldPoints.length ? persistentWorldPoints : spatialPoints;
 
   return <View style={{ width: '100%', flex: 1, minHeight: 0, justifyContent: 'space-between', paddingBottom: 2 }}>
     <View style={{ gap: 12 }}>
@@ -65,15 +104,15 @@ export default function LidarScannerPanel({ onClose, tracking, depthStatus, dept
         </View>
       </View>
       <View style={{ padding: 12, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)' }}>
-        <Text style={{ color: ink, fontSize: 11, fontWeight: '800' }}>DEPTH-PROJECTED BOTTLE CENTRES</Text>
-        <Text style={{ color: spatialPoints.length ? green : amber, fontSize: 11, fontWeight: '900', marginTop: 5 }}>{spatialPoints.length} / {bottles.length} PROJECTED THIS FRAME</Text>
-        {spatialPoints.slice(0, 4).map(point => (
+        <Text style={{ color: ink, fontSize: 11, fontWeight: '800' }}>WORLD-TRACKED BOTTLE CENTRES</Text>
+        <Text style={{ color: spatialPoints.length ? green : amber, fontSize: 11, fontWeight: '900', marginTop: 5 }}>{persistentWorldPoints.length} PERSISTENT · {spatialPoints.length} PROJECTED THIS FRAME</Text>
+        {displayedSpatialPoints.slice(0, 4).map(point => (
           <View key={point.key} style={{ marginTop: 7 }}>
             <Text numberOfLines={1} style={{ color: ink, fontSize: 10, fontWeight: '800' }}>{point.name}</Text>
             <Text style={{ color: muted, fontSize: 9, fontVariant: ['tabular-nums'] }}>X {point.world.x.toFixed(2)}m · Y {point.world.y.toFixed(2)}m · Z {point.world.z.toFixed(2)}m · {point.samples} depth samples</Text>
           </View>
         ))}
-        <Text style={{ color: muted, fontSize: 9, lineHeight: 14, marginTop: 7 }}>Frame-local point estimates only. Stable object identity, bottle surfaces, and multi-frame world-space fusion are not implemented yet.</Text>
+        <Text style={{ color: muted, fontSize: 9, lineHeight: 14, marginTop: 7 }}>Smoothed world-space centre estimates are associated through temporal 2D track IDs. Large position jumps are rejected. This is not bottle-surface reconstruction, and physical iPhone validation is still required.</Text>
       </View>
       <Text style={{ color: muted, fontSize: 9, lineHeight: 14 }}>World tracking and metric depth are device capabilities, not proof of bottle reconstruction. These projections depend on physical-device coordinate validation.</Text>
     </View>
