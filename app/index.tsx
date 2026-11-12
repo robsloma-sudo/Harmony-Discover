@@ -45,7 +45,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const physicalBottleTrackerRef = useRef(new SpatialBottleTracker({ confirmationHits: 2, occlusionGraceMs: 2500, lostRetentionMs: 12000, minimumConfidence: 0.65 }));
   const processedBottleFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [livePhysicalIds, setLivePhysicalIds] = useState<string[]>([]);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead}>>([]);
+  const [liveTrackedBottles, setLiveTrackedBottles] = useState<TrackedBottleRecord<BottleRead>[]>([]);
   const [liveBottleTracks, setLiveBottleTracks] = useState<TrackedBottleRecord<BottleRead>[]>([]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
@@ -315,7 +316,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               <View key={renderBox.trackId} style={[s.liveDetectionBox, { left: ((renderBox.x * 100) + '%') as `${number}%`, top: ((renderBox.y * 100) + '%') as `${number}%`, width: ((renderBox.width * 100) + '%') as `${number}%`, height: ((renderBox.height * 100) + '%') as `${number}%` }]}>
                 <View style={s.liveDetectionLabel}>
                   <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
-                  <Text style={s.liveDetectionConfidence}>{Math.round(bottle.confidence * 100)}% · LIVE</Text>
+                  <Text style={s.liveDetectionConfidence}>{Math.round(tracked.confidence * 100)}% · LIVE</Text>
                   <Text style={s.liveDetectionConfidence}>TRACK · {record.trackId}</Text>
                   {!!(labelSignalsByBottle[index]?.text.length || labelSignalsByBottle[index]?.barcodes.length) && <Text numberOfLines={2} style={s.liveDetectionConfidence}>{[...(labelSignalsByBottle[index]?.text || []).slice(0, 2), ...(labelSignalsByBottle[index]?.barcodes || []).map(code => `BAR ${code}`)].join(' · ')}</Text>}
                 </View>
