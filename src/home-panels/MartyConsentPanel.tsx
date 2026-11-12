@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ScrollView, View, Text, Pressable, TextInput, Switch, StyleSheet } from 'react-native';
 
-import { useAuth } from '../src/auth/AuthContext';
-import { supabase } from '../src/services/supabase';
-import { MARTY_BOSTON_CONSENT_VERSION } from '../src/voice/martySullivanBoston';
+import { useAuth } from '../auth/AuthContext';
+import { supabase } from '../services/supabase';
+import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
 
 type Memory = { id: string; category: 'taste_preference' | 'drink_history' | 'interaction_style'; label: string; value: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
