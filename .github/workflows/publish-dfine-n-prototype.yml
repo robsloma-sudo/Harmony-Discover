@@ -140,6 +140,8 @@ jobs:
           npx vitest run tests/segmentation-engine.test.ts tests/dfine-seg-adapter.test.ts tests/dfine-seg-onnx-provider.test.ts
           npm run build:web
           test -s dist/index.html
+          test -s public/ort/ort.min.js
+          find public/ort -maxdepth 1 -name '*.mjs' -print -quit | grep -q .
           find public/ort -maxdepth 1 -name '*.wasm' -print -quit | grep -q .
 
       - name: Commit prototype model and runtime dependency
