@@ -163,8 +163,6 @@ export function mapResearchSourceType(rawValue: unknown, rawUrl: unknown): strin
   if (raw === "regulator" && host.endsWith(".gov")) return "government_registry";
   if (raw === "gs1") return "barcode_registry";
   if (["manufacturer", "distillery", "winery", "brand_owner"].includes(raw)) return "official_producer";
-  if (raw === "retailer") return "retailer";
-  if (raw === "reference") return "web_search";
   return null;
 }
 
@@ -175,8 +173,6 @@ const SOURCE_RANK: Record<string, number> = {
   brand_owner: 0,
   regulator: 1,
   gs1: 1,
-  reference: 2,
-  retailer: 3,
 };
 
 export function filterResearchFields(
