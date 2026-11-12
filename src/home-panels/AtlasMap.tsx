@@ -35,6 +35,7 @@ export function AtlasMap({center, venues, onSelectVenue, height=210, fitKey}:{
   const dragRef = useRef({x:0,y:0});
   const centerRef = useRef(mapCenter);
   centerRef.current = mapCenter;
+  const pinchRef = useRef<{distance:number;zoom:number;anchorX:number;anchorY:number;focalX:number;focalY:number}|null>(null);
 
   React.useEffect(()=>{ if(center){setMapCenter(center);setZoom(12);} },[center?.latitude,center?.longitude]);
 
@@ -56,16 +57,46 @@ export function AtlasMap({center, venues, onSelectVenue, height=210, fitKey}:{
 
   const responder = useMemo(()=>PanResponder.create({
     onStartShouldSetPanResponder:()=>false,
-    onMoveShouldSetPanResponder:(_,g)=>Math.abs(g.dx)>4||Math.abs(g.dy)>4,
-    onPanResponderGrant:()=>{dragRef.current={x:0,y:0};setDrag({x:0,y:0});},
-    onPanResponderMove:(_,g)=>{dragRef.current={x:g.dx,y:g.dy};setDrag({x:g.dx,y:g.dy});},
-    onPanResponderRelease:(_,g)=>{
-      const p=projectMercator(centerRef.current,zoom);
-      setMapCenter(unprojectMercator({latitude:p.y-g.dy,longitude:p.x-g.dx},zoom));
+    onMoveShouldSetPanResponder:(evt,g)=>evt.nativeEvent.touches.length>=2||Math.abs(g.dx)>4||Math.abs(g.dy)>4,
+    onPanResponderGrant:(evt)=>{
       dragRef.current={x:0,y:0};setDrag({x:0,y:0});
+      const touches=evt.nativeEvent.touches;
+      if(touches.length>=2){
+        const [a,b]=touches;
+        const focalX=((a.locationX??a.pageX)+(b.locationX??b.pageX))/2;
+        const focalY=((a.locationY??a.pageY)+(b.locationY??b.pageY))/2;
+        const p=projectMercator(centerRef.current,zoom);
+        const anchorX=p.x+(focalX-size.width/2);
+        const anchorY=p.y+(focalY-size.height/2);
+        pinchRef.current={distance:Math.hypot(a.pageX-b.pageX,a.pageY-b.pageY),zoom,anchorX,anchorY,focalX,focalY};
+      } else pinchRef.current=null;
     },
-    onPanResponderTerminate:()=>{dragRef.current={x:0,y:0};setDrag({x:0,y:0});},
-  }),[zoom]);
+    onPanResponderMove:(evt,g)=>{
+      const touches=evt.nativeEvent.touches;
+      if(touches.length>=2){
+        const [a,b]=touches;
+        const start=pinchRef.current;
+        if(!start)return;
+        const distance=Math.max(1,Math.hypot(a.pageX-b.pageX,a.pageY-b.pageY));
+        const nextZoom=clamp(start.zoom+Math.log2(distance/start.distance),2,18);
+        const focalX=((a.locationX??a.pageX)+(b.locationX??b.pageX))/2;
+        const focalY=((a.locationY??a.pageY)+(b.locationY??b.pageY))/2;
+        setZoom(nextZoom);
+        setMapCenter(unprojectMercator({longitude:start.anchorX-(focalX-size.width/2),latitude:start.anchorY-(focalY-size.height/2)},nextZoom));
+        return;
+      }
+      if(pinchRef.current)return;
+      dragRef.current={x:g.dx,y:g.dy};setDrag({x:g.dx,y:g.dy});
+    },
+    onPanResponderRelease:(_,g)=>{
+      if(!pinchRef.current){
+        const p=projectMercator(centerRef.current,zoom);
+        setMapCenter(unprojectMercator({latitude:p.y-g.dy,longitude:p.x-g.dx},zoom));
+      }
+      pinchRef.current=null;dragRef.current={x:0,y:0};setDrag({x:0,y:0});
+    },
+    onPanResponderTerminate:()=>{pinchRef.current=null;dragRef.current={x:0,y:0};setDrag({x:0,y:0});},
+  }),[zoom,size.width,size.height]);
 
   const tiles = useMemo(()=>{
     if(size.width<1)return [];
@@ -97,7 +128,7 @@ export function AtlasMap({center, venues, onSelectVenue, height=210, fitKey}:{
   },[venues,mapCenter,zoom,size.width,size.height,drag.x,drag.y]);
 
   return <View onLayout={e=>setSize({width:e.nativeEvent.layout.width,height:e.nativeEvent.layout.height})}
-    style={{height,width:'100%',borderRadius:14,overflow:'hidden',backgroundColor:'#071326',borderWidth:1,borderColor:'rgba(54,123,255,0.42)'}}>
+    style={{height,width:'100%',borderRadius:14,overflow:'hidden',backgroundColor:'#071326',borderWidth:1,borderColor:'rgba(54,123,255,0.42)',touchAction:'none'} as any}>
     <View style={{position:'absolute',left:0,right:0,top:0,bottom:0}} {...responder.panHandlers}>
       {tiles.map(t=><Image key={t.key} source={{uri:t.uri}} resizeMode="stretch" style={{position:'absolute',left:t.left,top:t.top,width:TILE_SIZE,height:TILE_SIZE}} />)}
       <View pointerEvents="none" style={{position:'absolute',left:0,right:0,top:0,bottom:0,backgroundColor:'rgba(4,13,35,0.34)'}}/>
