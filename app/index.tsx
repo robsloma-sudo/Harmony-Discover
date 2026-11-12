@@ -64,6 +64,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setLivePhysicalIds([]);
       setLiveSpatialAnchors([]);
       setLiveBottleDepthFrame(null);
+      setLiveBottleFrameTimestamp(null);
+      depthFramesRef.current = [];
       physicalBottleTrackerRef.current.reset();
     }, 6000);
     return () => clearTimeout(staleTimer);
@@ -73,6 +75,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       physicalBottleTrackerRef.current.reset();
       setLiveSpatialAnchors([]);
       setLivePhysicalIds([]);
+      setLiveBottles([]);
+      setLiveTextItems([]);
+      setLiveBarcodeItems([]);
+      setLiveBottleDepthFrame(null);
+      setLiveBottleFrameTimestamp(null);
+      depthFramesRef.current = [];
       return;
     }
     if (liveBottleFrameTimestamp === null) return;
