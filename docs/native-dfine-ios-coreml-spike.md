@@ -11,7 +11,7 @@ This branch is an isolated proof of native runtime linkage and model-session ini
 - Swift verifies the pinned D-FINE model SHA-256 before handing the file path to the shim.
 - The shim creates one ORT environment and one ORT session, registers CoreML before CPU fallback, validates the input/output names, and retains the session for reuse.
 - CoreML is configured with MLProgram, all compute units, static input shapes, and a persistent `ModelCacheDirectory`.
-- The explicit Expo method `initializeDfineNativeRuntime(modelPath, cacheDirectory)` is not called by the existing scanner.
+- The explicit Expo methods `downloadAndInitializeDfineNativeRuntime()` and `runDfineNativeSmokeTest()` are not called by the existing scanner. They are only for a deliberate device test.
 
 ## Why cache and reuse matter
 
@@ -32,11 +32,12 @@ Reference: https://github.com/microsoft/onnxruntime/issues/27717
 ## Acceptance gates
 
 1. CocoaPods resolves the pinned package and the native iOS simulator build compiles.
-2. On a physical iPhone, initialize the exact model and confirm the output names and provider registration.
-3. Repeat initialization and confirm the same session is reused.
-4. Measure cold initialization with and without CoreML model cache, warm inference, memory, and thermals.
-5. Run deterministic and real bar-scene frames through native inference; compare output shapes, scores, boxes, and thresholded masks to the validated web/CPU path.
-6. Only after those gates pass, connect sparse detection to the existing native Vision tracking seeds.
+2. On a physical iPhone, call the explicit download/initialize method and confirm the output names and provider registration.
+3. Run the synthetic smoke test and confirm the four expected output shapes.
+4. Repeat initialization and confirm the same session is reused.
+5. Measure cold initialization with and without CoreML model cache, warm inference, memory, and thermals.
+6. Run deterministic and real bar-scene frames through native inference; compare output shapes, scores, boxes, and thresholded masks to the validated web/CPU path.
+7. Only after those gates pass, connect sparse detection to the existing native Vision tracking seeds.
 
 ## Safety
 
