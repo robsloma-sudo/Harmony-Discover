@@ -93,7 +93,7 @@ jobs:
           curl --fail --location --retry 3 \
             "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx" \
             --output /tmp/dfine_seg_n_coco.onnx
-          shasum -a 256 /tmp/dfine_seg_n_coco.onnx
+          echo "999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30  /tmp/dfine_seg_n_coco.onnx" | shasum -a 256 --check
 
       - name: Compare CPU and CoreML inference
         run: |
@@ -176,16 +176,28 @@ jobs:
           numeric_deltas = {}
           for index, (cpu_value, coreml_value) in enumerate(zip(cpu_outputs, coreml_outputs)):
               if np.issubdtype(cpu_value.dtype, np.number):
+                  cpu64 = cpu_value.astype(np.float64)
+                  coreml64 = coreml_value.astype(np.float64)
+                  absolute_delta = np.abs(cpu64 - coreml64)
                   numeric_deltas[str(index)] = {
-                      "max_abs_delta": float(np.max(np.abs(cpu_value.astype(np.float64) - coreml_value.astype(np.float64)))),
+                      "max_abs_delta": float(np.max(absolute_delta)),
+                      "mean_abs_delta": float(np.mean(absolute_delta)),
+                      "p99_abs_delta": float(np.percentile(absolute_delta, 99)),
                       "shape": list(cpu_value.shape),
                   }
+                  if cpu_value.ndim == 4 and cpu_value.shape[-2:] == (160, 160):
+                      numeric_deltas[str(index)]["positive_logit_agreement"] = float(
+                          np.mean((cpu64 > 0) == (coreml64 > 0))
+                      )
           print(json.dumps({
               "runtime_version": ort.__version__,
               "input": {"name": input_name, "shape": list(sample.shape), "dtype": str(sample.dtype)},
               "cpu_only": cpu,
               "coreml_with_cpu_fallback": coreml,
-              "cpu_vs_coreml_output_max_abs_delta": numeric_deltas,
-              "note": "Apple Silicon macOS benchmark only; not an iPhone or sustained thermal benchmark.",
+              "cpu_vs_coreml_output_deltas": numeric_deltas,
+              "warm_p50_speedup_ratio_cpu_over_coreml": round(
+                  cpu["warm_p50_ms"] / coreml["warm_p50_ms"], 3
+              ),
+              "note": "Apple Silicon macOS benchmark only; not an iPhone or sustained thermal benchmark. Segmentation positive-logit agreement is diagnostic, not a quality certification.",
           }, indent=2))
           PY
