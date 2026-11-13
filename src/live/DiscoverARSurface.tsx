@@ -841,7 +841,7 @@ export function DiscoverARSurface(props: NativeProps) {
         props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
         if (NativeLiquidAnalyzer && tracked.length && !nativeLiquidBusy.current) {
           nativeLiquidBusy.current = true;
-          void NativeLiquidAnalyzer.analyzeLiquidLevels(frame.imageBase64, tracked.map(track => ({
+          void NativeLiquidAnalyzer.analyzeLiquidLevels(frame.imageBase64, tracked.slice(0, 4).map(track => ({
             trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height,
           }))).then(analyses => {
             if (generation !== nativeSessionGeneration.current) return;
