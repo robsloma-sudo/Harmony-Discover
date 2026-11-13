@@ -1,3 +1,4 @@
+import { assessLiquidOpticalVisibility } from './liquidOptics';
 /**
  * Fast, local liquid-interface candidate detector.
  *
@@ -190,12 +191,14 @@ export function createLiquidLevelWorker(): Worker | null {
     deltaE.toString(),
     isOccluded.toString(),
     detectLiquidBoundaryCandidate.toString(),
+    assessLiquidOpticalVisibility.toString(),
     `self.onmessage = (event) => {
       const job = event.data;
       try {
         const frame = { width: job.width, height: job.height, data: new Uint8ClampedArray(job.buffer) };
         const results = job.tracks.map((track) => ({
           trackId: track.trackId,
+          optical: assessLiquidOpticalVisibility(frame, track.bounds),
           result: detectLiquidBoundaryCandidate(frame, track.bounds),
         }));
         self.postMessage({ id: job.id, timestamp: job.timestamp, results });
