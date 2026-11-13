@@ -54,25 +54,10 @@ final class DfineNativeRuntime {
       create: true
     )
     let modelURL = cacheRoot.appendingPathComponent("dfine_seg_n_coco.onnx", isDirectory: false)
-    if !FileManager.default.fileExists(atPath: modelURL.path) {
-      guard let sourceURL = URL(string: "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx") else {
-        throw NSError(domain: "DfineNativeRuntime", code: 5, userInfo: [
-          NSLocalizedDescriptionKey: "Pinned D-FINE model URL is invalid."
-        ])
-      }
-      let (temporaryURL, response) = try await URLSession.shared.download(from: sourceURL)
-      guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-        throw NSError(domain: "DfineNativeRuntime", code: 4, userInfo: [
-          NSLocalizedDescriptionKey: "Could not download the pinned D-FINE model."
-        ])
-      }
-      try FileManager.default.moveItem(at: temporaryURL, to: modelURL)
-    }
     let coreMLCache = cacheRoot.appendingPathComponent("dfine-coreml-cache", isDirectory: true)
 
-    // A previous interrupted download or stale cache must not permanently block
-    // initialization. Reuse a valid cached model; remove only a checksum-invalid
-    // file, then fetch the pinned asset again.
+    // Reuse a valid cached model. If an interrupted download left a corrupt
+    // file behind, remove only that checksum-invalid file and fetch it again.
     if FileManager.default.fileExists(atPath: modelURL.path) {
       do {
         return try initialize(modelPath: modelURL.path, cacheDirectory: coreMLCache.path)
@@ -81,20 +66,19 @@ final class DfineNativeRuntime {
       }
     }
 
-    if !FileManager.default.fileExists(atPath: modelURL.path) {
-      guard let sourceURL = URL(string: "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx") else {
-        throw NSError(domain: "DfineNativeRuntime", code: 5, userInfo: [
-          NSLocalizedDescriptionKey: "Pinned D-FINE model URL is invalid."
-        ])
-      }
-      let (temporaryURL, response) = try await URLSession.shared.download(from: sourceURL)
-      guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-        throw NSError(domain: "DfineNativeRuntime", code: 4, userInfo: [
-          NSLocalizedDescriptionKey: "Could not download the pinned D-FINE model."
-        ])
-      }
-      try FileManager.default.moveItem(at: temporaryURL, to: modelURL)
+    guard let sourceURL = URL(string: "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx") else {
+      throw NSError(domain: "DfineNativeRuntime", code: 5, userInfo: [
+        NSLocalizedDescriptionKey: "Pinned D-FINE model URL is invalid."
+      ])
     }
+    let (temporaryURL, response) = try await URLSession.shared.download(from: sourceURL)
+    guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+      try? FileManager.default.removeItem(at: temporaryURL)
+      throw NSError(domain: "DfineNativeRuntime", code: 4, userInfo: [
+        NSLocalizedDescriptionKey: "Could not download the pinned D-FINE model."
+      ])
+    }
+    try FileManager.default.moveItem(at: temporaryURL, to: modelURL)
 
     return try initialize(modelPath: modelURL.path, cacheDirectory: coreMLCache.path)
   }
