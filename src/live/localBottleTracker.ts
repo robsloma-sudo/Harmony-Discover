@@ -85,7 +85,7 @@ export class LocalBottleTracker {
     this.tracks = next;
 
     return next
-      .filter(track => track.hits >= 2 && track.misses === 0 && now - track.lastSeenAt <= 8_000)
+      .filter(track => track.hits >= 2 && track.misses <= 1 && now - track.lastSeenAt <= 8_000)
       .map(({ trackId, bounds, confidence, contour, hits }) => ({ trackId, bounds, confidence, contour, hits }));
   }
 

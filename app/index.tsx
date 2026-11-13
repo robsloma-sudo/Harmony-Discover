@@ -7,7 +7,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate } from '../src/live/DiscoverARSurface';
-import { MaskContourOverlay } from '../src/live/MaskContourOverlay';
 import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
@@ -223,7 +222,6 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim() : 'BOTTLE DETECTED';
             return (
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <MaskContourOverlay points={tracked.contour} color="#55D9FF" strokeWidth={2.2} />
                 <View style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
                   <View style={s.liveDetectionLabel}>
                     <Text numberOfLines={1} style={s.liveDetectionName}>{name || (bottle ? bottle.category.replace(/_/g, ' ').toUpperCase() : 'BOTTLE DETECTED')}</Text>
@@ -235,7 +233,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           })}
         </View>
       )}
-      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} sessionKey={anchorSessionKey} visible={liveTracking.state === 'normal' || liveTracking.reason === 'relocalizing'} />}
+      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} />}
       {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
         <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
         <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
