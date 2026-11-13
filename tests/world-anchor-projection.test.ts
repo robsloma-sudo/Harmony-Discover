@@ -44,6 +44,19 @@ describe("world-anchor camera reprojection", () => {
     }
   });
 
+  it("updates a stationary bottle box continuously as the camera pans", () => {
+    const point = { x: 0, y: 0, z: -2 };
+    const positions = [0, 0.04, 0.08, 0.12].map(offset => {
+      const pose = frame([1,0,0,0, 0,1,0,0, 0,0,1,0, offset,0,0,1]);
+      return projectWorldPointToImage(point, pose)!.x;
+    });
+    expect(positions[0]).toBeCloseTo(0.5);
+    expect(positions[1]).toBeLessThan(positions[0]);
+    expect(positions[2]).toBeLessThan(positions[1]);
+    expect(positions[3]).toBeLessThan(positions[2]);
+    expect(positions[3]).toBeCloseTo(0.44);
+  });
+
   it("reprojects a retained four-corner bottle rectangle", () => {
     const corners = [
       { x: -0.2, y: 0.4, z: -2 },

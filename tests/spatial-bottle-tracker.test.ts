@@ -71,6 +71,25 @@ describe('persistent physical bottle tracking', () => {
     expect(nextFrame.observed[0]?.state).toBe('confirmed');
   });
 
+  it('assigns neighboring bottles by globally closest world-space matches, not input order', () => {
+    const tracker = new SpatialBottleTracker({ maxAssociationDistanceMeters: 0.22 });
+    const initial = tracker.update([
+      { worldPoint: point(0), confidence: 0.95, geometryComplete: true, visualKey: 'same-label' },
+      { worldPoint: point(0.15), confidence: 0.95, geometryComplete: true, visualKey: 'same-label' },
+    ], 1000);
+    const leftId = initial.observed[0]!.physicalObjectId;
+    const rightId = initial.observed[1]!.physicalObjectId;
+
+    // Deliberately provide the ambiguous middle observation first. A
+    // sequential nearest-neighbor matcher would let it claim the left bottle.
+    const next = tracker.update([
+      { worldPoint: point(0.08), confidence: 0.95, geometryComplete: true, visualKey: 'same-label' },
+      { worldPoint: point(0.01), confidence: 0.95, geometryComplete: true, visualKey: 'same-label' },
+    ], 1500);
+    expect(next.observed[0]!.physicalObjectId).toBe(rightId);
+    expect(next.observed[1]!.physicalObjectId).toBe(leftId);
+  });
+
   it('removes lost identities after the diagnostic retention window', () => {
     const tracker = new SpatialBottleTracker({ lostRetentionMs: 1000, occlusionGraceMs: 300 });
     tracker.update([{ worldPoint: point(0), confidence: 0.9, geometryComplete: true }], 1000);

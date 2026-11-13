@@ -1,100 +1,109 @@
 import React, { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import type { ARKitDepthFrame } from "./DiscoverARSurface";
+import type { ARKitDepthFrame, ARKitCameraPose } from "./DiscoverARSurface";
 import { buildBottleWorldObservations } from "./bottleWorldAnchorBridge";
-import { updateWorldSpatialTracks, type SpatialTrack } from "./spatialTracking";
+import { SpatialBottleTracker, type SpatialTrack } from "./spatialBottleTracker";
 import { projectWorldRectangle } from "./worldAnchorProjection";
+import { PhysicalBottleIdentityRegistry } from "./physicalBottleIdentity";
 
 type Candidate = {
   trackId: number; x: number; y: number; width: number; height: number;
   confidence: number; timestamp?: number; contour?: Array<{x:number;y:number}>;
-  bottle?: { brand?: string; product?: string; category?: string };
+  bottle?: { brand?: string; product?: string; category?: string; confidence?: number; state?: string; match?: { id: string; brand: string | null; product: string | null; score: number } | null };
   depthFrame?: ARKitDepthFrame;
 };
-type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number };
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; sessionKey?: number; visible?: boolean };
+type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean };
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessionKey = 0, visible = true }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, currentCameraPose, sessionKey = 0, visible = true }: Props) {
+  // One registry owns the physical bottle ID through visible, occluded and
+  // reacquired states. It is deliberately reset when ARKit changes world space.
+  const trackerRef = useRef<SpatialBottleTracker | null>(null);
+  if (!trackerRef.current) trackerRef.current = new SpatialBottleTracker({
+    confirmationHits: 2,
+    maxAssociationDistanceMeters: 0.22,
+    occlusionGraceMs: 3000,
+    lostRetentionMs: 30000,
+    minimumConfidence: 0.65,
+  });
+  const metadataRef = useRef(new Map<string, AnchorMetadata>());
+  const identityRegistryRef = useRef(new PhysicalBottleIdentityRegistry(0.85, 0.9));
   const tracksRef = useRef<SpatialTrack[]>([]);
-  const metadataRef = useRef(new Map<number, AnchorMetadata>());
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
-    // A newly started AR session has a new world coordinate frame. Old anchors
-    // must not be projected into that unrelated coordinate system.
-    tracksRef.current = [];
+    trackerRef.current?.reset();
     metadataRef.current.clear();
+    identityRegistryRef.current.clear();
+    tracksRef.current = [];
     setRevision(value => value + 1);
   }, [sessionKey]);
 
   useEffect(() => {
-    const observations = candidates.flatMap(candidate => {
+    const paired = candidates.flatMap(candidate => {
       const frame = candidate.depthFrame;
       if (!frame || candidate.timestamp === undefined) return [];
-      return buildBottleWorldObservations([{
+      const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
         confidence: candidate.confidence, timestamp: candidate.timestamp,
         contour: candidate.contour,
         bottle: candidate.bottle,
-      }], frame).observations;
+      }], frame);
+      return result.observations.map(observation => ({ observation, candidate }));
     });
     const now = Date.now();
-    tracksRef.current = updateWorldSpatialTracks(
-      tracksRef.current,
-      observations.map(item => ({
-        trackId: item.trackId,
-        point: item.worldPoint,
-        confidence: item.confidence,
-        identityKey: item.visualKey,
-        categoryKey: candidates.find(candidate => candidate.trackId === item.trackId)?.bottle?.category,
-        box: item.box,
-      })),
-      now,
-      { maxAgeMs: 30000, reassociationMeters: 0.22, maxJumpMeters: 0.45 },
-    );
-    for (const observation of observations) {
-      const track = tracksRef.current.find(item => item.sourceTrackId === observation.trackId || item.trackId === observation.trackId);
-      // The world tracker deliberately rejects implausible jumps without
-      // refreshing lastSeenAt. Do not let an outlier overwrite the retained
-      // rectangle corners after that rejection.
-      if (!track || track.lastSeenAt !== now) continue;
-      const candidate = candidates.find(item => item.trackId === observation.trackId);
-      const name = [candidate?.bottle?.brand, candidate?.bottle?.product].filter(Boolean).join(" ").trim()
-        || candidate?.bottle?.category?.replace(/_/g, " ")
-        || "BOTTLE";
-      metadataRef.current.set(track.trackId, {
+    const update = trackerRef.current!.update(paired.map(({ observation }) => ({
+      worldPoint: observation.worldPoint,
+      confidence: observation.confidence,
+      geometryComplete: observation.geometryComplete,
+      visualKey: observation.visualKey,
+    })), now);
+
+    tracksRef.current = update.tracks;
+    paired.forEach(({ observation, candidate }, index) => {
+      const physical = update.observed[index];
+      if (!physical) return;
+      const bottle = candidate.bottle;
+      if (bottle?.state === "matched" && bottle.match?.id && bottle.brand && bottle.product) {
+        identityRegistryRef.current.lock(physical.physicalObjectId, {
+          catalogId: bottle.match.id,
+          brand: bottle.match.brand || bottle.brand,
+          product: bottle.match.product || bottle.product,
+          confidence: bottle.confidence ?? 0,
+          matchScore: bottle.match.score,
+          matched: true,
+        }, now);
+      }
+      const lockedIdentity = identityRegistryRef.current.get(physical.physicalObjectId);
+      const observedName = [bottle?.brand, bottle?.product].filter(Boolean).join(" ").trim()
+        || bottle?.category?.replace(/_/g, " ");
+      const name = lockedIdentity
+        ? [lockedIdentity.brand, lockedIdentity.product].filter(Boolean).join(" ")
+        : observedName || "BOTTLE";
+      const previousMetadata = metadataRef.current.get(physical.physicalObjectId);
+      metadataRef.current.set(physical.physicalObjectId, {
         worldCorners: observation.worldCorners,
-        name,
-        confidence: observation.confidence,
+        name: lockedIdentity?.brand && lockedIdentity.product ? name : (observedName || previousMetadata?.name || "BOTTLE"),
+        confidence: Math.max(observation.confidence, lockedIdentity?.confidence ?? 0),
+        verified: !!lockedIdentity,
       });
-    }
-    const active = new Set(tracksRef.current.map(track => track.trackId));
+    });
+
+    const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
     for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
     setRevision(value => value + 1);
-  }, [candidates]);
+  }, [candidates, currentDepthFrame?.timestamp]);
 
-  useEffect(() => {
-    // Age out anchors even when the detector stops returning candidates.
-    tracksRef.current = updateWorldSpatialTracks(
-      tracksRef.current,
-      [],
-      Date.now(),
-      { maxAgeMs: 30000 },
-    );
-    const active = new Set(tracksRef.current.map(track => track.trackId));
-    for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
-    setRevision(value => value + 1);
-  }, [currentDepthFrame?.timestamp]);
-
-  if (!visible || !currentDepthFrame || currentDepthFrame.unit !== "meters") return null;
-  // revision makes the ref-backed anchor state observable without recreating it.
+  const projectionFrame = currentCameraPose ?? currentDepthFrame;
+  if (!visible || !projectionFrame || (!currentCameraPose && currentDepthFrame?.unit !== "meters")) return null;
   void revision;
   const anchors = tracksRef.current.flatMap(track => {
-    const metadata = metadataRef.current.get(track.trackId);
+    if (track.state === "lost") return [];
+    const metadata = metadataRef.current.get(track.physicalObjectId);
     if (!metadata) return [];
-    const rect = projectWorldRectangle(metadata.worldCorners, currentDepthFrame);
-    return rect ? [{ id: track.trackId, rect, ...metadata }] : [];
+    const rect = projectWorldRectangle(metadata.worldCorners, projectionFrame);
+    return rect ? [{ id: track.physicalObjectId, rect, ...metadata, state: track.state }] : [];
   });
 
   return <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -104,10 +113,11 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
         top: ((anchor.rect.y * 100) + "%") as `${number}%`,
         width: ((anchor.rect.width * 100) + "%") as `${number}%`,
         height: ((anchor.rect.height * 100) + "%") as `${number}%`,
+        opacity: anchor.state === "occluded" ? 0.45 : 1,
       }]}>
         <View style={styles.label}>
           <Text numberOfLines={1} style={styles.name}>{anchor.name.toUpperCase()}</Text>
-          <Text style={styles.meta}>WORLD ANCHOR · {Math.round(anchor.confidence * 100)}%</Text>
+          <Text style={styles.meta}>{anchor.verified ? "IDENTITY LOCKED" : "IDENTITY PENDING"} · {anchor.state === "occluded" ? "BACKGROUND · REACQUIRABLE" : "FOREGROUND · TRACKED"} · {Math.round(anchor.confidence * 100)}%</Text>
         </View>
       </View>
     ))}

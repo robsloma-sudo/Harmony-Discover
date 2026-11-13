@@ -9,6 +9,7 @@ import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
+import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 
 export type ARTrackingUpdate = {
@@ -19,6 +20,8 @@ export type ARTrackingUpdate = {
 export type ARViewEvent = { nativeEvent: { state?: string; reason?: string; message?: string } };
 
 export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
+
+export type ARKitCameraPose = { width: number; height: number; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; imageOrientation: number };
 
 type NativeProps = ViewProps & {
   active?: boolean;
@@ -31,6 +34,7 @@ type NativeProps = ViewProps & {
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
+  onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
@@ -244,7 +248,13 @@ function WebLiveCamera(props: NativeProps) {
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
       if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
       const now = Date.now();
-      const activeCloudTracks = webTracks.filter(track => track.misses === 0);
+      const isVerifiedRead = (read?: LabelBatchRead) =>
+        !!read?.brand && !!read.product && read.confidence >= 0.85
+        && read.state === 'matched' && !!read.match?.id && read.match.score >= 0.9;
+      // A catalog-verified label read belongs to this tracked object. Do not
+      // spend another label-batch request re-reading it on every later frame.
+      const activeCloudTracks = webTracks.filter(track => track.misses === 0
+        && !isVerifiedRead(labelReadsByTrack.get(track.id)));
       const candidates = [
         ...activeCloudTracks.map(track => ({
           trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
@@ -252,10 +262,7 @@ function WebLiveCamera(props: NativeProps) {
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
-          .filter(local => {
-            const previousRead = labelReadsByTrack.get(local.trackId);
-            return !(previousRead?.brand && previousRead.confidence >= 0.85);
-          })
+          .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
           .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
@@ -420,14 +427,32 @@ function WebLiveCamera(props: NativeProps) {
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const frameTimestamp = Date.now();
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
+        // Barcode decoding is deliberately independent from bottle recognition.
+        // Keep this frame's canvas and timestamp so a late barcode result can be
+        // traced to the image that produced it without delaying the bottle boxes.
+        if (barcodeDetector) {
+          void barcodeDetector.detect(canvas).then(decodedBarcodes => {
+            if (disposed || !decodedBarcodes.length) return;
+            callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: {
+              text: [],
+              barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })),
+              barcodeStatus: 'available',
+              classifications: [],
+              frameTimestamp,
+              imageWidth: canvas.width,
+              imageHeight: canvas.height,
+            } });
+          }).catch(() => {
+            // Barcode support is best-effort; a decoder failure must never
+            // turn a successful bottle recognition pass into a failed pass.
+          });
+        }
         const result = await readLiveFrame(jpeg);
-        const decodedBarcodes = await barcodePromise;
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
         const cloudCandidates = webTracks
@@ -627,51 +652,20 @@ function FallbackNativeCamera(props: NativeProps) {
   return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => { cameraReady.current = true; props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } }); }} />;
 }
 
-type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; bottle: BottleRead };
-let nativeRecognitionTracks: RecognitionTrack[] = [];
+let nativeRecognitionTracks: BottleReadTrack[] = [];
 let nextNativeRecognitionTrackId = 1;
 
 function trackNativeBottleReads(bottles: BottleRead[]) {
-  const now = Date.now();
-  const used = new Set<number>();
-  const next: RecognitionTrack[] = [];
-  const tracked = bottles.map(bottle => {
-    const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
-    let bestIndex = -1, bestScore = 0;
-    nativeRecognitionTracks.forEach((prior, index) => {
-      if (used.has(index)) return;
-      const left = Math.max(prior.x, box.x), top = Math.max(prior.y, box.y);
-      const right = Math.min(prior.x + prior.width, box.x + box.width), bottom = Math.min(prior.y + prior.height, box.y + box.height);
-      const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
-      const union = prior.width * prior.height + box.width * box.height - intersection;
-      const overlap = union > 0 ? intersection / union : 0;
-      const dx = (prior.x + prior.width / 2) - (box.x + box.width / 2);
-      const dy = (prior.y + prior.height / 2) - (box.y + box.height / 2);
-      const distance = Math.hypot(dx, dy);
-      const score = overlap >= 0.08 ? overlap : distance <= 0.16 ? 0.08 * (1 - distance / 0.16) : 0;
-      if (score > bestScore) { bestScore = score; bestIndex = index; }
-    });
-    const prior = bestIndex >= 0 && bestScore > 0 ? nativeRecognitionTracks[bestIndex] : null;
-    if (prior && bestIndex >= 0) used.add(bestIndex);
-    const blend = prior ? 0.38 : 1;
-    const track: RecognitionTrack = {
-      trackId: prior?.trackId ?? nextNativeRecognitionTrackId++,
-      x: prior ? prior.x * (1 - blend) + box.x * blend : box.x,
-      y: prior ? prior.y * (1 - blend) + box.y * blend : box.y,
-      width: prior ? prior.width * (1 - blend) + box.width * blend : box.width,
-      height: prior ? prior.height * (1 - blend) + box.height * blend : box.height,
-      confidence: bottle.detectionConfidence,
-      lastSeenAt: now,
-      bottle,
-    };
-    next.push(track);
-    return track;
-  });
-  nativeRecognitionTracks.forEach((track, index) => {
-    if (!used.has(index) && now - track.lastSeenAt < 7000) next.push(track);
-  });
-  nativeRecognitionTracks = next;
-  return tracked;
+  const result = associateBottleReadTracks(
+    bottles,
+    nativeRecognitionTracks,
+    Date.now(),
+    nextNativeRecognitionTrackId,
+    7000,
+  );
+  nativeRecognitionTracks = result.tracks;
+  nextNativeRecognitionTrackId = result.nextId;
+  return result.tracks.filter(track => bottles.includes(track.bottle));
 }
 
 export function DiscoverARSurface(props: NativeProps) {

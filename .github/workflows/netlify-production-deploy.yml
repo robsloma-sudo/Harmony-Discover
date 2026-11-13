@@ -105,3 +105,32 @@ jobs:
 
       - name: Deploy prebuilt output without running Netlify build
         run: netlify deploy --prod --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --dir=dist --no-build --message "Harmony Discover main ${GITHUB_SHA}"
+
+  deploy-preview:
+    needs: verify
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NETLIFY_SITE_ID: 3c50b789-a7f5-4ed4-806e-e5e455924646
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+    steps:
+      - name: Verify preview deployment configuration
+        run: |
+          test -n "$NETLIFY_AUTH_TOKEN" || { echo "::error::Missing NETLIFY_AUTH_TOKEN secret"; exit 1; }
+          test "$NETLIFY_SITE_ID" = "3c50b789-a7f5-4ed4-806e-e5e455924646" || { echo "::error::Wrong Netlify site ID"; exit 1; }
+
+      - name: Download verified web build
+        uses: actions/download-artifact@v4
+        with:
+          name: harmony-discover-web-dist
+          path: dist
+
+      - name: Verify downloaded web build
+        run: test -s dist/index.html
+
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli
+
+      - name: Deploy isolated pull-request preview
+        run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias=discover-pr-${{ github.event.pull_request.number }} --dir=dist --no-build --message "Harmony Discover pull request ${{ github.event.pull_request.number }} ${GITHUB_SHA}"
