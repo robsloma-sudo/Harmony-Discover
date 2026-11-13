@@ -386,7 +386,7 @@ export function resolveBeverageFamily(category: string, details: Record<string, 
   if (/pisco/.test(hint)) return "pisco";
   if (/\brye\b/.test(hint)) return "rye_whiskey";
   if (/bourbon/.test(hint)) return "bourbon";
-  if (/scotch|islay|speyside|highlands?|lowlands?|campbeltown|islands/.test(hint)) return "single_malt_scotch";
+  if (/single malt/.test(hint) && /scotch|islay|speyside|highlands?|lowlands?|campbeltown|islands/.test(hint)) return "single_malt_scotch";
   if (/single malt/.test(hint)) return "single_malt_whiskey";
   if (/brandy|calvados|eau de vie/.test(hint) || categoryKey === "brandy") return "other_brandy";
   if (/sparkling|champagne|cremant|prosecco|cava/.test(hint) || categoryKey === "sparkling") return "sparkling_wine";
