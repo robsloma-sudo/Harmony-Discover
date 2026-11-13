@@ -11,6 +11,8 @@ export type SpatialDepthFrame = {
   depthMeters: number[];
   confidence: number[];
   cameraIntrinsics: number[];
+  /** [xx, xy, yx, yy] maps upright image rays into ARKit camera X/Y. */
+  cameraRayBasis?: number[];
   cameraTransform: number[];
 };
 
@@ -86,8 +88,11 @@ export function projectBottleBoxToWorld(
   // coordinate system as the emitted depth grid.
   const u = (box.x + box.width / 2) * frame.width;
   const v = (box.y + box.height / 2) * frame.height;
-  const cameraX = (u - cx) * depth / fx;
-  const cameraY = (cy - v) * depth / fy;
+  const imageRayX = (u - cx) / fx;
+  const imageRayY = (v - cy) / fy;
+  const basis = frame.cameraRayBasis ?? [1, 0, 0, -1];
+  const cameraX = (basis[0] * imageRayX + basis[1] * imageRayY) * depth;
+  const cameraY = (basis[2] * imageRayX + basis[3] * imageRayY) * depth;
   const cameraZ = -depth;
 
   // simd_float4x4 serialized column-major: world = M * [cameraX,cameraY,cameraZ,1].
