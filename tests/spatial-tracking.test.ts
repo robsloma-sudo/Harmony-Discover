@@ -4,8 +4,9 @@ import { sampleBoxDepth, unprojectDetection, updateSpatialTracks, type MetricDep
 const depth: MetricDepthMap = { width: 4, height: 4, metres: [2,2,2,2, 2,1.5,1.5,2, 2,1.5,1.5,2, 2,2,2,2] };
 
 describe('Discover camera-space reconstruction', () => {
+  // The depth sampler reports the high-confidence subset used by the anchor gate.
   it('uses the median depth inside the central detection region', () => {
-    expect(sampleBoxDepth(depth, { x0: 0, y0: 0, x1: 1, y1: 1 })).toEqual({ metres: 1.5, sampleCount: 4 });
+    expect(sampleBoxDepth(depth, { x0: 0, y0: 0, x1: 1, y1: 1 })).toEqual({ metres: 1.5, sampleCount: 4, highConfidenceSampleCount: 4 });
   });
 
   it('unprojects a detection centre with pinhole camera intrinsics', () => {
