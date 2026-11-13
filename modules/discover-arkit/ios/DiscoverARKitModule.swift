@@ -51,6 +51,12 @@ public class DiscoverARKitModule: Module {
       try DfineNativeRuntime.shared.initialize(modelPath: modelPath, cacheDirectory: cacheDirectory)
     }
 
+    // Explicit research-only device bootstrap. Downloads the pinned model, verifies its
+    // checksum, and creates the cached CoreML-first session; never called by live scanning.
+    AsyncFunction("downloadAndInitializeDfineNativeRuntime") { () async throws -> [String: Any] in
+      try await DfineNativeRuntime.shared.downloadAndInitialize()
+    }
+
     // Research-only synthetic inference check; never called by the live scanner.
     AsyncFunction("runDfineNativeSmokeTest") { () -> [String: Any] in
       try DfineNativeRuntime.shared.smokeTest()
