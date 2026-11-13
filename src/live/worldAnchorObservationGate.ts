@@ -14,6 +14,7 @@ export class WorldAnchorObservationGate {
     return `${trackId}:${sourceTimestamp.toFixed(6)}`;
   }
 
+  // Re-renders of one ARFrame must not count as a second physical observation.
   claim(key: string): boolean {
     if (!key || this.seen.has(key)) return false;
     this.seen.add(key);
