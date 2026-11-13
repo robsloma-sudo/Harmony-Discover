@@ -46,13 +46,23 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
-  // Viewfinder boxes are image-space observations, not world-anchored AR
-  // anchors. Expire them quickly so a slow recognition request cannot leave
-  // detections pinned to screen coordinates after the camera has moved.
+  // Expire image-space boxes by their own source-frame age. Local detections
+  // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
+  // A single global timeout caused cloud boxes to blink out between reads.
   useEffect(() => {
     if (!liveCandidates.length) return;
-    const expiry = setTimeout(() => setLiveCandidates([]), 2500);
-    return () => clearTimeout(expiry);
+    const expiry = setInterval(() => {
+      const now = Date.now();
+      setLiveCandidates(current => {
+        const next = current.filter(candidate => {
+          if (!Number.isFinite(candidate.timestamp)) return true;
+          const maxAgeMs = candidate.source === 'local' ? 1500 : 6500;
+          return now - Number(candidate.timestamp) <= maxAgeMs;
+        });
+        return next.length === current.length ? current : next;
+      });
+    }, 400);
+    return () => clearInterval(expiry);
   }, [liveCandidates]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [selectedBottle, setSelectedBottle] = useState<BottleRead | null>(null);
