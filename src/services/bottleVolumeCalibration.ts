@@ -19,7 +19,7 @@ export type CalibratedVolume =
 export function validateBottleVolumeProfile(profile: BottleVolumeProfile): boolean {
   if (!profile || typeof profile.id !== 'string' || !profile.id.trim() ||
       !Number.isFinite(profile.capacityMl) || profile.capacityMl <= 0 ||
-      !Array.isArray(profile.points) || profile.points.length < 2) return false;
+      !Array.isArray(profile.points) || profile.points.length < 3) return false;
   const points = profile.points;
   if (points[0].heightFraction !== 0 || points[0].volumeFraction !== 0 ||
       points[points.length - 1].heightFraction <= 0 || points[points.length - 1].heightFraction > 1 ||
@@ -92,8 +92,8 @@ export function createBottleVolumeProfile(
   samples: BottleCalibrationSample[],
 ): BottleProfileBuildResult {
   if (typeof id !== 'string' || !id.trim() || !Number.isFinite(capacityMl) || capacityMl <= 0 ||
-      !Array.isArray(samples) || samples.length < 2) {
-    return { status: 'invalid', reason: 'missing_profile_identity_capacity_or_samples' };
+      !Array.isArray(samples) || samples.length < 3) {
+    return { status: 'invalid', reason: 'missing_profile_identity_capacity_or_partial_measurements' };
   }
   const ordered = [...samples].sort((a, b) => a.heightFraction - b.heightFraction);
   if (ordered.some(sample => !Number.isFinite(sample.heightFraction) || !Number.isFinite(sample.measuredMilliliters) ||
