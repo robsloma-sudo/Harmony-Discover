@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { router } from 'expo-router';
-import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type MenuGlimpse } from '../services/discoverLiveApi';
+import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type LabelRead, type MenuGlimpse } from '../services/discoverLiveApi';
 import { useScan } from '../state/ScanContext';
 import { calculateLabelCrop } from './labelCrop';
 
@@ -351,28 +351,32 @@ export default function LiveScanner({ photos, onClose, onJourneyItems, source = 
         // Pass 4 magnifies each label. Pass 5 keeps sweeping while local enhancement
         // variants are generated and the strongest candidates are sent for fine-print OCR.
         patch(i, { scanStage: 4 });
-        // Hard budget: at most two bottles and one enhanced OCR request per bottle.
-        // The initial full-frame read is the baseline; do not resend every recipe to the model.
+        // Two label-only reads per bottle: the unmodified source crop plus the
+        // strongest visibility-enhanced candidate. Compare field confidence; do
+        // not let enhancement replace a clearer original transcription.
+        // Limit to two bottles per photo and share a two-request global pool.
         const fineReads = await Promise.all(result.bottles.slice(0, 2).map(async bottle => {
           try {
             const crop = await makeFinePrintCrop(uris[i], bottle.label_box || bottle.box);
             if (!crop) return [];
             patch(i, { scanStage: 5 });
             const variants = await makeFinePrintVariants(crop);
-            const selected = variants.filter(v => v.name !== 'original').slice(0, 1);
+            const original = variants.find(v => v.name === 'original');
+            const enhanced = variants.find(v => v.name !== 'original');
+            const selected = [original, enhanced].filter((v): v is EnhancementVariant => !!v);
             const reads = await Promise.all(selected.map(async variant => {
               try {
                 const response = await withFinePrintSlot(() => readLiveFrame(variant.jpeg, 'fine_print'));
-                return { name: variant.name, bottles: response.bottles };
+                return response.labelRead ? { name: variant.name, read: response.labelRead } : null;
               } catch { return null; }
             }));
-            return reads.filter((v): v is { name: string; bottles: BottleRead[] } => !!v).flatMap(v => v.bottles.map(read => ({ name: v.name, read })));
+            return reads.filter((v): v is { name: string; read: LabelRead } => !!v);
           } catch { return []; }
         }));
         const finalBottles = result.bottles.map((bottle, index) => {
           const candidates = fineReads[index] || [];
-          const fine = candidates.map(c => c.read).filter(Boolean).sort((a, b) => {
-            const confidence = (x: BottleRead) => Object.values(x.fieldConfidence || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+          const fine = candidates.map(c => c.read).sort((a, b) => {
+            const confidence = (x: LabelRead) => Object.values(x.fieldConfidence || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
             return confidence(b) - confidence(a);
           })[0];
           if (!fine) return bottle;
@@ -389,7 +393,29 @@ export default function LiveScanner({ photos, onClose, onJourneyItems, source = 
             }
           }
           const supported = (field: string, value: string) => value && Number(fine.fieldConfidence?.[field] || 0) >= 0.78 ? value : '';
-          return { ...bottle, details,
+          const brand = supported('brand', fine.brand);
+          const product = supported('product', fine.product);
+          const category = supported('category', fine.category);
+          const words = [...new Set([...bottle.words, ...candidates.flatMap(c => c.read.words)])].slice(0, 8);
+          const mergedBrand = bottle.brand || brand;
+          const mergedProduct = bottle.product || product;
+          const mergedCategory = category && category !== 'other' ? category : bottle.category;
+          for (const [field, value] of Object.entries({
+            brand: mergedBrand, product: mergedProduct, category: mergedCategory,
+            proof: bottle.proof || supported('proof', fine.proof),
+            size: bottle.size || supported('size', fine.size),
+            origin: bottle.origin || supported('origin', fine.origin),
+          })) {
+            const score = Number(fine.fieldConfidence?.[field] || 0);
+            if (value && score >= 0.78) fieldConfidence[field] = Math.max(Number(fieldConfidence[field] || 0), score);
+          }
+          const confidence = Math.max(bottle.confidence, Number(fine.fieldConfidence?.brand || 0));
+          return { ...bottle, details, words,
+            brand: mergedBrand,
+            product: mergedProduct,
+            category: mergedCategory,
+            confidence,
+            state: bottle.state === 'unsure' && !!mergedBrand && confidence >= 0.78 ? 'reported' : bottle.state,
             proof: bottle.proof || supported('proof', fine.proof),
             size: bottle.size || supported('size', fine.size),
             origin: bottle.origin || supported('origin', fine.origin),
