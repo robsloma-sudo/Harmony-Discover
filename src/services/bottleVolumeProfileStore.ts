@@ -20,9 +20,9 @@ export function getBottleCalibrationKey(match: { id: string; score: number } | n
 export async function loadBottleVolumeProfiles(): Promise<ProfileRegistry> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) return { version: 1, profiles: {} };
+    if (!raw) { cachedProfiles = {}; return { version: 1, profiles: {} }; }
     const parsed = JSON.parse(raw) as Partial<ProfileRegistry>;
-    if (parsed.version !== 1 || !parsed.profiles || typeof parsed.profiles !== 'object') return { version: 1, profiles: {} };
+    if (parsed.version !== 1 || !parsed.profiles || typeof parsed.profiles !== 'object') { cachedProfiles = {}; return { version: 1, profiles: {} }; }
     const profiles: Record<string, BottleVolumeProfile> = {};
     for (const [key, profile] of Object.entries(parsed.profiles)) {
       if (key && profile && validateBottleVolumeProfile(profile)) profiles[key] = profile;
@@ -30,6 +30,7 @@ export async function loadBottleVolumeProfiles(): Promise<ProfileRegistry> {
     cachedProfiles = profiles;
     return { version: 1, profiles };
   } catch {
+    cachedProfiles = {};
     return { version: 1, profiles: {} };
   }
 }
