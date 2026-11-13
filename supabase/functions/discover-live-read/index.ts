@@ -608,6 +608,8 @@ Deno.serve(async (req: Request) => {
           details: { ...b.details, ...research.details },
           field_confidence: { ...(b.field_confidence as Record<string,number> || {}), ...research.fieldConfidence },
           research_sources: research.sources,
+          research_details: research.details,
+          research_field_confidence: research.fieldConfidence,
         };
       } catch {
         return b;
