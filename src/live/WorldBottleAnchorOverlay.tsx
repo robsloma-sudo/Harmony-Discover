@@ -57,7 +57,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
-        confidence: candidate.confidence, timestamp: candidate.timestamp,
+        confidence: candidate.confidence, timestamp: candidate.timestamp!,
         contour: candidate.contour,
         bottle: candidate.bottle,
       }], observationFrame);
