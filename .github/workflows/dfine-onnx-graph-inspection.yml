@@ -98,6 +98,14 @@ jobs:
             --output /tmp/dfine_seg_n_coco.onnx
           shasum -a 256 /tmp/dfine_seg_n_coco.onnx
 
+      - name: Download pinned D-FINE Nano detection-only model
+        run: |
+          curl --fail --location --retry 3 \
+            "https://huggingface.co/AnnotateIt/dfine-nano-coco-onnx/resolve/571d397/model.onnx" \
+            --output /tmp/dfine_nano_detection.onnx
+          echo "b0ec2e5793f3a3cbd07440d098645a0e102cd450fb92f4f35e713f36e35d152e  /tmp/dfine_nano_detection.onnx" | shasum -a 256 --check
+          test "$(stat -f%z /tmp/dfine_nano_detection.onnx)" -eq 15434935
+
       - name: Compare CPU and CoreML inference
         run: |
           python - <<'PY'
@@ -189,6 +197,85 @@ jobs:
               "cpu_only": cpu,
               "coreml_with_cpu_fallback": coreml,
               "cpu_vs_coreml_output_max_abs_delta": numeric_deltas,
+              "note": "Apple Silicon macOS benchmark only; not an iPhone or sustained thermal benchmark.",
+          }, indent=2))
+          PY
+
+      - name: Benchmark D-FINE Nano detection-only model
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import numpy as np
+          import onnxruntime as ort
+
+          model = "/tmp/dfine_nano_detection.onnx"
+          available = ort.get_available_providers()
+          print("Available providers:", available)
+          if "CoreMLExecutionProvider" not in available:
+              raise SystemExit("CoreMLExecutionProvider is not present in this ONNX Runtime build")
+
+          sample = np.random.default_rng(20261113).random((1, 3, 640, 640), dtype=np.float32)
+
+          def percentile(values, fraction):
+              ordered = sorted(values)
+              return ordered[min(len(ordered) - 1, int((len(ordered) - 1) * fraction))]
+
+          def benchmark(providers, verbose=False):
+              options = ort.SessionOptions()
+              options.log_severity_level = 0 if verbose else 2
+              options.log_verbosity_level = 1 if verbose else 0
+              options.enable_profiling = True
+              started = time.perf_counter()
+              session = ort.InferenceSession(model, sess_options=options, providers=providers)
+              load_ms = (time.perf_counter() - started) * 1000
+              input_meta = session.get_inputs()[0]
+              started = time.perf_counter()
+              outputs = session.run(None, {input_meta.name: sample})
+              first_ms = (time.perf_counter() - started) * 1000
+              for _ in range(5):
+                  session.run(None, {input_meta.name: sample})
+              timings = []
+              for _ in range(25):
+                  started = time.perf_counter()
+                  outputs = session.run(None, {input_meta.name: sample})
+                  timings.append((time.perf_counter() - started) * 1000)
+              profile_path = session.end_profiling()
+              with open(profile_path, encoding="utf-8") as profile_file:
+                  events = json.load(profile_file)
+              counts = {}
+              for event in events:
+                  if event.get("cat") == "Node" and event.get("ph") == "X":
+                      provider = event.get("args", {}).get("provider", "unknown")
+                      counts[provider] = counts.get(provider, 0) + 1
+              return {
+                  "session_load_ms": round(load_ms, 2),
+                  "first_inference_ms": round(first_ms, 2),
+                  "warm_p50_ms": round(percentile(timings, 0.50), 2),
+                  "warm_p95_ms": round(percentile(timings, 0.95), 2),
+                  "warm_min_ms": round(min(timings), 2),
+                  "warm_max_ms": round(max(timings), 2),
+                  "providers": session.get_providers(),
+                  "node_events_by_provider": counts,
+                  "output_shapes": [list(value.shape) for value in outputs],
+              }
+
+          cpu = benchmark(["CPUExecutionProvider"])
+          coreml = benchmark([
+              ("CoreMLExecutionProvider", {
+                  "ModelFormat": "MLProgram",
+                  "MLComputeUnits": "ALL",
+                  "RequireStaticInputShapes": "1",
+              }),
+              "CPUExecutionProvider",
+          ], verbose=True)
+          print(json.dumps({
+              "model": "D-FINE Nano COCO detection-only",
+              "model_sha256": "b0ec2e5793f3a3cbd07440d098645a0e102cd450fb92f4f35e713f36e35d152e",
+              "runtime_version": ort.__version__,
+              "input": {"shape": list(sample.shape), "dtype": str(sample.dtype)},
+              "cpu_only": cpu,
+              "coreml_with_cpu_fallback": coreml,
               "note": "Apple Silicon macOS benchmark only; not an iPhone or sustained thermal benchmark.",
           }, indent=2))
           PY
