@@ -44,7 +44,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onDepthStatus", "onCapturedImage", "onFrame")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -88,6 +88,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onVisualCandidates = EventDispatcher()
   let onRecognitionUpdate = EventDispatcher()
   let onDepthEstimate = EventDispatcher()
+  let onCameraPose = EventDispatcher()
   let onDepthStatus = EventDispatcher()
   let onCapturedImage = EventDispatcher()
   let onFrame = EventDispatcher()
@@ -98,6 +99,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private let visionFrameGate = DispatchSemaphore(value: 1)
   private var lastVisionFrameTime: TimeInterval = 0
   private var lastDepthFrameTime: TimeInterval = 0
+  private var lastCameraPoseTime: TimeInterval = 0
   private var nextCandidateTrackID = 1
   private var previousCandidates: [(id: Int, rect: CGRect, confidence: CGFloat)] = []
   private let rectangleOverlay = CAShapeLayer()
@@ -213,6 +215,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       captureFrame(pendingRequest)
     }
     let now = frame.timestamp
+    // Camera pose is lightweight and independent of depth sampling / cloud recognition.
+    // 30 Hz keeps world-anchored boxes attached during normal hand movement.
+    if now - lastCameraPoseTime >= (1.0 / 30.0) {
+      lastCameraPoseTime = now
+      emitCameraPose(frame)
+    }
     if now - lastDepthFrameTime >= 0.50 {
       lastDepthFrameTime = now
       _ = emitDepthFrame(frame)
@@ -320,6 +328,53 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self?.onARError(["message": "Live visual analysis failed: \(error.localizedDescription)"])
         }
       }
+    }
+  }
+
+  /// Emits only the camera pose and projection intrinsics for smooth world-anchor reprojection.
+  /// This avoids shipping depth arrays on every camera frame.
+  private func emitCameraPose(_ frame: ARFrame) {
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    let rawWidth = Double(CVPixelBufferGetWidth(frame.capturedImage))
+    let rawHeight = Double(CVPixelBufferGetHeight(frame.capturedImage))
+    let rotates = orientation == .right || orientation == .left
+    let width = rotates ? rawHeight : rawWidth
+    let height = rotates ? rawWidth : rawHeight
+    let rawK = frame.camera.intrinsics
+    let fx = Double(rawK[0, 0]), fy = Double(rawK[1, 1])
+    let cx = Double(rawK[2, 0]), cy = Double(rawK[2, 1])
+    let fxOriented: Double, fyOriented: Double, cxOriented: Double, cyOriented: Double
+    switch orientation {
+    case .right:
+      fxOriented = fy; fyOriented = fx
+      cxOriented = rawHeight - cy; cyOriented = cx
+    case .left:
+      fxOriented = fy; fyOriented = fx
+      cxOriented = cy; cyOriented = rawWidth - cx
+    case .down:
+      fxOriented = fx; fyOriented = fy
+      cxOriented = rawWidth - cx; cyOriented = rawHeight - cy
+    default:
+      fxOriented = fx; fyOriented = fy
+      cxOriented = cx; cyOriented = cy
+    }
+    let intrinsics = [
+      fxOriented, 0, cxOriented,
+      0, fyOriented, cyOriented,
+      0, 0, 1
+    ]
+    let transform = frame.camera.transform
+    let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
+    let payload: [String: Any] = [
+      "width": width, "height": height,
+      "cameraIntrinsics": intrinsics,
+      "cameraTransform": transformValues,
+      "timestamp": frame.timestamp,
+      "imageOrientation": orientation.rawValue
+    ]
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.isActive else { return }
+      self.onCameraPose(payload)
     }
   }
 
