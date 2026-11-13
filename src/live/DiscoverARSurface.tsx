@@ -195,7 +195,14 @@ function WebLiveCamera(props: NativeProps) {
       const now = Date.now();
       const used = new Set<number>();
       const next: WebTrack[] = [];
-      const output = detections.map(detection => {
+      // Collapse duplicate cloud proposals within this recognition frame before
+      // assigning IDs. Otherwise the first proposal consumes the old track and
+      // the second proposal for the same bottle is forced to create a new ID.
+      const rankedDetections = detections.slice().sort((a, b) => b.confidence - a.confidence);
+      const uniqueDetections = rankedDetections.filter((candidate, index) =>
+        !rankedDetections.slice(0, index).some(kept => isSameBottleBox(kept, candidate)),
+      );
+      const output = uniqueDetections.map(detection => {
         let bestIndex = -1, bestScore = 0;
         webTracks.forEach((track, index) => {
           if (used.has(index)) return;
@@ -394,6 +401,8 @@ function WebLiveCamera(props: NativeProps) {
           return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
         }), frameTimestamp);
         const candidates = localTracks
+          // Local proposals are also deduplicated by the tracker; this second
+          // cross-source gate prevents a local box from shadowing a cloud track.
           .filter(local => !webTracks.some(cloud => isSameBottleBox(cloud, local.bounds)))
           .map(local => ({
             trackId: -Math.abs(local.trackId), x: local.bounds.x, y: local.bounds.y,
