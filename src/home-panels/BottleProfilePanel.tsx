@@ -1,14 +1,14 @@
 import React from "react";
 import { ScrollView, Text, View, Pressable, StyleSheet } from "react-native";
-import type { BottleRead } from "../services/discoverLiveApi";
+import type { BottleRead, BottleIntelligenceProfile } from "../services/discoverLiveApi";
 import { getBottleFamilyLabel, getBottleIntelligenceSections } from "../services/bottleIntelligenceSchema";
 
-type Props = { bottle: BottleRead; onClose: () => void };
+type Props = { bottle: BottleRead; onClose: () => void; intelligence?: BottleIntelligenceProfile | null; intelligenceLoading?: boolean };
 
 const C = { bg:"#0A0D12", panel:"#111720", line:"rgba(153,163,174,0.18)", brass:"#C6A36A", ivory:"#F0F1F2", muted:"#89929D", green:"#77E5B5" };
 const asText = (value: unknown): string => Array.isArray(value) ? value.map(String).join(", ") : typeof value === "string" || typeof value === "number" ? String(value) : "";
 
-export function BottleProfilePanel({ bottle, onClose }: Props) {
+export function BottleProfilePanel({ bottle, onClose, intelligence = null, intelligenceLoading = false }: Props) {
   const details = bottle.details || {};
   const family = getBottleFamilyLabel(bottle.category, details);
   const sections = getBottleIntelligenceSections(bottle.category, details);
@@ -58,6 +58,43 @@ export function BottleProfilePanel({ bottle, onClose }: Props) {
             </View>
           );
         })}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Shared product intelligence</Text>
+          <Text style={styles.sectionDescription}>A background lookup checks the shared Discover product record after this profile opens. Only exact product matches are shown.</Text>
+          {intelligenceLoading ? <Text style={styles.missing}>Checking the shared product record…</Text> : null}
+          {!intelligenceLoading && !intelligence ? <Text style={styles.missing}>No exact shared product record found yet. This bottle remains available as a local scan profile.</Text> : null}
+          {intelligence ? (
+            <>
+              <Text style={styles.sourceMeta}>PRODUCT RECORD · {intelligence.product.status.toUpperCase()} · {intelligence.attributes.length} ATTRIBUTES · {intelligence.evidence.length} EVIDENCE RECORDS</Text>
+              {intelligence.packages.map((pkg, index) => {
+                const values = [
+                  pkg.package_size_ml ? String(pkg.package_size_ml) + " mL" : "",
+                  pkg.abv_percent ? String(pkg.abv_percent) + "% ABV" : "",
+                  asText(pkg.package_type),
+                  asText(pkg.container_material),
+                ].filter(Boolean);
+                return values.length ? <Text key={String(index)} style={styles.fieldValue}>{values.join(" · ")}</Text> : null;
+              })}
+              {intelligence.attributes.map(attribute => {
+                const raw = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
+                return (
+                  <View key={attribute.attribute_code} style={styles.field}>
+                    <Text style={styles.fieldLabel}>{attribute.attribute_code.replace(/_/g, " ").toUpperCase()}</Text>
+                    <Text style={styles.fieldValue}>{raw || attribute.state.replace(/_/g, " ")}</Text>
+                    <Text style={styles.fieldDescription}>{attribute.state.replace(/_/g, " ")}{attribute.confidence !== null ? " · " + Math.round(attribute.confidence * 100) + "% confidence" : ""}</Text>
+                  </View>
+                );
+              })}
+              {intelligence.evidence.map((evidence, index) => (
+                <View key={String(index) + evidence.source_type + (evidence.source_url || "")} style={styles.source}>
+                  <Text style={styles.sourceTitle}>{evidence.source_name || evidence.source_type.replace(/_/g, " ")}</Text>
+                  <Text style={styles.sourceMeta}>{evidence.attribute_code || "PRODUCT EVIDENCE"} · {evidence.verification_state.replace(/_/g, " ")}{evidence.confidence !== null ? " · " + Math.round(evidence.confidence * 100) + "%" : ""}</Text>
+                  {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
+                </View>
+              ))}
+            </>
+          ) : null}
+        </View>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Research & shared evidence</Text>
           <Text style={styles.sectionDescription}>Research sources attached to this scan. Shared sightings should be corroborated before becoming established product facts.</Text>
