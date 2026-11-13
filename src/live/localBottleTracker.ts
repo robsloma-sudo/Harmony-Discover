@@ -29,9 +29,9 @@ function iou(a: NormalizedBounds, b: NormalizedBounds): number {
 
 /**
  * Tracks bottle proposals produced locally by D-FINE, independently of cloud
- * label recognition. IDs occupy a separate range from cloud-created tracks.
- * Candidates are exposed only after two observations to suppress single-frame
- * false positives; their identity remains explicitly unknown until OCR matches.
+ * label recognition. Strong first-frame detections are exposed immediately as
+ * provisional boxes; weaker detections must repeat before becoming visible.
+ * IDs remain stable across observations and brief detector misses.
  */
 export class LocalBottleTracker {
   private tracks: Track[] = [];
@@ -85,7 +85,11 @@ export class LocalBottleTracker {
     this.tracks = next;
 
     return next
-      .filter(track => track.hits >= 2 && track.misses <= 1 && now - track.lastSeenAt <= 8_000)
+      .filter(track =>
+        now - track.lastSeenAt <= 8_000 &&
+        (track.hits >= 2 || (track.hits === 1 && track.confidence >= 0.72)) &&
+        track.misses <= 1,
+      )
       .map(({ trackId, bounds, confidence, contour, hits }) => ({ trackId, bounds, confidence, contour, hits }));
   }
 
