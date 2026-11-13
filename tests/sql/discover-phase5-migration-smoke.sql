@@ -83,7 +83,7 @@ as $$
     '[^a-z0-9]+', ' ', 'g'))
 $$;
 
-\i supabase/migrations/20261112182500_discover_strict_sighting_attach_and_queue_claim.sql
+\i supabase/migrations/20261112185417_discover_strict_sighting_attach_and_queue_claim.sql
 
 -- The attachment and queue-claim RPCs must be service-role-only.
 do $phase6$
