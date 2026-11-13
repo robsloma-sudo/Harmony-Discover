@@ -503,7 +503,7 @@ function WebLiveCamera(props: NativeProps) {
         const cloudCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
+        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates.filter(local => !cloudCandidates.some(cloud => isSameBottleBox(cloud, local)))];
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
 
       } catch (error) {
