@@ -819,7 +819,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self.trackingMisses[trackID] = 0
           let box = observation.boundingBox
           output.append([
-            "trackId": Double(trackID),
+            "trackId": Double(trackID), "timestamp": timestamp,
             "x": Double(box.minX), "y": Double(1 - box.maxY),
             "width": Double(box.width), "height": Double(box.height),
             "confidence": Double(observation.confidence)
