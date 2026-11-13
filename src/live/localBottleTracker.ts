@@ -27,7 +27,7 @@ export function removeNestedBottleProposals(proposals: LocalBottleProposal[]): L
   const ordered = proposals
     .filter(p => validBounds(p.bounds))
     .slice()
-    .sort((a, b) => (b.bounds.width * b.bounds.height) - (a.bounds.width * a.bounds.height));
+    .sort((a, b) => ((b.bounds.width * b.bounds.height) - (a.bounds.width * a.bounds.height)) || (b.confidence - a.confidence));
   const kept: LocalBottleProposal[] = [];
   for (const candidate of ordered) {
     const nested = kept.some(parent => {
@@ -42,7 +42,11 @@ export function removeNestedBottleProposals(proposals: LocalBottleProposal[]): L
       const centerOffset = Math.abs((b.x + b.width / 2) - (a.x + a.width / 2));
       const centered = centerOffset <= a.width * 0.32;
       const inUpperBottle = b.y + b.height <= a.y + a.height * 0.55;
-      return relativeArea <= 0.42 && coverage >= 0.72 && centered && inUpperBottle;
+      const nestedFragment = relativeArea <= 0.42 && coverage >= 0.72 && centered && inUpperBottle;
+      const verticalCenterOffset = Math.abs((b.y + b.height / 2) - (a.y + a.height / 2));
+      const sameFullBottle = coverage >= 0.68 && centerOffset <= Math.max(a.width, b.width) * 0.28
+        && verticalCenterOffset <= Math.max(a.height, b.height) * 0.24;
+      return nestedFragment || sameFullBottle;
     });
     if (!nested) kept.push(candidate);
   }
