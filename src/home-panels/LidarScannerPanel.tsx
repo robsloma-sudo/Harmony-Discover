@@ -3,7 +3,7 @@ import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import type { ARKitDepthFrame, ARTrackingUpdate } from '../live/DiscoverARSurface';
 import type { BottleRead } from '../services/discoverLiveApi';
 import { buildBottleWorldObservations } from '../live/bottleWorldAnchorBridge';
-import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection, updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
+import { updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
 
 const ink = '#F1EEE7';
 const muted = '#9DA7B5';
@@ -47,8 +47,6 @@ function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, c
   const validDepthSamples = depthFrame?.depthMeters.filter(value => Number.isFinite(value) && value > 0).length ?? 0;
   const trackingColor = tracking.state === 'normal' ? green : amber;
   const metricDepth = !!depthFrame && depthFrame.unit === 'meters';
-  const orientation = depthFrame ? arkitOrientationFromRawValue(depthFrame.imageOrientation) : null;
-  const intrinsics = depthFrame ? intrinsicsFromARKitDepth(depthFrame) : null;
   // Associate bottle reads with their exact timestamped camera detections.
   // A depth frame from another moment is rejected by the bridge, never silently reused.
   const usedCandidateTrackIds = new Set<number>();
