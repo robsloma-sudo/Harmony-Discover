@@ -8,6 +8,7 @@ import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
+import { selectLabelBatchCandidates } from './labelBatch';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 
 export type ARTrackingUpdate = {
@@ -253,9 +254,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
           .map(candidate => ({ ...candidate, bottle: undefined as BottleRead | undefined })),
       ];
-      const eligible = candidates
-        .filter(candidate => (!candidate.bottle?.brand || candidate.bottle.confidence < 0.85) && now - (lastLabelReadAt.get(candidate.trackId) ?? 0) >= 15000)
-        .sort((a, b) => (lastLabelReadAt.get(a.trackId) ?? 0) - (lastLabelReadAt.get(b.trackId) ?? 0) || b.confidence - a.confidence);
+      const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
       const crops: Array<{ trackId: number; image: string }> = [];
       for (const candidate of eligible) {
         if (crops.length >= 8) break;
