@@ -70,3 +70,49 @@ export function estimateCalibratedBottleVolume(
     fluidOunces: milliliters / 29.5735295625,
   };
 }
+
+export type BottleCalibrationSample = {
+  heightFraction: number;
+  measuredMilliliters: number;
+};
+
+export type BottleProfileBuildResult =
+  | { status: 'created'; profile: BottleVolumeProfile }
+  | { status: 'invalid'; reason: string };
+
+/** Builds a normalized shape curve from measured bottle fill samples. */
+export function createBottleVolumeProfile(
+  id: string,
+  capacityMl: number,
+  samples: BottleCalibrationSample[],
+): BottleProfileBuildResult {
+  if (typeof id !== 'string' || !id.trim() || !Number.isFinite(capacityMl) || capacityMl <= 0 ||
+      !Array.isArray(samples) || samples.length < 2) {
+    return { status: 'invalid', reason: 'missing_profile_identity_capacity_or_samples' };
+  }
+  const ordered = [...samples].sort((a, b) => a.heightFraction - b.heightFraction);
+  if (ordered.some(sample => !Number.isFinite(sample.heightFraction) || !Number.isFinite(sample.measuredMilliliters) ||
+      sample.heightFraction < 0 || sample.heightFraction > 1 || sample.measuredMilliliters < 0 || sample.measuredMilliliters > capacityMl)) {
+    return { status: 'invalid', reason: 'sample_outside_physical_range' };
+  }
+  if (ordered[0].heightFraction !== 0 || ordered[0].measuredMilliliters !== 0 ||
+      ordered[ordered.length - 1].heightFraction !== 1 || ordered[ordered.length - 1].measuredMilliliters !== capacityMl) {
+    return { status: 'invalid', reason: 'calibration_requires_empty_and_full_endpoints' };
+  }
+  const points: BottleCalibrationPoint[] = [];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const sample = ordered[index];
+    if (index > 0 && (sample.heightFraction <= ordered[index - 1].heightFraction ||
+        sample.measuredMilliliters < ordered[index - 1].measuredMilliliters)) {
+      return { status: 'invalid', reason: 'samples_must_be_strictly_ordered_by_height_and_monotonic_by_volume' };
+    }
+    points.push({
+      heightFraction: sample.heightFraction,
+      volumeFraction: sample.measuredMilliliters / capacityMl,
+    });
+  }
+  const profile: BottleVolumeProfile = { id: id.trim(), capacityMl, points };
+  return validateBottleVolumeProfile(profile)
+    ? { status: 'created', profile }
+    : { status: 'invalid', reason: 'generated_profile_failed_validation' };
+}
