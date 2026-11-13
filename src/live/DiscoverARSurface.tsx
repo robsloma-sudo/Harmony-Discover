@@ -296,7 +296,7 @@ function WebLiveCamera(props: NativeProps) {
         const consensus = assessLiquidInterface(observations);
         if (consensus.status === 'visible') {
           const labelRead = labelReadsByTrack.get(item.trackId);
-          const identityKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure');
+          const identityKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size);
           const profile = identityKey ? (getCachedBottleVolumeProfile(identityKey) ?? bottleVolumeProfiles[identityKey]) : undefined;
           const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
@@ -857,7 +857,7 @@ export function DiscoverARSurface(props: NativeProps) {
               nativeLiquidHistory.current.set(item.trackId, { observations, updatedAt: frame.timestamp });
               const consensus = assessLiquidInterface(observations);
               if (consensus.status === 'visible') {
-                const identityKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state);
+                const identityKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size);
                 const profile = identityKey ? (getCachedBottleVolumeProfile(identityKey) ?? nativeVolumeProfiles.current[identityKey]) : undefined;
                 const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
                 current.liquidLevel = {
