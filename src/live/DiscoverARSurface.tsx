@@ -23,11 +23,11 @@ type NativeProps = ViewProps & {
   recognitionEnabled?: boolean;
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
-  onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number } }) => void;
+  onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number; depthEstimate?: ARKitDepthFrame } }) => void;
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
@@ -555,6 +555,8 @@ export function DiscoverARSurface(props: NativeProps) {
       if (nativeFrameReadBusy) return;
       nativeFrameReadBusy = true;
       const frame = event.nativeEvent;
+      // The attached metric depth and image share this exact ARFrame timestamp.
+      if (frame.depthEstimate) props.onDepthEstimate?.({ nativeEvent: frame.depthEstimate });
       void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
         const signals = nativeVisionSignals.current;
         const signalsAreFresh = !!signals && Date.now() - signals.timestamp < 3500;
@@ -564,14 +566,14 @@ export function DiscoverARSurface(props: NativeProps) {
           text: mergedText,
           barcodes: signalsAreFresh ? signals!.barcodes : [],
           classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
-          frameTimestamp: Date.now(),
+          frameTimestamp: frame.timestamp,
           bottles: result.bottles,
           menu: result.menu,
           diagnostics: result.diagnostics,
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
-        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
+        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, depthFrame: frame.depthEstimate, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle })) } });
       }).catch(error => {
         props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
       }).finally(() => { nativeFrameReadBusy = false; });

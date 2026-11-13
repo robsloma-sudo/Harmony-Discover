@@ -2,7 +2,8 @@ import React from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import type { ARKitDepthFrame, ARTrackingUpdate } from '../live/DiscoverARSurface';
 import type { BottleRead } from '../services/discoverLiveApi';
-import { arkitOrientationFromRawValue, cameraPointToWorld, intrinsicsFromARKitDepth, unprojectDetection, updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
+import { buildBottleWorldObservations } from '../live/bottleWorldAnchorBridge';
+import { updateWorldSpatialTracks, type SpatialTrack } from '../live/spatialTracking';
 
 const ink = '#F1EEE7';
 const muted = '#9DA7B5';
@@ -15,7 +16,7 @@ type Props = {
   tracking: ARTrackingUpdate;
   depthStatus: string;
   depthFrame: ARKitDepthFrame | null;
-  candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number }>;
+  candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; depthFrame?: ARKitDepthFrame; contour?: Array<{ x: number; y: number }> }>;
   bottles: BottleRead[];
 };
 
@@ -46,48 +47,50 @@ function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, c
   const validDepthSamples = depthFrame?.depthMeters.filter(value => Number.isFinite(value) && value > 0).length ?? 0;
   const trackingColor = tracking.state === 'normal' ? green : amber;
   const metricDepth = !!depthFrame && depthFrame.unit === 'meters';
-  const orientation = depthFrame ? arkitOrientationFromRawValue(depthFrame.imageOrientation) : null;
-  const intrinsics = depthFrame ? intrinsicsFromARKitDepth(depthFrame) : null;
-  // Candidate association is one-to-one: two cloud bottle boxes must not
-  // inherit the same transient detector ID and collapse into one world track.
+  // Associate bottle reads with their exact timestamped camera detections.
+  // A depth frame from another moment is rejected by the bridge, never silently reused.
   const usedCandidateTrackIds = new Set<number>();
-  const spatialPoints = metricDepth && depthFrame && orientation && intrinsics
+  const spatialDepthFrame = candidates.find(candidate => candidate.depthFrame && candidate.timestamp === candidate.depthFrame.timestamp)?.depthFrame ?? null;
+  const spatialPoints = spatialDepthFrame && spatialDepthFrame.unit === 'meters'
     ? [...bottles].sort((a, b) => b.confidence - a.confidence).flatMap((bottle, index) => {
-        const point = unprojectDetection(
-          bottle.box,
-          { width: depthFrame.width, height: depthFrame.height, metres: depthFrame.depthMeters, confidence: depthFrame.confidence },
-          intrinsics,
-        );
-        if (!point) return [];
-        const world = cameraPointToWorld(point, depthFrame.cameraTransform, orientation);
-        if (!world) return [];
         const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
-        let best: { trackId: number; score: number } | null = null;
+        let best: { candidate: Props['candidates'][number]; score: number } | null = null;
         for (const candidate of candidates) {
-          if (usedCandidateTrackIds.has(candidate.trackId)) continue;
+          if (usedCandidateTrackIds.has(candidate.trackId) || !Number.isFinite(candidate.timestamp)) continue;
           const left = Math.max(box.x, candidate.x), top = Math.max(box.y, candidate.y);
           const right = Math.min(box.x + box.width, candidate.x + candidate.width);
           const bottom = Math.min(box.y + box.height, candidate.y + candidate.height);
           const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
           const union = box.width * box.height + candidate.width * candidate.height - intersection;
           const overlap = union > 0 ? intersection / union : 0;
-          const dx = (box.x + box.width / 2) - (candidate.x + candidate.width / 2);
-          const dy = (box.y + box.height / 2) - (candidate.y + candidate.height / 2);
-          const distance = Math.hypot(dx, dy);
-          const score = overlap >= 0.05 ? overlap : distance <= 0.16 ? 0.05 * (1 - distance / 0.16) : 0;
-          if (score > (best?.score ?? 0)) best = { trackId: candidate.trackId, score };
+          const score = overlap;
+          if (score > (best?.score ?? 0)) best = { candidate, score };
         }
-        if (best) usedCandidateTrackIds.add(best.trackId);
+        if (!best || best.score < 0.05) return [];
+        usedCandidateTrackIds.add(best.candidate.trackId);
+        const bridged = buildBottleWorldObservations([{
+          trackId: best.candidate.trackId,
+          x: best.candidate.x,
+          y: best.candidate.y,
+          width: best.candidate.width,
+          height: best.candidate.height,
+          confidence: Math.min(bottle.confidence, best.candidate.confidence),
+          timestamp: best.candidate.timestamp!,
+          contour: best.candidate.contour,
+          bottle: { brand: bottle.match?.brand || bottle.brand, product: bottle.product, category: bottle.category },
+        }], spatialDepthFrame);
+        const observation = bridged.observations[0];
+        if (!observation) return [];
         return [{
           key: `${bottle.category}-${index}`,
-          trackId: best?.trackId ?? null,
+          trackId: observation.trackId,
           categoryKey: bottle.category.toLowerCase(),
-          identityKey: (bottle.match?.brand || bottle.brand || bottle.product || '').trim().toLowerCase().replace(/\\s+/g, ' '),
-          box: bottle.box,
-          confidence: bottle.confidence,
+          identityKey: observation.visualKey || '',
+          box: observation.box,
+          confidence: observation.confidence,
           name: bottle.match?.brand || bottle.brand || bottle.product || bottle.category.replace(/_/g, ' '),
-          world,
-          samples: point.sampleCount,
+          world: observation.worldPoint,
+          samples: observation.sampleCount,
         }];
       })
     : [];
@@ -98,10 +101,8 @@ function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, c
     if (point.trackId !== null) spatialPointMetadataRef.current.set(point.trackId, point);
   }
   React.useEffect(() => {
-    if (tracking.state !== 'normal') {
-      worldTracksRef.current = [];
-      return;
-    }
+    // Preserve world-space tracks during temporary limited/relocalizing states.
+    // They age out through updateWorldSpatialTracks instead of being erased on a brief interruption.
     const updates = spatialPoints
       .filter(point => point.trackId !== null)
       .map(point => ({ trackId: point.trackId as number, point: point.world, confidence: 1 }));

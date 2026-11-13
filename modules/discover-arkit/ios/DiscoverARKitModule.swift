@@ -215,7 +215,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let now = frame.timestamp
     if now - lastDepthFrameTime >= 0.50 {
       lastDepthFrameTime = now
-      emitDepthFrame(frame)
+      _ = emitDepthFrame(frame)
     }
     guard isRecognitionEnabled else { return }
     // Run local OCR/barcode/classification at 2 Hz; cloud bottle identification remains paced at 2.5 seconds.
@@ -223,6 +223,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     lastVisionFrameTime = now
     let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
     if shouldSendCloudFrame { lastCloudFrameTime = now }
+    // Pair metric depth with this exact ARFrame; periodic depth events are not precise enough.
+    let synchronizedDepth = shouldSendCloudFrame ? emitDepthFrame(frame) : nil
     let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
     let pixelBuffer = pixelBufferBox.value
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
@@ -233,7 +235,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let imageWidth = swapsDimensions ? rawHeight : rawWidth
     let imageHeight = swapsDimensions ? rawWidth : rawHeight
 
-    visionQueue.async { [weak self, pixelBufferBox] in
+    visionQueue.async { [weak self, pixelBufferBox, synchronizedDepth] in
       defer { self?.visionFrameGate.signal() }
       guard let self else { return }
       let pixelBuffer = pixelBufferBox.value
@@ -260,7 +262,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       if let cloudFrameBase64 {
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
+          var event: [String: Any] = ["imageBase64": cloudFrameBase64, "timestamp": now]
+          if let synchronizedDepth { event["depthEstimate"] = synchronizedDepth }
+          self.onFrame(event)
         }
       }
       do {
@@ -320,17 +324,17 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   /// Emits sampled metric depth. Zero represents an invalid sample.
-  private func emitDepthFrame(_ frame: ARFrame) {
-    guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return }
-    guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return }
+  private func emitDepthFrame(_ frame: ARFrame) -> [String: Any]? {
+    guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return nil }
+    guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return nil }
     let depthMap = depthData.depthMap
     guard let confidenceMap = depthData.confidenceMap else {
       onDepthStatus(["status": "depth_pixel_buffer_unavailable"])
-      return
+      return nil
     }
     let rawWidth = CVPixelBufferGetWidth(depthMap)
     let rawHeight = CVPixelBufferGetHeight(depthMap)
-    guard rawWidth > 0, rawHeight > 0 else { return }
+    guard rawWidth > 0, rawHeight > 0 else { return nil }
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
     let rotates = orientation == .right || orientation == .left
     // Rotate the depth/confidence grids into the same upright image orientation
@@ -342,7 +346,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     CVPixelBufferLockBaseAddress(depthMap, .readOnly)
     CVPixelBufferLockBaseAddress(confidenceMap, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(confidenceMap, .readOnly); CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-    guard let depthBase = CVPixelBufferGetBaseAddress(depthMap), let confidenceBase = CVPixelBufferGetBaseAddress(confidenceMap) else { return }
+    guard let depthBase = CVPixelBufferGetBaseAddress(depthMap), let confidenceBase = CVPixelBufferGetBaseAddress(confidenceMap) else { return nil }
     let depthValues = depthBase.assumingMemoryBound(to: Float32.self)
     let confidenceValues = confidenceBase.assumingMemoryBound(to: UInt8.self)
     let depthStride = CVPixelBufferGetBytesPerRow(depthMap) / MemoryLayout<Float32>.size
@@ -404,6 +408,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
     let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
     DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
+    return payload
   }
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
     let incoming: [(rect: CGRect, confidence: CGFloat)] = observations.compactMap { item in
@@ -551,7 +556,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
   public func sessionInterruptionEnded(_ session: ARSession) {
     if isActive {
-      sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+      // Let ARKit relocalize against its existing world map. Resetting tracking
+      // here would destroy the coordinate frame that bottle anchors depend on.
+      sceneView.session.run(Self.makeConfiguration(), options: [])
+      onTrackingUpdate(["state": "limited", "reason": "relocalizing"])
     }
   }
 }
