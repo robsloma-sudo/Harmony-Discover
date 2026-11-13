@@ -2,6 +2,11 @@ name: Discover iOS native build
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
     branches:
       - main
     paths:
@@ -24,6 +29,7 @@ concurrency:
 
 jobs:
   ios-native-build:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: macos-15
     timeout-minutes: 45
     steps:
