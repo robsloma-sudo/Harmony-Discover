@@ -41,6 +41,7 @@ export type BottleWorldObservation = {
   box: ImageBox;
   depthMetres: number;
   sampleCount: number;
+  worldCorners: WorldPoint[];
 };
 
 export type SpatialBridgeResult = {
