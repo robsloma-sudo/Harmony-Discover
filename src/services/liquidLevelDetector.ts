@@ -262,6 +262,169 @@ function nineColumns(): number[] {
   return [0.08, 0.18, 0.28, 0.38, 0.5, 0.62, 0.72, 0.82, 0.92];
 }
 
+
+/**
+ * Self-contained worker entrypoint. Keeping every dependency local means
+ * bundler/minifier renaming cannot break a dynamically generated worker.
+ */
+function liquidLevelWorkerMain() {
+  const COLUMN_FRACTIONS = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82];
+  const WINDOW_RADIUS = 3;
+  const MIN_DELTA_E = 7;
+  const MIN_COLUMN_SUPPORT = 0.42;
+
+  function srgbToLinear(value: number): number {
+    const channel = value / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  }
+  function rgbToLab(r: number, g: number, b: number) {
+    const R = srgbToLinear(r), G = srgbToLinear(g), B = srgbToLinear(b);
+    const x = (R * 0.4124564 + G * 0.3575761 + B * 0.1804375) / 0.95047;
+    const y = R * 0.2126729 + G * 0.7151522 + B * 0.0721750;
+    const z = (R * 0.0193339 + G * 0.1191920 + B * 0.9503041) / 1.08883;
+    const f = (v: number) => v > 0.008856451679 ? Math.cbrt(v) : 7.787037037 * v + 16 / 116;
+    const fx = f(x), fy = f(y), fz = f(z);
+    return { l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+  }
+  function meanLab(frame: any, x: number, fromY: number, toY: number) {
+    let r = 0, g = 0, b = 0, count = 0;
+    const left = Math.max(0, Math.min(frame.width - 1, Math.round(x)));
+    const top = Math.max(0, fromY), bottom = Math.min(frame.height - 1, toY);
+    for (let y = top; y <= bottom; y += 1) {
+      const offset = (y * frame.width + left) * 4;
+      if ((frame.data[offset + 3] ?? 255) < 32) continue;
+      r += frame.data[offset]; g += frame.data[offset + 1]; b += frame.data[offset + 2]; count += 1;
+    }
+    return count ? rgbToLab(r / count, g / count, b / count) : null;
+  }
+  function deltaE(a: any, b: any) { return Math.hypot(a.l - b.l, a.a - b.a, a.b - b.b); }
+  function lumaAt(frame: any, x: number, y: number) {
+    const px = Math.max(0, Math.min(frame.width - 1, x));
+    const py = Math.max(0, Math.min(frame.height - 1, y));
+    const offset = (py * frame.width + px) * 4;
+    return 0.2126 * frame.data[offset] + 0.7152 * frame.data[offset + 1] + 0.0722 * frame.data[offset + 2];
+  }
+  function assessOptics(frame: any, bounds: any) {
+    const left = Math.max(0, Math.floor(bounds.x)), right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
+    const top = Math.max(0, Math.floor(bounds.y)), bottom = Math.min(frame.height, Math.ceil(bounds.y + bounds.height));
+    if (right - left < 8 || bottom - top < 12) return { status: 'unobservable', score: 0 };
+    let count = 0, clipped = 0, dark = 0, min = 255, max = 0, sum = 0, sumSquares = 0;
+    for (let row = 0; row < 25; row += 1) for (let col = 0; col < 13; col += 1) {
+      const x = Math.min(right - 1, left + Math.floor(((col + 0.5) / 13) * (right - left)));
+      const y = Math.min(bottom - 1, top + Math.floor(((row + 0.5) / 25) * (bottom - top)));
+      const offset = (y * frame.width + x) * 4;
+      if ((frame.data[offset + 3] ?? 255) < 32) continue;
+      const r = frame.data[offset], g = frame.data[offset + 1], b = frame.data[offset + 2];
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      count += 1; if (Math.min(r, g, b) >= 248) clipped += 1; if (lum <= 12) dark += 1;
+      min = Math.min(min, lum); max = Math.max(max, lum); sum += lum; sumSquares += lum * lum;
+    }
+    if (count < 40) return { status: 'unobservable', score: 0 };
+    const clipFraction = clipped / count, darkFraction = dark / count, range = max - min;
+    const avg = sum / count, variance = Math.max(0, sumSquares / count - avg * avg);
+    if (clipFraction >= 0.42 || darkFraction >= 0.82 || avg <= 9) return { status: 'unobservable', score: 0.1 };
+    if (range < 5 || Math.sqrt(variance) < 2.5) return { status: 'limited', score: 0.35 };
+    const score = Math.max(0, Math.min(1, (1 - clipFraction * 1.8) * (1 - darkFraction * 0.8) * (0.55 + Math.min(1, range / 55) * 0.45)));
+    return { status: score >= 0.55 ? 'observable' : 'limited', score };
+  }
+  function occlusionBands(frame: any, bounds: any) {
+    const left = Math.max(0, Math.floor(bounds.x)), right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
+    const top = Math.max(0, Math.floor(bounds.y)), bottom = Math.min(frame.height, Math.ceil(bounds.y + bounds.height));
+    if (right - left < 8 || bottom - top < 16) return [];
+    const fractions = [0.08,0.18,0.28,0.38,0.5,0.62,0.72,0.82,0.92];
+    const flags: boolean[] = [];
+    for (let y = top + Math.floor((bottom-top)*0.06); y < bottom - Math.floor((bottom-top)*0.06); y += 2) {
+      const values = fractions.map(f => lumaAt(frame, left + Math.floor(f * (right-left-1)), y));
+      const avg = values.reduce((a,b)=>a+b,0)/values.length;
+      const variance = values.reduce((a,b)=>a+(b-avg)*(b-avg),0)/values.length;
+      flags.push(Math.sqrt(variance) >= 34);
+    }
+    const first = top + Math.floor((bottom-top)*0.06);
+    const minRows = Math.max(3, Math.ceil((bottom-top)*0.045/2));
+    const bands: Array<{top:number;bottom:number}> = [];
+    let start = -1;
+    for (let i=0;i<=flags.length;i+=1) {
+      if (flags[i] && start < 0) start=i;
+      if ((!flags[i] || i===flags.length) && start>=0) {
+        if (i-start>=minRows) {
+          const bandTop = Math.max(0,(first+start*2-bounds.y)/bounds.height);
+          const bandBottom = Math.min(1,(first+(i-1)*2+1-bounds.y)/bounds.height);
+          if (bandBottom>bandTop) bands.push({top:bandTop,bottom:bandBottom});
+        }
+        start=-1;
+      }
+    }
+    return bands;
+  }
+  function isOccluded(y: number, bands: Array<{top:number;bottom:number}>) {
+    return bands.some(b => y >= b.top && y <= b.bottom);
+  }
+  function detect(frame: any, bounds: any, bands: Array<{top:number;bottom:number}>) {
+    const left = Math.max(0, Math.floor(bounds.x)), right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
+    const top = Math.max(0, Math.floor(bounds.y)), bottom = Math.min(frame.height, Math.ceil(bounds.y + bounds.height));
+    const width = right-left, height = bottom-top;
+    if (width<8 || height<12) return {status:'insufficient_evidence'};
+    const columns = COLUMN_FRACTIONS.map(f => left + f*(width-1));
+    const firstY = top + Math.max(4,Math.floor(height*0.08));
+    const lastY = bottom - Math.max(4,Math.floor(height*0.04));
+    let bestY=-1,bestContrast=0,bestSupport=0;
+    for(let y=firstY;y<=lastY;y+=1) {
+      if(isOccluded((y-top)/height,bands)) continue;
+      const contrasts:number[]=[];
+      for(const x of columns) {
+        const above=meanLab(frame,x,y-WINDOW_RADIUS,y-1), below=meanLab(frame,x,y+1,y+WINDOW_RADIUS);
+        if(above&&below) contrasts.push(deltaE(above,below));
+      }
+      if(contrasts.length<Math.ceil(columns.length*MIN_COLUMN_SUPPORT)) continue;
+      const support=contrasts.filter(v=>v>=MIN_DELTA_E).length/columns.length;
+      const sorted=[...contrasts].sort((a,b)=>a-b);
+      const contrast=sorted[Math.floor(sorted.length/2)];
+      if(support>=MIN_COLUMN_SUPPORT && contrast*support>bestContrast*bestSupport) {
+        bestY=y;bestContrast=contrast;bestSupport=support;
+      }
+    }
+    if(bestY<0||bestContrast<MIN_DELTA_E||bestSupport<MIN_COLUMN_SUPPORT) return {status:'insufficient_evidence'};
+    const radius=Math.max(4,Math.round(height*0.12));
+    const samples:Array<{x:number;y:number}>=[];
+    for(const x of columns) {
+      let strongestY=-1,strongest=0;
+      for(let y=Math.max(firstY,bestY-radius);y<=Math.min(lastY,bestY+radius);y+=1) {
+        if(isOccluded((y-top)/height,bands)) continue;
+        const above=meanLab(frame,x,y-WINDOW_RADIUS,y-1),below=meanLab(frame,x,y+1,y+WINDOW_RADIUS);
+        if(!above||!below) continue;
+        const contrast=deltaE(above,below);
+        if(contrast>strongest){strongest=contrast;strongestY=y;}
+      }
+      if(strongestY>=0&&strongest>=MIN_DELTA_E) samples.push({x,y:strongestY});
+    }
+    const heights=samples.map(s=>s.y).sort((a,b)=>a-b);
+    const medianY=heights.length?heights[Math.floor(heights.length/2)]:bestY;
+    const spread=heights.length>=4?(heights[heights.length-1]-heights[0])/height:0;
+    const spatial=[...samples].sort((a,b)=>a.x-b.x);
+    const center=spatial.length>=5?spatial.slice(2,-2).map(s=>s.y):heights;
+    const edges=spatial.length>=5?[spatial[0].y,spatial[1].y,spatial[spatial.length-2].y,spatial[spatial.length-1].y]:heights;
+    const avg=values=>values.reduce((a,b)=>a+b,0)/Math.max(1,values.length);
+    const curvature=(avg(center)-avg(edges))/height;
+    const shape=spread<=0.025?'flat':(spread<=0.14&&Math.abs(curvature)>=0.008?'curved':'irregular');
+    return {status:'candidate',normalizedHeight:Math.max(0,Math.min(1,(bottom-medianY)/height)),confidence:Math.max(0,Math.min(1,(bestContrast/28)*bestSupport)),boundaryShape:shape};
+  }
+
+  self.onmessage = function(event: MessageEvent) {
+    const job = event.data;
+    const startedAt = performance.now();
+    try {
+      const frame = {width:job.width,height:job.height,data:new Uint8ClampedArray(job.buffer)};
+      const results = job.tracks.map(track => {
+        const bands = occlusionBands(frame,track.bounds);
+        return {trackId:track.trackId,optical:assessOptics(frame,track.bounds),occlusionBands:bands,result:detect(frame,track.bounds,bands)};
+      });
+      self.postMessage({id:job.id,timestamp:job.timestamp,results,processingMs:performance.now()-startedAt});
+    } catch(error) {
+      self.postMessage({id:job.id,timestamp:job.timestamp,error:error instanceof Error?error.message:'liquid_worker_failed'});
+    }
+  };
+}
+
 /**
  * Creates a dedicated browser worker for pixel analysis. The worker source is
  * assembled from the same detector functions used by unit tests, so the
@@ -273,40 +436,7 @@ export function createLiquidLevelWorker(): Worker | null {
   if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
     return null;
   }
-  const source = [
-    `const COLUMN_FRACTIONS = ${JSON.stringify(COLUMN_FRACTIONS)};`,
-    `const WINDOW_RADIUS = ${WINDOW_RADIUS};`,
-    `const MIN_DELTA_E = ${MIN_DELTA_E};`,
-    `const MIN_COLUMN_SUPPORT = ${MIN_COLUMN_SUPPORT};`,
-    srgbToLinear.toString(),
-    rgbToLab.toString(),
-    meanLab.toString(),
-    deltaE.toString(),
-    isOccluded.toString(),
-    detectLiquidBoundaryCandidate.toString(),
-    assessLiquidOpticalVisibility.toString(),
-    nineColumns.toString(),
-    detectLiquidOcclusionBands.toString(),
-    `self.onmessage = (event) => {
-      const job = event.data;
-      const startedAt = performance.now();
-      try {
-        const frame = { width: job.width, height: job.height, data: new Uint8ClampedArray(job.buffer) };
-        const results = job.tracks.map((track) => {
-          const occlusionBands = detectLiquidOcclusionBands(frame, track.bounds);
-          return {
-            trackId: track.trackId,
-            optical: assessLiquidOpticalVisibility(frame, track.bounds),
-            occlusionBands,
-            result: detectLiquidBoundaryCandidate(frame, track.bounds, { occlusionBands }),
-          };
-        });
-        self.postMessage({ id: job.id, timestamp: job.timestamp, results, processingMs: performance.now() - startedAt });
-      } catch (error) {
-        self.postMessage({ id: job.id, timestamp: job.timestamp, error: error instanceof Error ? error.message : 'liquid_worker_failed' });
-      }
-    };`,
-  ].join('\n');
+  const source = '(' + liquidLevelWorkerMain.toString() + ')();';
   const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
   try {
     const worker = new Worker(url);
