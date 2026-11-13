@@ -5,7 +5,7 @@ export type LabelBatchCandidate = {
   width: number;
   height: number;
   confidence: number;
-  bottle?: { brand?: string; confidence?: number };
+  bottle?: { brand?: string; confidence?: number; label_box?: { x0: number; y0: number; x1: number; y1: number } | null };
 };
 
 /** Select unresolved, cooldown-eligible tracks fairly, preferring stronger local detections. */
