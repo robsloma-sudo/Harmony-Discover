@@ -338,6 +338,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     view.automaticallyUpdatesLighting = true
     view.delegate = self
     view.session.delegate = self
+    // Lifecycle state is owned by the main queue; keep ARSession callbacks there too.
+    view.session.delegateQueue = .main
     view.backgroundColor = .black
     addSubview(view)
     // Generic rectangle proposals are not bottle detections. Do not draw them
@@ -737,8 +739,12 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
   /// Seeds Vision tracking from cloud boxes on the exact ARFrame that produced them.
   func setTrackingSeeds(_ seeds: [[String: Any]]) {
+    // Expo view props and ARSession lifecycle callbacks run on main. Snapshot
+    // the generation before handing immutable seed data to visionQueue.
+    guard isActive, isRecognitionEnabled else { return }
+    let generation = recognitionGeneration
     visionQueue.async { [weak self] in
-      guard let self, self.isActive, self.isRecognitionEnabled else { return }
+      guard let self else { return }
       for seed in seeds {
         guard let rawID = seed["trackId"] as? NSNumber,
               let timestamp = seed["sourceTimestamp"] as? NSNumber,
@@ -755,7 +761,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           abs($0 - timestamp.doubleValue) < abs($1 - timestamp.doubleValue)
         }), abs(frameKey - timestamp.doubleValue) <= 0.025,
           let source = self.retainedTrackingFrames[frameKey],
-          source.generation == self.recognitionGeneration else { continue }
+          source.generation == generation else { continue }
 
         let visionRect = CGRect(x: rect.minX, y: 1 - rect.maxY, width: rect.width, height: rect.height)
         let observation = VNDetectedObjectObservation(boundingBox: visionRect)
@@ -792,9 +798,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
     visionQueue.async { [weak self, pixelBufferBox] in
       defer { self?.localTrackingFrameGate.signal() }
-      guard let self, self.isActive, self.isRecognitionEnabled,
-            self.recognitionGeneration == generation,
-            !self.activeTrackingRequests.isEmpty else { return }
+      // Lifecycle is main-queue owned. Any teardown is queued on this same
+      // serial queue; the main-queue delivery gate rejects stale generations.
+      guard let self, !self.activeTrackingRequests.isEmpty else { return }
       var output: [[String: Double]] = []
       for (trackID, request) in Array(self.activeTrackingRequests) {
         guard let sequence = self.trackingSequenceHandlers[trackID] else {
