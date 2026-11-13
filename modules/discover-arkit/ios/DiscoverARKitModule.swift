@@ -556,7 +556,10 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
   public func sessionInterruptionEnded(_ session: ARSession) {
     if isActive {
-      sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+      // Let ARKit relocalize against its existing world map. Resetting tracking
+      // here would destroy the coordinate frame that bottle anchors depend on.
+      sceneView.session.run(Self.makeConfiguration(), options: [])
+      onTrackingUpdate(["state": "limited", "reason": "relocalizing"])
     }
   }
 }
