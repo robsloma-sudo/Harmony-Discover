@@ -1,7 +1,6 @@
 -- Isolated PostgreSQL smoke test for the daily bottle-save spend guard.
 -- Runs after discover-phase5-migration-smoke.sql in the same disposable database.
 \i supabase/migrations/20261112185852_discover_bottle_save_daily_limits.sql
-\i supabase/migrations/20261113152000_discover_bottle_save_null_limit_guard.sql
 \i supabase/migrations/20261113151749_fix_discover_bottle_save_null_limits.sql
 
 do $quota$
