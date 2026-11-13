@@ -53,7 +53,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     if (isNewObservationFrame) lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
     const paired = candidates.flatMap(candidate => {
       if (candidate.source === "local" || candidate.timestamp === undefined || !Number.isFinite(candidate.timestamp)
-        || Math.abs(candidate.timestamp - observationFrame.timestamp) > 0.12) return [];
+        || Math.abs(candidate.timestamp - observationFrame.timestamp) > 0.001) return [];
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
@@ -104,7 +104,9 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     // the same cloud detection is still in memory. Count each source-frame
     // observation exactly once or a single read can falsely satisfy the
     // tracker's two-frame confirmation threshold.
-    const fresh = paired.filter(item => observationGateRef.current.claim(item.key));
+    const fresh = isNewObservationFrame
+      ? paired.filter(item => observationGateRef.current.claim(item.key))
+      : [];
     for (const item of paired) {
       if (!fresh.includes(item)) {
         const physicalId = observationGateRef.current.getPhysicalId(item.key);
