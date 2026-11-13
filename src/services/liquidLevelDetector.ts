@@ -307,7 +307,8 @@ function liquidLevelWorkerMain() {
   function assessOptics(frame: any, bounds: any) {
     const left = Math.max(0, Math.floor(bounds.x)), right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
     const top = Math.max(0, Math.floor(bounds.y)), bottom = Math.min(frame.height, Math.ceil(bounds.y + bounds.height));
-    if (right - left < 8 || bottom - top < 12) return { status: 'unobservable', score: 0 };
+    const empty = { status: 'unobservable', score: 0, sampledPixels: 0, clippedHighlightFraction: 0, deepShadowFraction: 0, luminanceRange: 0, reason: 'invalid_crop' };
+    if (right - left < 8 || bottom - top < 12) return empty;
     let count = 0, clipped = 0, dark = 0, min = 255, max = 0, sum = 0, sumSquares = 0;
     for (let row = 0; row < 25; row += 1) for (let col = 0; col < 13; col += 1) {
       const x = Math.min(right - 1, left + Math.floor(((col + 0.5) / 13) * (right - left)));
@@ -319,13 +320,15 @@ function liquidLevelWorkerMain() {
       count += 1; if (Math.min(r, g, b) >= 248) clipped += 1; if (lum <= 12) dark += 1;
       min = Math.min(min, lum); max = Math.max(max, lum); sum += lum; sumSquares += lum * lum;
     }
-    if (count < 40) return { status: 'unobservable', score: 0 };
+    if (count < 40) return { ...empty, sampledPixels: count, reason: 'insufficient_valid_pixels' };
     const clipFraction = clipped / count, darkFraction = dark / count, range = max - min;
     const avg = sum / count, variance = Math.max(0, sumSquares / count - avg * avg);
-    if (clipFraction >= 0.42 || darkFraction >= 0.82 || avg <= 9) return { status: 'unobservable', score: 0.1 };
-    if (range < 5 || Math.sqrt(variance) < 2.5) return { status: 'limited', score: 0.35 };
+    const metrics = { sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range };
+    if (clipFraction >= 0.42) return { ...metrics, status: 'unobservable', score: 0.1, reason: 'severe_specular_glare' };
+    if (darkFraction >= 0.82 || avg <= 9) return { ...metrics, status: 'unobservable', score: 0.1, reason: 'underexposed_or_opaque_crop' };
+    if (range < 5 || Math.sqrt(variance) < 2.5) return { ...metrics, status: 'limited', score: 0.35, reason: 'insufficient_local_optical_variation' };
     const score = Math.max(0, Math.min(1, (1 - clipFraction * 1.8) * (1 - darkFraction * 0.8) * (0.55 + Math.min(1, range / 55) * 0.45)));
-    return { status: score >= 0.55 ? 'observable' : 'limited', score };
+    return { ...metrics, status: score >= 0.55 ? 'observable' : 'limited', score, reason: score >= 0.55 ? 'usable_optical_signal' : 'mixed_glare_shadow_or_low_contrast' };
   }
   function occlusionBands(frame: any, bounds: any) {
     const left = Math.max(0, Math.floor(bounds.x)), right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
