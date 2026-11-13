@@ -101,8 +101,16 @@ Deno.serve(async (req: Request) => {
             vintage: labelDetails.vintage ?? sightingRow.read_vintage ?? undefined,
             package_size: labelDetails.package_size ?? sightingRow.read_size ?? undefined,
           };
+          const { data: existingAttributes, error: existingAttributesError } = await db.from("discover_product_attributes")
+            .select("attribute_code,state").eq("discover_product_id", productId);
+          if (existingAttributesError) throw new Error("existing_product_attributes_unavailable");
+          const alreadyHandled = new Set((existingAttributes ?? [])
+            .filter((row: { attribute_code?: string; state?: string }) =>
+              !!row.attribute_code && row.state !== "queued"
+            )
+            .map((row: { attribute_code?: string }) => String(row.attribute_code)));
           const missing = RESEARCH_DETAIL_FIELDS.filter(field =>
-            !String(knownDetails[field] ?? "").replace(/\s+/g, " ").trim()
+            !String(knownDetails[field] ?? "").replace(/\s+/g, " ").trim() && !alreadyHandled.has(field)
           );
           if (!missing.length) {
             output = { result: "no_missing_research_fields", ...validated, evidence_saved: 0, attributes_added: 0 };
