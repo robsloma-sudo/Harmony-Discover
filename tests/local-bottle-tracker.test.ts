@@ -76,6 +76,16 @@ describe('independent local bottle tracks', () => {
     expect(visible[0]?.bounds).toEqual(fullBottle.bounds);
   });
 
+  it('collapses repeated full-bottle proposals into one candidate', () => {
+    const first = proposal(0.2, 0.88);
+    const duplicate = { ...proposal(0.205, 0.96), bounds: { x: 0.205, y: 0.105, width: 0.12, height: 0.55 } };
+    const result = removeNestedBottleProposals([first, duplicate]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.confidence).toBe(0.96);
+    const tracker = new LocalBottleTracker();
+    expect(tracker.update([first, duplicate], 1000)).toHaveLength(1);
+  });
+
   it('keeps two adjacent full bottles as separate proposals', () => {
     const left = proposal(0.1, 0.91);
     const right = proposal(0.65, 0.91);
