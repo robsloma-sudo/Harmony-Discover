@@ -47,7 +47,8 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
       <Text style={s.section}>LIVE INVENTORY FEED · {candidates.length || bottles.length}</Text>
       {candidates.length ? candidates.map((candidate,index)=>{
         const bottle=(candidate as typeof candidate & {trackId?:number;bottle?:BottleRead}).bottle;
-        const confidence=Math.round(candidate.confidence*100);\n        const fillLabel=candidate.liquidLevel ? ` · FILL HEIGHT ~${candidate.liquidLevel.heightPercent}%` : ''; 
+        const confidence=Math.round(candidate.confidence*100);
+        const fillLabel=candidate.liquidLevel ? ` · FILL HEIGHT ~${candidate.liquidLevel.heightPercent}%` : ''; 
         return <View key={String((candidate as typeof candidate & {trackId?:number}).trackId ?? index)} style={s.group}>
           <View style={s.groupButton}><View style={{flex:1}}>
             <Text style={s.groupTitle}>{bottle ? [bottle.match?.brand||bottle.brand,bottle.product].filter(Boolean).join(' ')||'Bottle detected' : 'Bottle detected · reading label'}</Text>
