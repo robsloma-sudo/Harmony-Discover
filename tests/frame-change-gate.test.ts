@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changedCellRatio, sampleLumaGrid, shouldReadChangedFrame } from '../src/live/frameChangeGate';
+import { changedCellRatio, frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from '../src/live/frameChangeGate';
 
 describe('live frame change gate', () => {
   it('samples a bounded grayscale grid from RGBA input', () => {
@@ -26,6 +26,12 @@ describe('live frame change gate', () => {
     for (let i = 0; i < 5; i += 1) current[i] = 140;
     expect(changedCellRatio(previous, current)).toBe(0.05);
     expect(shouldReadChangedFrame(previous, current)).toBe(true);
+  });
+
+  it('schedules the next unchanged-frame retry at the remaining heartbeat', () => {
+    expect(frameGateRetryDelay(4_400, 0, 5_000)).toBe(600);
+    expect(frameGateRetryDelay(9_000, 0, 5_000)).toBe(0);
+    expect(frameGateRetryDelay(4_000, 500, 7_500)).toBe(4_000);
   });
 
   it('treats incompatible sample grids as changed', () => {
