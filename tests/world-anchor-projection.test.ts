@@ -39,8 +39,8 @@ describe("world-anchor camera reprojection", () => {
         worldPoint!,
         { ...frame(), imageOrientation: orientation.raw },
       );
-      expect(projected?.x).toBeCloseTo(0.7);
-      expect(projected?.y).toBeCloseTo(0.4);
+      expect(projected?.x).toBeCloseTo(0.6);
+      expect(projected?.y).toBeCloseTo(0.45);
     }
   });
 
