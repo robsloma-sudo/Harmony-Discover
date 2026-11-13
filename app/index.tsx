@@ -37,7 +37,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;contour?:Array<{x:number;y:number}>;bottle?:BottleRead}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead}>>([]);
   // Viewfinder boxes are image-space observations, not world-anchored AR
   // anchors. Expire them quickly so a slow recognition request cannot leave
   // detections pinned to screen coordinates after the camera has moved.
@@ -182,7 +182,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
-          onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates)}
+          onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates.map(candidate => ({ ...candidate, depthFrame: event.nativeEvent.depthFrame })))}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
             if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
