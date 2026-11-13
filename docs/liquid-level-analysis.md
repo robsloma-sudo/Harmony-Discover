@@ -39,7 +39,7 @@ For a meaningful iPhone comparison:
 1. Use the same device, camera, lighting, backbar scene, and bottle arrangement.
 2. Record a 60-second baseline with liquid analysis disabled, then a 60-second run with it enabled.
 3. Compare median and 95th-percentile local-frame time, time to first bottle box, time to confirmed product identity, dropped frames, battery change, and device temperature.
-4. Repeat with one, four, and eight visible bottles; the worker only analyzes up to four local tracks per frame.
+4. Repeat with one, four, and eight visible bottles; both web and native background analysis are capped at four bottle tracks per frame.
 5. Test clear, green, amber, dark, and opaque glass; front/back lighting; glare; labels crossing the liquid line; and a hand covering part of the bottle.
 
 Do not call the feature performance-safe based on desktop timing alone. Physical iPhone Safari and native-app measurements are still required before production rollout.
