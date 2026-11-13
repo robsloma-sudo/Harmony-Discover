@@ -84,6 +84,11 @@ jobs:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-bottle-save-limits-smoke.sql
 
+      - name: Smoke-test official research budget migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-official-research-budget-smoke.sql
+
       - name: TypeScript validation
         run: npm run typecheck
 
