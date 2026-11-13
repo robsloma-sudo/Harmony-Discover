@@ -24,9 +24,9 @@ module.exports = function withOnnxRuntimeQuotedHeaderWorkaround(config) {
       "    build_config.build_settings['CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER'] = 'NO'",
       '  end',
       '',
-    ].join('\\n');
+    ].join('\n');
 
-    podfile = podfile.replace(postInstall, postInstall + '\\n' + workaround);
+    podfile = podfile.replace(postInstall, postInstall + '\n' + workaround);
     config.modResults.contents = podfile;
     return config;
   });
