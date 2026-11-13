@@ -437,6 +437,13 @@ function WebLiveCamera(props: NativeProps) {
                   moved = true;
                 });
                 if (moved) {
+                  localBottleTracker.applyOpticalFlow(latestLocalCandidates.flatMap(candidate => {
+                    const next = updates.get('local:' + candidate.trackId);
+                    return next ? [{
+                      trackId: Math.abs(candidate.trackId),
+                      bounds: { x: next.x, y: next.y, width: candidate.width, height: candidate.height },
+                    }] : [];
+                  }));
                   latestLocalCandidates = latestLocalCandidates.map(candidate => {
                     const next = updates.get('local:' + candidate.trackId);
                     if (!next) return candidate;
