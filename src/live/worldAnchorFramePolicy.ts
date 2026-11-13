@@ -4,7 +4,7 @@ export function isEligibleWorldAnchorCandidate(
   observationTimestamp: number,
   maximumDeltaSeconds = 0.001,
 ): boolean {
-  return source !== "local"
+  return source === "cloud"
     && candidateTimestamp !== undefined
     && Number.isFinite(candidateTimestamp)
     && Number.isFinite(observationTimestamp)
