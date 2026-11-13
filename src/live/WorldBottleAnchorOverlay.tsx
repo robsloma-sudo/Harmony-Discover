@@ -7,6 +7,7 @@ import { SpatialBottleTracker, type SpatialTrack } from "./spatialBottleTracker"
 import { projectWorldRectangle } from "./worldAnchorProjection";
 import { PhysicalBottleIdentityRegistry } from "./physicalBottleIdentity";
 import { WorldAnchorObservationGate } from "./worldAnchorObservationGate";
+import { isEligibleWorldAnchorCandidate } from "./worldAnchorFramePolicy";
 
 type Candidate = {
   trackId: number; x: number; y: number; width: number; height: number;
@@ -52,8 +53,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     const isNewObservationFrame = observationFrame.timestamp > lastProcessedFrameTimestampRef.current;
     if (isNewObservationFrame) lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
     const paired = candidates.flatMap(candidate => {
-      if (candidate.source === "local" || candidate.timestamp === undefined || !Number.isFinite(candidate.timestamp)
-        || Math.abs(candidate.timestamp - observationFrame.timestamp) > 0.001) return [];
+      if (!isEligibleWorldAnchorCandidate(candidate.source, candidate.timestamp, observationFrame.timestamp)) return [];
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
