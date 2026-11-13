@@ -32,7 +32,14 @@ export function calculateLabelCrop(
 
   const maxLongEdge = Math.max(256, options.maxLongEdge ?? 2048);
   const maxUpscale = Math.max(1, Math.min(2, options.maxUpscale ?? 2));
-  const scale = Math.min(maxUpscale, maxLongEdge / Math.max(sw, sh));
+  const sourceLongEdge = Math.max(sw, sh);
+  // Preserve native pixels for already-readable crops. Upscale only genuinely
+  // small labels; downscale only when the source crop exceeds the hard cap.
+  const scale = sourceLongEdge > maxLongEdge
+    ? maxLongEdge / sourceLongEdge
+    : sourceLongEdge < 768
+      ? Math.min(maxUpscale, maxLongEdge / sourceLongEdge)
+      : 1;
   return {
     sx, sy, sw, sh,
     outputWidth: Math.max(2, Math.round(sw * scale)),
