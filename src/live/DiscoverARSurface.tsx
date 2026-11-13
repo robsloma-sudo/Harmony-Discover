@@ -243,16 +243,19 @@ function WebLiveCamera(props: NativeProps) {
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
       if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
       const now = Date.now();
+      const activeCloudTracks = webTracks.filter(track => track.misses === 0);
       const candidates = [
-        ...webTracks.filter(track => track.misses === 0).map(track => ({
+        ...activeCloudTracks.map(track => ({
           trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
           bottle: track.bottle,
         })),
-        ...latestLocalCandidates.map(candidate => ({ ...candidate, bottle: undefined as BottleRead | undefined })),
+        ...latestLocalCandidates
+          .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
+          .map(candidate => ({ ...candidate, bottle: undefined as BottleRead | undefined })),
       ];
       const eligible = candidates
-        .filter(candidate => now - (lastLabelReadAt.get(candidate.trackId) ?? 0) >= 15000)
-        .sort((a, b) => (lastLabelReadAt.get(a.trackId) ?? 0) - (lastLabelReadAt.get(b.trackId) ?? 0));
+        .filter(candidate => (!candidate.bottle?.brand || candidate.bottle.confidence < 0.85) && now - (lastLabelReadAt.get(candidate.trackId) ?? 0) >= 15000)
+        .sort((a, b) => (lastLabelReadAt.get(a.trackId) ?? 0) - (lastLabelReadAt.get(b.trackId) ?? 0) || b.confidence - a.confidence);
       const crops: Array<{ trackId: number; image: string }> = [];
       for (const candidate of eligible) {
         if (crops.length >= 8) break;
