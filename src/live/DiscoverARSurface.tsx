@@ -817,6 +817,9 @@ export function DiscoverARSurface(props: NativeProps) {
   const nativeFrameReadBusy = useRef(false);
   const nativeLiquidBusy = useRef(false);
   const nativeSessionGeneration = useRef(0);
+  // ARFrame timestamps are monotonic seconds. Used only to reject delayed
+  // liquid enrichments; bottle recognition publication remains independent.
+  const latestNativeFrameTimestamp = useRef(0);
   const nativeLiquidHistory = useRef(new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>());
   const nativeVolumeProfiles = useRef<Record<string, BottleVolumeProfile>>({});
   useEffect(() => {
@@ -856,6 +859,8 @@ export function DiscoverARSurface(props: NativeProps) {
       props.onRecognitionUpdate?.({ nativeEvent: { ...value, barcodeStatus: 'available' } });
     }}
     onFrame={event => {
+      const incomingFrame = event.nativeEvent;
+      latestNativeFrameTimestamp.current = Math.max(latestNativeFrameTimestamp.current, incomingFrame.timestamp);
       if (nativeFrameReadBusy.current) return;
       nativeFrameReadBusy.current = true;
       const generation = nativeSessionGeneration.current;
@@ -892,6 +897,15 @@ export function DiscoverARSurface(props: NativeProps) {
             trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height,
           }))).then(analyses => {
             if (generation !== nativeSessionGeneration.current) return;
+            // Never attach a delayed measurement to a bottle whose live geometry
+            // may have moved since this analysis frame was captured.
+            if (latestNativeFrameTimestamp.current - frame.timestamp > 1.4) {
+              onLiquidMetrics?.({ nativeEvent: {
+                jobsDispatched: 1, jobsCompleted: 0, framesSkipped: 1, workerErrors: 0,
+                lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
+              } });
+              return;
+            }
             const nativeProcessingMs = analyses.reduce((max, item) => Math.max(max, Number(item.processingMs) || 0), 0);
             let changed = false;
             for (const item of analyses) {
