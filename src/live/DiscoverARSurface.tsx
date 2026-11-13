@@ -5,6 +5,8 @@ import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { associateInstanceMasks, SegmentationRunner } from './segmentationEngine';
+import { extractMaskContour } from './maskContour';
+import { LocalBottleTracker } from './localBottleTracker';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 
 export type ARTrackingUpdate = {
@@ -102,6 +104,7 @@ function WebLiveCamera(props: NativeProps) {
     let segmentationRunner: SegmentationRunner | null = null;
     let segmentationLoading: Promise<void> | null = null;
     let segmentationLoadFailed = false;
+    const localBottleTracker = new LocalBottleTracker();
     let pageVisible = document.visibilityState === 'visible';
     const handleVisibilityChange = () => {
       pageVisible = document.visibilityState === 'visible';
@@ -256,6 +259,21 @@ function WebLiveCamera(props: NativeProps) {
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
         const instances = await segmentationPromise;
+        // D-FINE proposals are independent bottle detections. Preserve those
+        // that do not overlap a cloud-read bottle as unidentified local tracks.
+        const localTracks = localBottleTracker.update(instances.map(instance => {
+          const contour = extractMaskContour(instance.data, instance.width, instance.height, {
+            bounds: instance.bounds, minimumPixels: 12, minimumArea: 0.001, maxPoints: 96,
+          });
+          return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
+        }), frameTimestamp);
+        const localCandidates = localTracks
+          .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
+          .map(local => ({
+            trackId: local.trackId, x: local.bounds.x, y: local.bounds.y,
+            width: local.bounds.width, height: local.bounds.height,
+            confidence: local.confidence, contour: local.contour,
+          }));
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
           const segmented = associateInstanceMasks(
             trackedCandidates.slice(0, 8).map(track => ({
@@ -278,7 +296,8 @@ function WebLiveCamera(props: NativeProps) {
         const maskCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, candidates: maskCandidates } });
+        const visibleCandidates = [...maskCandidates, ...localCandidates];
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
 
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
@@ -372,6 +391,7 @@ function WebLiveCamera(props: NativeProps) {
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (depthTimer) window.clearInterval(depthTimer);
+      localBottleTracker.reset();
       if (segmentationRunner) void segmentationRunner.dispose();
       depthEstimator?.dispose();
       if (stream) stream.getTracks().forEach(track => track.stop());
