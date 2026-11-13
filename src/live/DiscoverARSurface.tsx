@@ -167,8 +167,10 @@ function WebLiveCamera(props: NativeProps) {
       segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5 }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
         segmentationRunner = new SegmentationRunner(provider, {
-          minimumIntervalMs: 500,
-          maximumFrameAgeMs: 900,
+          // Keep local bottle geometry responsive on mobile; the runner is
+          // single-flight, so slower devices naturally run at their own pace.
+          minimumIntervalMs: 350,
+          maximumFrameAgeMs: 700,
           maximumTracksPerFrame: 8,
         });
       }).catch(error => {
@@ -560,7 +562,7 @@ function WebLiveCamera(props: NativeProps) {
       void Promise.resolve(ensureSegmentationRunner()).then(() => {
         if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
         void runLocalDetection();
-        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 500);
+        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 350);
       });
     };
 
@@ -654,6 +656,9 @@ function WebLiveCamera(props: NativeProps) {
 
     const start = async () => {
       try {
+        // Download and initialize the local detector while camera permission
+        // and stream startup are in progress, not after the first live frame.
+        void ensureSegmentationRunner();
         if (!window.isSecureContext) {
           throw new Error('Camera access requires a secure HTTPS page. Open the Harmony Discover HTTPS website.');
         }
