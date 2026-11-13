@@ -13,4 +13,8 @@ Pod::Spec.new do |s|
   # Research spike only: native D-FINE inference with CPU + CoreML execution providers.
   s.dependency 'onnxruntime-objc', '1.32.0'
   s.source_files = '**/*.{h,m,mm,swift}'
+  s.public_header_files = 'DfineOrtSessionProbe.h'
+  s.pod_target_xcconfig = {
+    'SWIFT_OBJC_BRIDGING_HEADER' => '$(PODS_TARGET_SRCROOT)/DfineDiscoverARKit-Bridging-Header.h'
+  }
 end
