@@ -237,6 +237,25 @@ const FAMILY: Record<BeverageFamily, IntelligenceSection[]> = {
       field("oak_regime","Oak regime","Oak use, if any"),
     ]},
   ],
+  wine_unknown: [
+    { id:"agriculture",title:"Vineyard & origin",description:"Wine-specific origin and agricultural facts without assuming colour or style.",fields:[
+      field("style","Wine style","Red, white, rosé, orange or another style once confirmed"),
+      field("grapes","Grape varieties","Varieties and blend percentages"),
+      field("vineyard","Vineyard","Named vineyard, parcel or estate"),
+      field("terroir","Terroir","Soils, climate, altitude and exposure"),
+      field("farming","Farming practices","Organic, biodynamic, regenerative or conventional; certification status"),
+      field("harvest","Harvest","Harvest date, picking method and selection"),
+    ]},
+    { id:"winemaking",title:"Winemaking & élevage",description:"Production details that can be documented without presuming a wine colour.",fields:[
+      field("pressing","Pressing","Press type, whole-cluster handling and juice handling"),
+      field("fermentation","Fermentation","Vessel, yeast, temperature and duration"),
+      field("malolactic","Malolactic fermentation","Whether and where malolactic fermentation occurred"),
+      field("elevage","Élevage","Vessel, duration and lees management"),
+      field("oak_regime","Oak regime","Oak type, new-oak percentage, vessel and duration"),
+      field("residual_sugar","Residual sugar","Measured residual sugar"),
+      field("bottling","Bottling","Filtration, fining and bottling date"),
+    ]},
+  ],
   sparkling_wine: [
     { id:"agriculture",title:"Vineyard & agriculture",description:"Grapes, site and farming.",fields:[
       field("grapes","Grape varieties","Varieties and blend percentages"),
