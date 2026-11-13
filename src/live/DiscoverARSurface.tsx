@@ -196,7 +196,7 @@ function WebLiveCamera(props: NativeProps) {
       webTracks = next;
       // Do not expose one-frame guesses as visible bottle tracks. A track must
       // be seen twice and may survive only one missed recognition interval.
-      return next.filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
+      return next.filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
@@ -255,7 +255,7 @@ function WebLiveCamera(props: NativeProps) {
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
         const immediateCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
+          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
         const instances = await segmentationPromise;
@@ -294,7 +294,7 @@ function WebLiveCamera(props: NativeProps) {
           }
         }
         const maskCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses <= 2 && track.confidence >= 0.45)
+          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         const visibleCandidates = [...maskCandidates, ...localCandidates];
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });

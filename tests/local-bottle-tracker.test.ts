@@ -30,11 +30,11 @@ describe('independent local bottle tracks', () => {
     expect(tracker.update([proposal(0.2, 0.4), { ...proposal(), bounds: { x: 1.2, y: 0, width: 0.2, height: 0.2 } }], 1000)).toEqual([]);
   });
 
-  it('preserves an ID through one missed observation and expires stale tracks', () => {
+  it('hides a local candidate immediately after a missed observation and expires stale tracks', () => {
     const tracker = new LocalBottleTracker();
     tracker.update([proposal()], 1000);
     const first = tracker.update([proposal()], 3200)[0]!;
-    expect(tracker.update([], 5400)[0]?.trackId).toBe(first.trackId);
+    expect(tracker.update([], 5400)).toEqual([]);
     expect(tracker.update([], 12_000)).toEqual([]);
   });
 
