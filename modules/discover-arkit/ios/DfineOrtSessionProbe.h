@@ -11,6 +11,10 @@ NS_ASSUME_NONNULL_BEGIN
                                                            error:(NSError * _Nullable * _Nullable)error
     NS_SWIFT_NAME(initializeModel(atPath:cacheDirectory:));
 
+/// Runs one deterministic zero-input inference and reports the exact output shapes and elapsed time.
++ (nullable NSDictionary<NSString *, id> *)runSmokeTestWithError:(NSError * _Nullable * _Nullable)error
+    NS_SWIFT_NAME(runSmokeTest());
+
 @end
 
 NS_ASSUME_NONNULL_END
