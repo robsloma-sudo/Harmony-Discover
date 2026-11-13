@@ -35,6 +35,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
   const tracksRef = useRef<SpatialTrack[]>([]);
   const observationGateRef = useRef(new WorldAnchorObservationGate(512));
   const lastProcessedFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
+  const lastReportedAnchoredTrackIdsRef = useRef<number[]>([]);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -44,6 +45,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     tracksRef.current = [];
     observationGateRef.current.reset();
     lastProcessedFrameTimestampRef.current = Number.NEGATIVE_INFINITY;
+    lastReportedAnchoredTrackIdsRef.current = [];
     onAnchoredTrackIdsChange?.([]);
     setRevision(value => value + 1);
   }, [sessionKey]);
@@ -139,14 +141,20 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
       observationGateRef.current.retainActive(active);
     }
 
-    const anchoredTrackIds = tracksRef.current.flatMap(track => {
+    const anchoredTrackIds = [...new Set(tracksRef.current.flatMap(track => {
       if (track.state === "lost") return [];
       const candidate = metadataRef.current.get(track.physicalObjectId)?.candidate;
       return candidate ? [candidate.trackId] : [];
-    });
-    onAnchoredTrackIdsChange?.([...new Set(anchoredTrackIds)]);
+    }))].sort((left, right) => left - right);
+    const previousAnchoredTrackIds = lastReportedAnchoredTrackIdsRef.current;
+    const idsChanged = anchoredTrackIds.length !== previousAnchoredTrackIds.length
+      || anchoredTrackIds.some((trackId, index) => trackId !== previousAnchoredTrackIds[index]);
+    if (idsChanged) {
+      lastReportedAnchoredTrackIdsRef.current = anchoredTrackIds;
+      onAnchoredTrackIdsChange?.(anchoredTrackIds);
+    }
     setRevision(value => value + 1);
-  }, [candidates, observationFrame?.timestamp, sessionKey]);
+  }, [candidates, observationFrame?.timestamp, sessionKey, onAnchoredTrackIdsChange]);
 
   const projectionFrame = currentCameraPose ?? currentDepthFrame;
   if (!visible || !projectionFrame || (!currentCameraPose && currentDepthFrame?.unit !== "meters")) return null;
