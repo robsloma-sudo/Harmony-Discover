@@ -45,11 +45,16 @@ export function attachBottleReadsToCandidates<T extends BottleCandidateGeometry>
   bottles: BottleRead[],
   minimumIoU = 0.25,
 ): Array<T & { bottle?: BottleRead }> {
-  const result = candidates.map(candidate => ({ ...candidate }));
+  const result: Array<T & { bottle?: BottleRead }> = candidates.map(candidate => ({ ...candidate }));
   const usedBottleIndexes = new Set<number>();
 
   result.forEach(candidate => {
     if (!candidate.bottle) return;
+    const exactIndex = bottles.findIndex((bottle, index) => !usedBottleIndexes.has(index) && bottle === candidate.bottle);
+    if (exactIndex >= 0) {
+      usedBottleIndexes.add(exactIndex);
+      return;
+    }
     let bestIndex = -1;
     let bestScore = 0;
     bottles.forEach((bottle, index) => {
