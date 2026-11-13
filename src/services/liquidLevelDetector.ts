@@ -203,10 +203,11 @@ export function createLiquidLevelWorker(): Worker | null {
         self.postMessage({ id: job.id, timestamp: job.timestamp, error: error instanceof Error ? error.message : 'liquid_worker_failed' });
       }
     };`,
-  ].join('\\n');
+  ].join('\n');
   const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
   try {
     const worker = new Worker(url);
+    worker.addEventListener('message', () => URL.revokeObjectURL(url), { once: true });
     worker.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
     return worker;
   } catch {
