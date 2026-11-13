@@ -45,5 +45,12 @@ describe('bottle volume profile store', () => {
     expect(registry.profiles[identityKey]).toEqual(profile);
     expect(getCachedBottleVolumeProfile(identityKey)).toEqual(profile);
     expect(registry.profiles['other']).toBeUndefined();
+    await Promise.all([
+      saveBottleVolumeProfileForIdentity('sku-2::750 ml', { ...profile, id:'sku-2' }),
+      saveBottleVolumeProfileForIdentity('sku-3::750 ml', { ...profile, id:'sku-3' }),
+    ]);
+    const afterConcurrentWrites = await loadBottleVolumeProfiles();
+    expect(afterConcurrentWrites.profiles['sku-2::750 ml']?.id).toBe('sku-2');
+    expect(afterConcurrentWrites.profiles['sku-3::750 ml']?.id).toBe('sku-3');
   });
 });
