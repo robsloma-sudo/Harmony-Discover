@@ -1,4 +1,4 @@
-import { createLiquidLevelWorker, type LiquidBoundaryCandidate } from './liquidLevelDetector';
+import { createLiquidLevelWorker, type LiquidBoundaryCandidate, type OcclusionBand } from './liquidLevelDetector';
 import type { LiquidOpticalAssessment } from './liquidOptics';
 
 export type LiquidTrackCrop = {
@@ -10,6 +10,7 @@ export type LiquidWorkerResult = {
   trackId: number;
   result: LiquidBoundaryCandidate;
   optical: LiquidOpticalAssessment;
+  occlusionBands: OcclusionBand[];
 };
 
 type LiquidWorkerMessage = {
