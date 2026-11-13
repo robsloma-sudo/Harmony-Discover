@@ -72,6 +72,7 @@ export class LiquidAnalysisQueue {
         this.processPending();
       };
       this.worker.onerror = () => {
+        this.workerErrors += 1;
         this.worker?.terminate();
         this.worker = null;
         this.pending = null;
@@ -148,6 +149,7 @@ export class LiquidAnalysisQueue {
         tracks: job.tracks,
       }, [buffer]);
     } catch {
+      this.workerErrors += 1;
       this.inFlight = false;
       worker.terminate();
       this.worker = null;
