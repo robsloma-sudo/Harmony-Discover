@@ -31,7 +31,8 @@
         }
       ],
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "./plugins/with-onnxruntime-quoted-header-workaround"
     ],
     "ios": {
       "supportsTablet": true,
