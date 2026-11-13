@@ -12,12 +12,20 @@ type Candidate = {
   depthFrame?: ARKitDepthFrame;
 };
 type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number };
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; visible?: boolean };
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; sessionKey?: number; visible?: boolean };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, visible = true }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessionKey = 0, visible = true }: Props) {
   const tracksRef = useRef<SpatialTrack[]>([]);
   const metadataRef = useRef(new Map<number, AnchorMetadata>());
   const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    // A newly started AR session has a new world coordinate frame. Old anchors
+    // must not be projected into that unrelated coordinate system.
+    tracksRef.current = [];
+    metadataRef.current.clear();
+    setRevision(value => value + 1);
+  }, [sessionKey]);
 
   useEffect(() => {
     const observations = candidates.flatMap(candidate => {
