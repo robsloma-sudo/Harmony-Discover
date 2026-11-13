@@ -12,7 +12,7 @@ const R: Record<string, string> = Object.fromEntries(Object.entries(L).map(([bit
 const PARITY = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
 
 function checksumValid(digits: string, ean8 = false): boolean {
-  if (!/^\\d+$/.test(digits) || digits.length !== (ean8 ? 8 : 13)) return false;
+  if (!/^\d+$/.test(digits) || digits.length !== (ean8 ? 8 : 13)) return false;
   const body = digits.slice(0, -1);
   const sum = [...body].reduce((total, digit, index) => total + Number(digit) * (ean8 ? (index % 2 === 0 ? 3 : 1) : (index % 2 === 0 ? 1 : 3)), 0);
   return (10 - sum % 10) % 10 === Number(digits[digits.length - 1]);
