@@ -18,7 +18,7 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
 
 export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],barcodes=[],labelText=[],menu,lastReadAt}:LiveInventoryProps={}) {
   const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
@@ -44,9 +44,18 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
       <Text style={s.note}>This panel reads the same camera session used by the main viewfinder. It never starts another camera. {lastReadAt ? `Last recognition: ${new Date(lastReadAt).toLocaleTimeString()}.` : 'Waiting for the first recognition result.'}</Text>
     </View>
     <ScrollView style={s.scroll} contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
-      <Text style={s.section}>LIVE RECOGNITION · {bottles.length}</Text>
-      {bottles.length ? bottles.map((bottle,index)=><View key={`${bottle.box.x0}-${bottle.box.y0}-${index}`} style={s.group}><View style={s.groupButton}><View style={{flex:1}}><Text style={s.groupTitle}>{[bottle.brand,bottle.product].filter(Boolean).join(' ') || 'Unidentified beverage'}</Text><Text style={s.groupHint}>{bottle.category.toUpperCase()} · {Math.round(bottle.confidence*100)}% confidence · {bottle.state.toUpperCase()}</Text></View></View><View style={s.groupBody}><Text style={s.emptyHint}>{[bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ') || 'No additional label facts returned yet.'}</Text></View></View>):<Text style={s.emptyHint}>Hold a labelled bottle in the viewfinder. Recognition results will appear here as they arrive.</Text>}
-      {menu?.visible && <View style={s.group}><Text style={s.groupTitle}>{menu.title || 'Menu detected'}</Text><Text style={s.groupHint}>{menu.items.length} menu items found</Text></View>}
+      <Text style={s.section}>LIVE INVENTORY FEED · {candidates.length || bottles.length}</Text>
+      {candidates.length ? candidates.map((candidate,index)=>{
+        const bottle=(candidate as typeof candidate & {trackId?:number;bottle?:BottleRead}).bottle;
+        const confidence=Math.round(candidate.confidence*100);
+        return <View key={String((candidate as typeof candidate & {trackId?:number}).trackId ?? index)} style={s.group}>
+          <View style={s.groupButton}><View style={{flex:1}}>
+            <Text style={s.groupTitle}>{bottle ? [bottle.match?.brand||bottle.brand,bottle.product].filter(Boolean).join(' ')||'Bottle detected' : 'Bottle detected · reading label'}</Text>
+            <Text style={s.groupHint}>{bottle ? bottle.category.toUpperCase()+' · '+Math.round(bottle.confidence*100)+'% ID CONFIDENCE · '+bottle.state.toUpperCase() : 'PROVISIONAL · '+confidence+'% DETECTION CONFIDENCE · IDENTITY PENDING'}</Text>
+          </View></View>
+          <View style={s.groupBody}><Text style={s.emptyHint}>{bottle ? [bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ')||'Bottle detected; additional label facts are still being read.' : 'Spatial track is live. Brand, product and package details will populate when AI recognition returns.'}</Text></View>
+        </View>;
+      }) : bottles.length ? bottles.map((bottle,index)=><View key={`read-${index}-${bottle.box.x0}-${bottle.box.y0}`} style={s.group}><View style={s.groupButton}><View style={{flex:1}}><Text style={s.groupTitle}>{[bottle.brand,bottle.product].filter(Boolean).join(' ') || 'Unidentified beverage'}</Text><Text style={s.groupHint}>{bottle.category.toUpperCase()} · {Math.round(bottle.confidence*100)}% confidence · {bottle.state.toUpperCase()}</Text></View></View><View style={s.groupBody}><Text style={s.emptyHint}>{[bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ') || 'No additional label facts returned yet.'}</Text></View></View>) : <Text style={s.emptyHint}>Point the camera at bottles. A provisional inventory row appears as soon as local detection stabilizes; product identity fills in when the AI label read completes.</Text>}
       <Text style={s.section}>LIVE LABEL SIGNALS · {barcodes.length} BARCODES · {labelText.length} TEXT READS</Text>
       {barcodes.length ? barcodes.map((barcode,index)=><View key={barcode.value+'-'+index} style={s.group}><View style={s.groupBody}><Text style={s.groupTitle}>{barcode.value}</Text><Text style={s.groupHint}>BARCODE · {barcode.symbology.toUpperCase()}</Text></View></View>) : <Text style={s.emptyHint}>No barcode decoded in the latest camera frames.</Text>}
       {labelText.length>0 && <View style={s.group}><View style={s.groupBody}><Text style={s.groupTitle}>OCR TEXT</Text><Text style={s.emptyHint}>{labelText.slice(0,18).join(' · ')}</Text></View></View>}
