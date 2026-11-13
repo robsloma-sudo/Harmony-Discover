@@ -894,13 +894,15 @@ export function DiscoverARSurface(props: NativeProps) {
         props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
         if (NativeLiquidAnalyzer && tracked.length && !nativeLiquidBusy.current) {
           nativeLiquidBusy.current = true;
+          const liquidAnalysisStartedAt = Date.now();
           void NativeLiquidAnalyzer.analyzeLiquidLevels(frame.imageBase64, tracked.slice(0, 4).map(track => ({
             trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height,
           }))).then(analyses => {
             if (generation !== nativeSessionGeneration.current) return;
             // Never attach a delayed measurement to a bottle whose live geometry
             // may have moved since this analysis frame was captured.
-            if (latestNativeFrameTimestamp.current - frame.timestamp > 1.4) {
+            if (Date.now() - liquidAnalysisStartedAt > 1400
+              || latestNativeFrameTimestamp.current - frame.timestamp > 1.4) {
               onLiquidMetrics?.({ nativeEvent: {
                 jobsDispatched: 1, jobsCompleted: 0, framesSkipped: 1, workerErrors: 0,
                 lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
