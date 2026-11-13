@@ -27,7 +27,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
@@ -481,7 +481,7 @@ function FallbackNativeCamera(props: NativeProps) {
               frameTimestamp: frame.timestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics, barcodeStatus: 'unsupported',
             } });
             const tracked = trackNativeBottleReads(result.bottles);
-            props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle })) } });
+            props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, depthFrame: frame.depthEstimate, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle })) } });
           }
         }
       } catch (error) {
