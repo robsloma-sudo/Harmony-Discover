@@ -429,8 +429,9 @@ function liquidLevelWorkerMain() {
 
 /**
  * Creates a dedicated browser worker for pixel analysis. The worker source is
- * assembled from the same detector functions used by unit tests, so the
- * background implementation cannot silently drift from the tested baseline.
+ * built from a self-contained entrypoint so minification cannot break its
+ * dependencies. Keep its thresholds and output contract aligned with the
+ * unit-tested detector below.
  * Returns null when workers are unavailable; callers must then abstain rather
  * than running this CPU work on the camera/UI thread.
  */
