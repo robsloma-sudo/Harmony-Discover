@@ -5,6 +5,18 @@ const proposal = (x = 0.2, confidence = 0.91) => ({
   bounds: { x, y: 0.1, width: 0.12, height: 0.55 },
   confidence,
   contour: [{ x, y: 0.1 }, { x: x + 0.12, y: 0.1 }, { x: x + 0.12, y: 0.65 }, { x, y: 0.65 }],
+  it('keeps up to 24 spatially distinct bottles in one shelf observation', () => {
+    const tracker = new LocalBottleTracker();
+    const shelf = Array.from({ length: 15 }, (_, index) => ({
+      bounds: { x: 0.01 + index * 0.065, y: 0.1, width: 0.04, height: 0.55 },
+      confidence: 0.91,
+    }));
+    expect(tracker.update(shelf, 1000)).toEqual([]);
+    const confirmed = tracker.update(shelf, 2000);
+    expect(confirmed).toHaveLength(15);
+    expect(new Set(confirmed.map(item => item.trackId)).size).toBe(15);
+  });
+
 });
 
 describe('independent local bottle tracks', () => {
