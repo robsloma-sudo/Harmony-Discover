@@ -363,7 +363,13 @@ Deno.serve(async (req: Request) => {
     }
 
     const product = products[0];
-    const [{ data: packages, error: packageError }, { data: attributes, error: attributeError }, { data: evidence, error: evidenceError }] = await Promise.all([
+    const [
+      { data: packages, error: packageError },
+      { data: attributes, error: attributeError },
+      { data: evidence, error: evidenceError },
+      { count: sightingCount, error: sightingError },
+      { count: confirmedSightingCount, error: confirmedSightingError },
+    ] = await Promise.all([
       db.from("discover_product_packages")
         .select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload")
         .eq("discover_product_id", product.id).limit(12),
@@ -373,8 +379,17 @@ Deno.serve(async (req: Request) => {
       db.from("discover_product_evidence")
         .select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at")
         .eq("discover_product_id", product.id).order("captured_at", { ascending: false }).limit(40),
+      db.from("bottle_sightings")
+        .select("id", { count: "exact", head: true })
+        .eq("discover_product_id", product.id),
+      db.from("bottle_sightings")
+        .select("id", { count: "exact", head: true })
+        .eq("discover_product_id", product.id)
+        .in("evidence_state", ["user_confirmed", "user_corrected"]),
     ]);
-    if (packageError || attributeError || evidenceError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
+    if (packageError || attributeError || evidenceError || sightingError || confirmedSightingError) {
+      return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
+    }
     return reply({
       ok: true,
       found: true,
@@ -393,6 +408,7 @@ Deno.serve(async (req: Request) => {
       packages: Array.isArray(packages) ? packages : [],
       attributes: Array.isArray(attributes) ? attributes : [],
       evidence: Array.isArray(evidence) ? evidence : [],
+      sightings: { total: sightingCount || 0, confirmed: confirmedSightingCount || 0 },
     }, 200, origin);
   }
 
