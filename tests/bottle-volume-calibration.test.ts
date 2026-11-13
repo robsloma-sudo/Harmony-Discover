@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateCalibratedBottleVolume, validateBottleVolumeProfile, type BottleVolumeProfile } from '../src/services/bottleVolumeCalibration';
+import { createBottleVolumeProfile, estimateCalibratedBottleVolume, validateBottleVolumeProfile, type BottleVolumeProfile } from '../src/services/bottleVolumeCalibration';
 
 const profile: BottleVolumeProfile = {
   id: 'test-750ml-shaped-bottle',
@@ -13,6 +13,21 @@ const profile: BottleVolumeProfile = {
 };
 
 describe('bottle volume calibration', () => {
+  it('builds a bottle profile from empty, partial, and full measured samples', () => {
+    const result = createBottleVolumeProfile('measured-750', 750, [
+      { heightFraction: 1, measuredMilliliters: 750 },
+      { heightFraction: 0.5, measuredMilliliters: 360 },
+      { heightFraction: 0, measuredMilliliters: 0 },
+    ]);
+    expect(result.status).toBe('created');
+    if (result.status === 'created') expect(result.profile.points[1].volumeFraction).toBeCloseTo(0.48, 4);
+  });
+  it('requires real empty and full calibration endpoints', () => {
+    expect(createBottleVolumeProfile('incomplete', 750, [
+      { heightFraction: 0.2, measuredMilliliters: 100 },
+      { heightFraction: 1, measuredMilliliters: 750 },
+    ]).status).toBe('invalid');
+  });
   it('validates a monotonic bottle-specific calibration curve', () => {
     expect(validateBottleVolumeProfile(profile)).toBe(true);
   });
