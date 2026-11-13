@@ -13,7 +13,7 @@
 A fill-height result requires all of the following:
 
 1. The crop has usable optical signal. Severe clipped glare, near-black imagery, and flat/low-contrast crops are rejected.
-2. A horizontal transition is supported across multiple interior columns.
+2. A horizontal transition is supported across at least five of seven interior columns. Partial hand/label obstruction that hides more than two sampled columns is rejected.
 3. Textured label bands are masked; partial obstructions reduce column support. Irregular interfaces are rejected.
 4. Three distinct high-confidence observations agree within the temporal spread threshold.
 5. The result remains attached to a currently tracked bottle.
