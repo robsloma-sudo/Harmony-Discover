@@ -9,6 +9,7 @@ import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
+import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 
 export type ARTrackingUpdate = {
@@ -645,51 +646,20 @@ function FallbackNativeCamera(props: NativeProps) {
   return <CameraView ref={cameraRef} style={props.style} facing="back" onCameraReady={() => { cameraReady.current = true; props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'expo_camera_ready_no_arkit_world_pose' } }); }} />;
 }
 
-type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; bottle: BottleRead };
-let nativeRecognitionTracks: RecognitionTrack[] = [];
+let nativeRecognitionTracks: BottleReadTrack[] = [];
 let nextNativeRecognitionTrackId = 1;
 
 function trackNativeBottleReads(bottles: BottleRead[]) {
-  const now = Date.now();
-  const used = new Set<number>();
-  const next: RecognitionTrack[] = [];
-  const tracked = bottles.map(bottle => {
-    const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
-    let bestIndex = -1, bestScore = 0;
-    nativeRecognitionTracks.forEach((prior, index) => {
-      if (used.has(index)) return;
-      const left = Math.max(prior.x, box.x), top = Math.max(prior.y, box.y);
-      const right = Math.min(prior.x + prior.width, box.x + box.width), bottom = Math.min(prior.y + prior.height, box.y + box.height);
-      const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
-      const union = prior.width * prior.height + box.width * box.height - intersection;
-      const overlap = union > 0 ? intersection / union : 0;
-      const dx = (prior.x + prior.width / 2) - (box.x + box.width / 2);
-      const dy = (prior.y + prior.height / 2) - (box.y + box.height / 2);
-      const distance = Math.hypot(dx, dy);
-      const score = overlap >= 0.08 ? overlap : distance <= 0.16 ? 0.08 * (1 - distance / 0.16) : 0;
-      if (score > bestScore) { bestScore = score; bestIndex = index; }
-    });
-    const prior = bestIndex >= 0 && bestScore > 0 ? nativeRecognitionTracks[bestIndex] : null;
-    if (prior && bestIndex >= 0) used.add(bestIndex);
-    const blend = prior ? 0.38 : 1;
-    const track: RecognitionTrack = {
-      trackId: prior?.trackId ?? nextNativeRecognitionTrackId++,
-      x: prior ? prior.x * (1 - blend) + box.x * blend : box.x,
-      y: prior ? prior.y * (1 - blend) + box.y * blend : box.y,
-      width: prior ? prior.width * (1 - blend) + box.width * blend : box.width,
-      height: prior ? prior.height * (1 - blend) + box.height * blend : box.height,
-      confidence: bottle.detectionConfidence,
-      lastSeenAt: now,
-      bottle,
-    };
-    next.push(track);
-    return track;
-  });
-  nativeRecognitionTracks.forEach((track, index) => {
-    if (!used.has(index) && now - track.lastSeenAt < 7000) next.push(track);
-  });
-  nativeRecognitionTracks = next;
-  return tracked;
+  const result = associateBottleReadTracks(
+    bottles,
+    nativeRecognitionTracks,
+    Date.now(),
+    nextNativeRecognitionTrackId,
+    7000,
+  );
+  nativeRecognitionTracks = result.tracks;
+  nextNativeRecognitionTrackId = result.nextId;
+  return result.tracks.filter(track => bottles.includes(track.bottle));
 }
 
 export function DiscoverARSurface(props: NativeProps) {
