@@ -62,7 +62,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     if (trackedBottle) setSelectedBottle(trackedBottle);
   }, [liveCandidates, selectedTrackId]);
   const selectedBottleBrand = selectedBottle?.match?.brand || selectedBottle?.brand || '';
-  const selectedBottleProduct = selectedBottle?.product || '';
+  const selectedBottleProduct = selectedBottle?.match?.product || selectedBottle?.product || '';
   const selectedBottleCategory = selectedBottle?.category || 'other';
   useEffect(() => {
     let cancelled = false;
