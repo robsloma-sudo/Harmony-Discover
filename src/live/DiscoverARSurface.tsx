@@ -936,13 +936,13 @@ export function DiscoverARSurface(props: NativeProps) {
           }).catch(() => {
             onLiquidMetrics?.({ nativeEvent: {
               jobsDispatched: 1, jobsCompleted: 0, framesSkipped: 0, workerErrors: 1,
-              lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, workerAvailable: true,
+              lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
             } });
           }).finally(() => { nativeLiquidBusy.current = false; });
         } else {
           onLiquidMetrics?.({ nativeEvent: {
             jobsDispatched: 0, jobsCompleted: 0, framesSkipped: tracked.length ? 1 : 0,
-            workerErrors: 0, lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0,
+            workerErrors: 0, lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, localFrameMs: 0,
             workerAvailable: !!NativeLiquidAnalyzer,
           } });
         }
