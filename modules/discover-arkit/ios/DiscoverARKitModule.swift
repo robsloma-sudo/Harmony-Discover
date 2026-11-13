@@ -178,12 +178,28 @@ public class DiscoverARKitModule: Module {
       // the multi-column support and temporal-consensus gates.
       var occludedRows = Set<Int>()
       for y in stride(from: top + Int(Double(cropHeight) * 0.06), to: bottom - Int(Double(cropHeight) * 0.06), by: 2) {
-        let samples = (0..<9).map { index in
-          luma(left + Int((0.18 + Double(index) * 0.64 / 8.0) * Double(cropWidth - 1)), y)
+        var samples: [Double] = []
+        samples.reserveCapacity(9)
+        for index in 0..<9 {
+          let fraction = 0.18 + (Double(index) * 0.64 / 8.0)
+          let sampleX = left + Int(fraction * Double(cropWidth - 1))
+          samples.append(luma(sampleX, y))
         }
-        let avg = samples.reduce(0, +) / Double(samples.count)
-        let variance = samples.reduce(0.0) { $0 + pow($1 - avg, 2) } / Double(samples.count)
-        if sqrt(variance) >= 34 { occludedRows.insert(y); occludedRows.insert(min(bottom - 1, y + 1)) }
+        var sampleSum = 0.0
+        for sample in samples {
+          sampleSum += sample
+        }
+        let sampleAverage = sampleSum / Double(samples.count)
+        var squaredDeviationSum = 0.0
+        for sample in samples {
+          let deviation = sample - sampleAverage
+          squaredDeviationSum += deviation * deviation
+        }
+        let variance = squaredDeviationSum / Double(samples.count)
+        if sqrt(variance) >= 34 {
+          occludedRows.insert(y)
+          occludedRows.insert(min(bottom - 1, y + 1))
+        }
       }
 
       var bestY = -1
