@@ -75,6 +75,18 @@ describe('detectLiquidBoundaryCandidate', () => {
     expect(result.status).toBe('insufficient_evidence');
   });
 
+  it('abstains when a hand-like obstruction hides more than two interior columns', () => {
+    const frame = horizontalScene();
+    for (let y = 4; y < 116; y += 1) for (let x = 8; x < 37; x += 1) {
+      const offset = (y * frame.width + x) * 4;
+      frame.data[offset] = 120;
+      frame.data[offset + 1] = 120;
+      frame.data[offset + 2] = 120;
+    }
+    const result = detectLiquidBoundaryCandidate(frame, { x: 8, y: 4, width: 64, height: 112 });
+    expect(result.status).toBe('insufficient_evidence');
+  });
+
   it('rejects invalid image geometry', () => {
     const result = detectLiquidBoundaryCandidate(horizontalScene(), { x: 500, y: 500, width: 10, height: 10 });
     expect(result.status).toBe('insufficient_evidence');
