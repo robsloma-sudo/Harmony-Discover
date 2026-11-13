@@ -194,6 +194,7 @@ export function createLiquidLevelWorker(): Worker | null {
     assessLiquidOpticalVisibility.toString(),
     `self.onmessage = (event) => {
       const job = event.data;
+      const startedAt = performance.now();
       try {
         const frame = { width: job.width, height: job.height, data: new Uint8ClampedArray(job.buffer) };
         const results = job.tracks.map((track) => ({
@@ -201,7 +202,7 @@ export function createLiquidLevelWorker(): Worker | null {
           optical: assessLiquidOpticalVisibility(frame, track.bounds),
           result: detectLiquidBoundaryCandidate(frame, track.bounds),
         }));
-        self.postMessage({ id: job.id, timestamp: job.timestamp, results });
+        self.postMessage({ id: job.id, timestamp: job.timestamp, results, processingMs: performance.now() - startedAt });
       } catch (error) {
         self.postMessage({ id: job.id, timestamp: job.timestamp, error: error instanceof Error ? error.message : 'liquid_worker_failed' });
       }
