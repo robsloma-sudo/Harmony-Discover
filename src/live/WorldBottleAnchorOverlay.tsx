@@ -17,9 +17,9 @@ type Candidate = {
 };
 type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean; candidate: Candidate };
 export type WorldBottleCandidate = Candidate;
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; observationFrame?: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; observationFrame?: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onAnchoredTrackIdsChange?: (trackIds: number[]) => void; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observationFrame, currentCameraPose, sessionKey = 0, visible = true, onSelectBottle }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observationFrame, currentCameraPose, sessionKey = 0, visible = true, onAnchoredTrackIdsChange, onSelectBottle }: Props) {
   // One registry owns the physical bottle ID through visible, occluded and
   // reacquired states. It is deliberately reset when ARKit changes world space.
   const trackerRef = useRef<SpatialBottleTracker | null>(null);
@@ -35,6 +35,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
   const tracksRef = useRef<SpatialTrack[]>([]);
   const observationGateRef = useRef(new WorldAnchorObservationGate(512));
   const lastProcessedFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
+  const lastReportedAnchoredTrackIdsRef = useRef<number[]>([]);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -44,6 +45,8 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     tracksRef.current = [];
     observationGateRef.current.reset();
     lastProcessedFrameTimestampRef.current = Number.NEGATIVE_INFINITY;
+    lastReportedAnchoredTrackIdsRef.current = [];
+    onAnchoredTrackIdsChange?.([]);
     setRevision(value => value + 1);
   }, [sessionKey]);
 
@@ -138,8 +141,20 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
       observationGateRef.current.retainActive(active);
     }
 
+    const anchoredTrackIds = [...new Set(tracksRef.current.flatMap(track => {
+      if (track.state === "lost") return [];
+      const candidate = metadataRef.current.get(track.physicalObjectId)?.candidate;
+      return candidate ? [candidate.trackId] : [];
+    }))].sort((left, right) => left - right);
+    const previousAnchoredTrackIds = lastReportedAnchoredTrackIdsRef.current;
+    const idsChanged = anchoredTrackIds.length !== previousAnchoredTrackIds.length
+      || anchoredTrackIds.some((trackId, index) => trackId !== previousAnchoredTrackIds[index]);
+    if (idsChanged) {
+      lastReportedAnchoredTrackIdsRef.current = anchoredTrackIds;
+      onAnchoredTrackIdsChange?.(anchoredTrackIds);
+    }
     setRevision(value => value + 1);
-  }, [candidates, observationFrame?.timestamp, sessionKey]);
+  }, [candidates, observationFrame?.timestamp, sessionKey, onAnchoredTrackIdsChange]);
 
   const projectionFrame = currentCameraPose ?? currentDepthFrame;
   if (!visible || !projectionFrame || (!currentCameraPose && currentDepthFrame?.unit !== "meters")) return null;
