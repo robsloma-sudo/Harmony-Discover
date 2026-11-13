@@ -296,7 +296,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const top = Math.max(0, Math.min(1, tracked.y));
             const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
-            const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim() : 'BOTTLE DETECTED';
+            const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(' ').trim() : 'BOTTLE DETECTED';
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,

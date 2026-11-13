@@ -12,11 +12,11 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
   const details = bottle.details || {};
   const family = getBottleFamilyLabel(bottle.category, details);
   const sections = getBottleIntelligenceSections(bottle.category, details);
-  const identity = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(" ").trim() || "Bottle identity pending";
+  const identity = [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(" ").trim() || "Bottle identity pending";
   const fields: Record<string, unknown> = {
     ...details,
     brand: bottle.match?.brand || bottle.brand,
-    product: bottle.product,
+    product: bottle.match?.product || bottle.product,
     size: bottle.size,
     proof: bottle.proof,
     origin: bottle.origin,
