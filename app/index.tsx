@@ -248,6 +248,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           }}
           onARReady={event => {
             if (event.nativeEvent.state === 'starting') {
+              // A new camera session may reuse numeric track IDs. Keep an open
+              // profile as a snapshot, but detach it from the previous session.
+              setSelectedTrackId(null);
               setAnchorSessionKey(value => value + 1);
               setLiveCandidates([]);
               setLiveDepthFrame(null);
