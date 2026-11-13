@@ -10,6 +10,7 @@ import { LocalBottleTracker } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
+import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -420,13 +421,21 @@ function WebLiveCamera(props: NativeProps) {
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const frameTimestamp = Date.now();
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
+        const barcodePromise = (async () => {
+          let nativeCodes: Array<{ rawValue: string; format: string }> = [];
+          if (barcodeDetector) {
+            try { nativeCodes = await barcodeDetector.detect(canvas); } catch { nativeCodes = []; }
+          }
+          // Native BarcodeDetector is absent in iOS Safari on many supported
+          // versions. Fall back to local EAN/UPC decoding without another request.
+          return nativeCodes.length ? nativeCodes : decodeEanFromCanvas(canvas);
+        })();
         const result = await readLiveFrame(jpeg);
         const decodedBarcodes = await barcodePromise;
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: 'available', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
