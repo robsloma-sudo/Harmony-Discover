@@ -327,22 +327,35 @@ Deno.serve(async (req: Request) => {
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: auth, error: authError } = await db.auth.getUser(bearer);
   if (authError || !auth?.user) return reply({ error: "unauthorized" }, 401, origin);
+  const subject = auth.user.id;
+
+  if (Number(req.headers.get("content-length") || "0") > MAX_BODY_BYTES) return reply({ error: "payload_too_large" }, 413, origin);
+  const raw = await req.text();
+  if (raw.length > MAX_BODY_BYTES) return reply({ error: "payload_too_large" }, 413, origin);
+  let body: Record<string, unknown>;
+  try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
+  catch { return reply({ error: "invalid_json" }, 400, origin); }
+  const action = String(body.action || "");
+  if (action === "health") return reply({ ok: true, version: VERSION, model: MODEL }, 200, origin);
+
+  const match = async (queries: string[]) => {
+    const { data } = await db.rpc("discover_match_products", { p_queries: queries });
+    return (Array.isArray(data) ? data : []) as Array<{ q: string; id: string | null; brand: string | null; product: string | null; category: string | null; proof: number | null; score: number | null }>;
+  };
+
   if (action === "profile") {
     const brand = clean(body.brand, 80);
     const productName = clean(body.product, 100);
     const category = CATEGORIES.includes(String(body.category)) ? String(body.category) : "other";
     if (!brand || !productName) return reply({ error: "bottle_identity_required" }, 400, origin);
 
-    // Exact, case-insensitive product identity only. Ambiguous matches are
-    // deliberately not merged: one label read must never open another SKU.
-    const escapeLike = (value: string) => value.replace(/[\\\\%_]/g, "\\\\  const subject = auth.user.id;
-
-  if (Number(req.headers.get("content-length") || "0") > MAX_BODY_BYTES)");
+    // Exact identity only. Ambiguous or case-mismatched identities remain unknown;
+    // a scan must never load intelligence belonging to a neighboring SKU.
     const { data: products, error: productError } = await db
       .from("discover_products")
       .select("id,brand_name,product_name,product_class,expression_variant,upc_gtin,ean,status,match_confidence,identity_payload")
-      .ilike("brand_name", escapeLike(brand))
-      .ilike("product_name", escapeLike(productName))
+      .eq("brand_name", brand)
+      .eq("product_name", productName)
       .limit(2);
     if (productError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
     if (!Array.isArray(products) || products.length !== 1) {
@@ -384,21 +397,6 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
-
-  if (Number(req.headers.get("content-length") || "0") return reply({ error: "payload_too_large" }, 413, origin);
-  const raw = await req.text();
-  if (raw.length > MAX_BODY_BYTES) return reply({ error: "payload_too_large" }, 413, origin);
-  let body: Record<string, unknown>;
-  try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
-  catch { return reply({ error: "invalid_json" }, 400, origin); }
-  const action = String(body.action || "");
-  if (action === "health") return reply({ ok: true, version: VERSION, model: MODEL }, 200, origin);
-
-  const match = async (queries: string[]) => {
-    const { data } = await db.rpc("discover_match_products", { p_queries: queries });
-    return (Array.isArray(data) ? data : []) as Array<{ q: string; id: string | null; brand: string | null; product: string | null; category: string | null; proof: number | null; score: number | null }>;
-  };
-
 
   if (action === "label_batch") {
     const incoming = Array.isArray(body.crops) ? body.crops.slice(0, 8) as Array<Record<string, unknown>> : [];
