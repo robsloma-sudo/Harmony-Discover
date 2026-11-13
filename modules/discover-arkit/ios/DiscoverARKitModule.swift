@@ -950,6 +950,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard signature != lastTrackingState else { return }
     lastTrackingState = signature
     if state != "normal" {
+      recognitionGeneration += 1
       visionQueue.async { [weak self] in self?.clearLocalTrackingState() }
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
@@ -986,6 +987,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   public func sessionWasInterrupted(_ session: ARSession) {
+    recognitionGeneration += 1
+    visionQueue.async { [weak self] in self?.clearLocalTrackingState() }
+    DispatchQueue.main.async { [weak self] in
+      self?.onVisualCandidates(["count": 0, "source": "local", "candidates": []])
+    }
     onTrackingUpdate(["state": "interrupted", "reason": "system_interruption"])
   }
 
