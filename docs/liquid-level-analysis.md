@@ -28,7 +28,7 @@ Fill height is not volume. Milliliters/fluid ounces are shown only when:
 - the calibration profile matches that catalog identity and package size; and
 - the measured height is within the profile's calibrated range.
 
-In Live Inventory, open **Bottle-shape calibration** on a verified product. Measure known volumes with a scale or graduated measure. For each sample, record the current live fill-height percentage relative to the detected bottle bounding box as a fraction (52% becomes `0.52`) and the actual measured milliliters. Use the same camera framing and viewfinder box for the calibration run. Include `0:0` for empty and a full-capacity point at the real full-fill line; that height can be below 1. Do not assume a cylinder or invent sample points. Profiles remain local to the device.
+In Live Inventory, open **Bottle-shape calibration** on a verified product. Measure known volumes with a scale or graduated measure. For each sample, record the current live fill-height percentage relative to the detected bottle bounding box as a fraction (52% becomes `0.52`) and the actual measured milliliters. Use the same camera framing and viewfinder box for the calibration run. Include `0:0` for empty and a full-capacity point at the real full-fill line; that height can be below 1. Samples must have strictly increasing measured volume as height rises; flat or decreasing segments are invalid. Do not assume a cylinder or invent sample points. Profiles remain local to the device.
 
 ## On-device performance check
 
