@@ -26,11 +26,13 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
     minimumConfidence: 0.65,
   });
   const metadataRef = useRef(new Map<string, AnchorMetadata>());
+  const tracksRef = useRef<SpatialTrack[]>([]);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     trackerRef.current?.reset();
     metadataRef.current.clear();
+    tracksRef.current = [];
     setRevision(value => value + 1);
   }, [sessionKey]);
 
@@ -55,6 +57,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
       visualKey: observation.visualKey,
     })), now);
 
+    tracksRef.current = update.tracks;
     paired.forEach(({ observation, candidate }, index) => {
       const physical = update.observed[index];
       if (!physical) return;
@@ -76,15 +79,15 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
   useEffect(() => {
     // Keep occluded bottle identities available while the camera is turned away.
     const update = trackerRef.current?.update([], Date.now());
-    const active = new Set(update?.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId) ?? []);
+    tracksRef.current = update?.tracks ?? [];
+    const active = new Set(tracksRef.current.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
     for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
     setRevision(value => value + 1);
   }, [currentDepthFrame?.timestamp]);
 
   if (!visible || !currentDepthFrame || currentDepthFrame.unit !== "meters") return null;
   void revision;
-  const tracks: SpatialTrack[] = trackerRef.current?.update([], Date.now()).tracks ?? [];
-  const anchors = tracks.flatMap(track => {
+  const anchors = tracksRef.current.flatMap(track => {
     if (track.state === "lost") return [];
     const metadata = metadataRef.current.get(track.physicalObjectId);
     if (!metadata) return [];
