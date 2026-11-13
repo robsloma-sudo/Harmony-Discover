@@ -24,7 +24,7 @@ type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted
 
 
 function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
-  const identityKey = getBottleCalibrationKey(bottle.match, bottle.state);
+  const identityKey = getBottleCalibrationKey(bottle.match, bottle.state, bottle.size);
   const [capacity,setCapacity] = useState('');
   const [samples,setSamples] = useState('');
   const [status,setStatus] = useState('');
