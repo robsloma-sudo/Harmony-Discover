@@ -12,7 +12,7 @@ describe('original-resolution label crop geometry', () => {
   });
 
   it('preserves native crop pixels when the label is already large enough', () => {
-    const crop = calculateLabelCrop({ x0: 0.1, y0: 0.1, x1: 0.8, y1: 0.9 }, 3000, 3000);
+    const crop = calculateLabelCrop({ x0: 0.1, y0: 0.1, x1: 0.8, y1: 0.9 }, 2000, 2000);
     expect(crop?.outputWidth).toBe(crop?.sw);
     expect(crop?.outputHeight).toBe(crop?.sh);
   });
