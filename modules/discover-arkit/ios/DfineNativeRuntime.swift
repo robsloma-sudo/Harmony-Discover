@@ -69,6 +69,33 @@ final class DfineNativeRuntime {
       try FileManager.default.moveItem(at: temporaryURL, to: modelURL)
     }
     let coreMLCache = cacheRoot.appendingPathComponent("dfine-coreml-cache", isDirectory: true)
+
+    // A previous interrupted download or stale cache must not permanently block
+    // initialization. Reuse a valid cached model; remove only a checksum-invalid
+    // file, then fetch the pinned asset again.
+    if FileManager.default.fileExists(atPath: modelURL.path) {
+      do {
+        return try initialize(modelPath: modelURL.path, cacheDirectory: coreMLCache.path)
+      } catch let error as NSError where error.domain == "DfineNativeRuntime" && error.code == 2 {
+        try FileManager.default.removeItem(at: modelURL)
+      }
+    }
+
+    if !FileManager.default.fileExists(atPath: modelURL.path) {
+      guard let sourceURL = URL(string: "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx") else {
+        throw NSError(domain: "DfineNativeRuntime", code: 5, userInfo: [
+          NSLocalizedDescriptionKey: "Pinned D-FINE model URL is invalid."
+        ])
+      }
+      let (temporaryURL, response) = try await URLSession.shared.download(from: sourceURL)
+      guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+        throw NSError(domain: "DfineNativeRuntime", code: 4, userInfo: [
+          NSLocalizedDescriptionKey: "Could not download the pinned D-FINE model."
+        ])
+      }
+      try FileManager.default.moveItem(at: temporaryURL, to: modelURL)
+    }
+
     return try initialize(modelPath: modelURL.path, cacheDirectory: coreMLCache.path)
   }
 
