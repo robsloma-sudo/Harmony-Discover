@@ -40,7 +40,7 @@ export class LocalBottleTracker {
   update(proposals: LocalBottleProposal[], now = Date.now()): LocalBottleCandidate[] {
     const detections = proposals
       .filter(p => Number.isFinite(p.confidence) && p.confidence >= 0.58 && validBounds(p.bounds))
-      .slice(0, 12);
+      .slice(0, 24);
     const used = new Set<number>();
     const next: Track[] = [];
 

@@ -4,7 +4,7 @@ import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
-import { associateInstanceMasks, SegmentationRunner } from './segmentationEngine';
+import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
@@ -98,6 +98,8 @@ function WebLiveCamera(props: NativeProps) {
     let stream: MediaStream | null = null;
     let frameCheck = 0;
     let recognitionTimer = 0;
+    let localDetectionTimer = 0;
+    let localDetectionBusy = false;
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
@@ -110,10 +112,16 @@ function WebLiveCamera(props: NativeProps) {
       pageVisible = document.visibilityState === 'visible';
       if (!pageVisible) {
         if (recognitionTimer) window.clearTimeout(recognitionTimer);
+        if (localDetectionTimer) window.clearInterval(localDetectionTimer);
         recognitionTimer = 0;
+        localDetectionTimer = 0;
+        localBottleTracker.reset();
+        latestLocalCandidates = [];
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, source: 'local', candidates: [] } });
         callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
       } else if (callbacksRef.current.recognitionEnabled) {
         scheduleRecognition(250);
+        startLocalDetectionLoop();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -122,8 +130,8 @@ function WebLiveCamera(props: NativeProps) {
       segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5 }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
         segmentationRunner = new SegmentationRunner(provider, {
-          minimumIntervalMs: 2200,
-          maximumFrameAgeMs: 1600,
+          minimumIntervalMs: 850,
+          maximumFrameAgeMs: 1400,
           maximumTracksPerFrame: 8,
         });
       }).catch(error => {
@@ -137,13 +145,15 @@ function WebLiveCamera(props: NativeProps) {
     let barcodeDetector: BarcodeDetectorLike | null = null;
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     let lastRecognitionStartedAt = 0;
-    // ~13 requests/minute maximum while live view is open; one request at a time.
-    const recognitionIntervalMs = 4500;
+    // Run close to the DEV endpoint's 30-frame/minute ceiling without exceeding it.
+    // 2200ms permits ~27 starts/minute; one in-flight request still prevents overlap.
+    const recognitionIntervalMs = 2200;
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
+    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }> }> = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
@@ -200,6 +210,66 @@ function WebLiveCamera(props: NativeProps) {
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
+    // Local D-FINE detection has its own cadence. It must not wait for the
+    // paid/cloud label reader (4.5s) to finish before updating spatial boxes.
+    const runLocalDetection = async () => {
+      if (disposed || !pageVisible || localDetectionBusy || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
+      const video = videoRef.current;
+      if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 2 || video.videoHeight < 2) return;
+      localDetectionBusy = true;
+      const frameTimestamp = Date.now();
+      try {
+        const displayWidth = video.clientWidth || video.videoWidth;
+        const displayHeight = video.clientHeight || video.videoHeight;
+        const displayAspect = displayWidth / displayHeight;
+        const sourceAspect = video.videoWidth / video.videoHeight;
+        let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+        if (sourceAspect > displayAspect) { sw = video.videoHeight * displayAspect; sx = (video.videoWidth - sw) / 2; }
+        else if (sourceAspect < displayAspect) { sh = video.videoWidth / displayAspect; sy = (video.videoHeight - sh) / 2; }
+        const scale = Math.min(1, 640 / Math.max(sw, sh));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(sw * scale));
+        canvas.height = Math.max(1, Math.round(sh * scale));
+        const context = canvas.getContext('2d');
+        if (!context) return;
+        context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+        const instances = await segmentationRunner.runInference(frame, frameTimestamp);
+        if (disposed || !pageVisible || Date.now() - frameTimestamp > 1400) return;
+        const localTracks = localBottleTracker.update(instances.map(instance => {
+          const contour = extractMaskContour(instance.data, instance.width, instance.height, {
+            bounds: instance.bounds, minimumPixels: 12, minimumArea: 0.001, maxPoints: 96,
+          });
+          return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
+        }), frameTimestamp);
+        const candidates = localTracks
+          .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
+          .map(local => ({
+            trackId: -Math.abs(local.trackId), x: local.bounds.x, y: local.bounds.y,
+            width: local.bounds.width, height: local.bounds.height,
+            confidence: local.confidence, contour: local.contour,
+          }));
+        latestLocalCandidates = candidates;
+        const cloudCandidates = webTracks
+          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
+        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, source: 'local', candidates: visibleCandidates } });
+      } catch (error) {
+        if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'local_segmentation_frame_failed: ' + error.message : 'local_segmentation_frame_failed' } });
+      } finally {
+        localDetectionBusy = false;
+      }
+    };
+    const startLocalDetectionLoop = () => {
+      if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled) return;
+      void Promise.resolve(ensureSegmentationRunner()).then(() => {
+        if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
+        void runLocalDetection();
+        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 1000);
+      });
+    };
+
     // Keep a single request in flight and pace requests by start time, not by
     // adding a full delay after the provider response. This stays below the
     // server's 30/minute limit even when inference is fast.
@@ -235,37 +305,10 @@ function WebLiveCamera(props: NativeProps) {
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-        const segmentationFrame = context.getImageData(0, 0, canvas.width, canvas.height);
         const frameTimestamp = Date.now();
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        const segmentationPromise = segmentationRunner
-          ? segmentationRunner.runInference(segmentationFrame, frameTimestamp).catch(error => {
-              callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? `local_segmentation_frame_failed: ${error.message}` : 'local_segmentation_frame_failed' } });
-              return [];
-            })
-          : Promise.resolve([]);
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
-        // Run cloud recognition and local segmentation concurrently, but do
-        // not make local visual feedback wait for the cloud round trip.
-        const readPromise = readLiveFrame(jpeg);
-        const instances = await segmentationPromise;
-        const localTracks = localBottleTracker.update(instances.map(instance => {
-          const contour = extractMaskContour(instance.data, instance.width, instance.height, {
-            bounds: instance.bounds, minimumPixels: 12, minimumArea: 0.001, maxPoints: 96,
-          });
-          return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
-        }), frameTimestamp);
-        const localCandidates = localTracks
-          .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
-          .map(local => ({
-            trackId: local.trackId, x: local.bounds.x, y: local.bounds.y,
-            width: local.bounds.width, height: local.bounds.height,
-            confidence: local.confidence, contour: local.contour,
-          }));
-        if (!disposed && localCandidates.length) {
-          callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: localCandidates.length, source: 'local', candidates: localCandidates } });
-        }
-        const result = await readPromise;
+        const result = await readLiveFrame(jpeg);
         const decodedBarcodes = await barcodePromise;
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
@@ -274,34 +317,10 @@ function WebLiveCamera(props: NativeProps) {
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
-        const immediateCandidates = webTracks
+        const cloudCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
-        // Local candidates were already published while cloud recognition ran.
-        if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
-          const segmented = associateInstanceMasks(
-            trackedCandidates.slice(0, 8).map(track => ({
-              trackId: track.trackId,
-              bounds: { x: track.x, y: track.y, width: track.width, height: track.height },
-              detectionConfidence: track.confidence,
-              sourceTimestampMs: frameTimestamp,
-            })),
-            instances,
-            { minimumIoU: 0.35, minimumMaskPixels: 12, minimumMaskArea: 0.001, maxContourPoints: 96 },
-          );
-          if (segmented.length) {
-            const byTrack = new Map(segmented.map(item => [item.trackId, item.contour.points]));
-            webTracks = webTracks.map(track => {
-              const contour = byTrack.get(track.id);
-              return contour ? { ...track, contour } : track;
-            });
-          }
-        }
-        const maskCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
-          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        const visibleCandidates = [...maskCandidates, ...localCandidates];
+        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
 
       } catch (error) {
@@ -375,7 +394,7 @@ function WebLiveCamera(props: NativeProps) {
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
             callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
-            if (callbacksRef.current.recognitionEnabled) scheduleRecognition();
+            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(); startLocalDetectionLoop(); }
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
@@ -386,7 +405,7 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
-    recognitionSchedulerRef.current = () => scheduleRecognition(0);
+    recognitionSchedulerRef.current = () => { scheduleRecognition(0); startLocalDetectionLoop(); };
     void start();
 
     return () => {
@@ -394,6 +413,7 @@ function WebLiveCamera(props: NativeProps) {
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
+      if (localDetectionTimer) window.clearInterval(localDetectionTimer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (depthTimer) window.clearInterval(depthTimer);
       localBottleTracker.reset();
