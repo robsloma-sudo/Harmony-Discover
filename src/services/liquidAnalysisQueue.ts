@@ -6,6 +6,8 @@ export type LiquidTrackCrop = {
   bounds: { x: number; y: number; width: number; height: number };
 };
 
+export type LiquidQueueMetrics = { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number };
+
 export type LiquidWorkerResult = {
   trackId: number;
   result: LiquidBoundaryCandidate;
@@ -49,12 +51,15 @@ export class LiquidAnalysisQueue {
   private lastWorkerMs = 0;
   private maxWorkerMs = 0;
   private readonly onResults: (timestamp: number, results: LiquidWorkerResult[]) => void;
+  private readonly onMetrics?: (metrics: LiquidQueueMetrics) => void;
 
   constructor(
     onResults: (timestamp: number, results: LiquidWorkerResult[]) => void,
     workerFactory: () => Worker | null = createLiquidLevelWorker,
+    onMetrics?: (metrics: LiquidQueueMetrics) => void,
   ) {
     this.onResults = onResults;
+    this.onMetrics = onMetrics;
     this.worker = workerFactory();
     if (this.worker) {
       this.worker.onmessage = (event: MessageEvent<LiquidWorkerMessage>) => {
@@ -70,6 +75,7 @@ export class LiquidAnalysisQueue {
         } else if (!message.error) {
           this.framesSkipped += 1;
         }
+        this.onMetrics?.(this.metrics);
         this.processPending();
       };
       this.worker.onerror = () => {
