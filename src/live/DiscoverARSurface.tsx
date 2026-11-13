@@ -245,7 +245,13 @@ function WebLiveCamera(props: NativeProps) {
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
       if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
       const now = Date.now();
-      const activeCloudTracks = webTracks.filter(track => track.misses === 0);
+      const isVerifiedRead = (read?: LabelBatchRead) =>
+        !!read?.brand && !!read.product && read.confidence >= 0.85
+        && read.state === 'matched' && !!read.match?.id && read.match.score >= 0.9;
+      // A catalog-verified label read belongs to this tracked object. Do not
+      // spend another label-batch request re-reading it on every later frame.
+      const activeCloudTracks = webTracks.filter(track => track.misses === 0
+        && !isVerifiedRead(labelReadsByTrack.get(track.id)));
       const candidates = [
         ...activeCloudTracks.map(track => ({
           trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
@@ -253,10 +259,7 @@ function WebLiveCamera(props: NativeProps) {
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
-          .filter(local => {
-            const previousRead = labelReadsByTrack.get(local.trackId);
-            return !(previousRead?.brand && previousRead.confidence >= 0.85);
-          })
+          .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
           .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
