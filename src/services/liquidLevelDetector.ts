@@ -292,12 +292,15 @@ export function createLiquidLevelWorker(): Worker | null {
       const startedAt = performance.now();
       try {
         const frame = { width: job.width, height: job.height, data: new Uint8ClampedArray(job.buffer) };
-        const results = job.tracks.map((track) => ({
-          trackId: track.trackId,
-          optical: assessLiquidOpticalVisibility(frame, track.bounds),
-          occlusionBands: detectLiquidOcclusionBands(frame, track.bounds),
-          result: detectLiquidBoundaryCandidate(frame, track.bounds, { occlusionBands: detectLiquidOcclusionBands(frame, track.bounds) }),
-        }));
+        const results = job.tracks.map((track) => {
+          const occlusionBands = detectLiquidOcclusionBands(frame, track.bounds);
+          return {
+            trackId: track.trackId,
+            optical: assessLiquidOpticalVisibility(frame, track.bounds),
+            occlusionBands,
+            result: detectLiquidBoundaryCandidate(frame, track.bounds, { occlusionBands }),
+          };
+        });
         self.postMessage({ id: job.id, timestamp: job.timestamp, results, processingMs: performance.now() - startedAt });
       } catch (error) {
         self.postMessage({ id: job.id, timestamp: job.timestamp, error: error instanceof Error ? error.message : 'liquid_worker_failed' });
