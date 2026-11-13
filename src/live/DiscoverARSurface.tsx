@@ -284,6 +284,8 @@ function WebLiveCamera(props: NativeProps) {
       try {
         const reads = await readLiveLabelBatch(crops);
         if (disposed) return;
+        const returnedTrackIds = new Set(reads.map(read => read.trackId));
+        crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
         for (const read of reads) {
           labelReadsByTrack.set(read.trackId, read);
           const cloudTrack = webTracks.find(track => track.id === read.trackId);
