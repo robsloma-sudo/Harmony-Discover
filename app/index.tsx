@@ -269,6 +269,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const value = event.nativeEvent;
             setLiveCandidates(attachBottleReadsToCandidates(value.candidates, liveBottles).map(candidate => ({
               ...candidate,
+              source: value.source,
               depthFrame: value.depthFrame,
             })));
             // Local Vision propagation is image-space only; it must not age or
