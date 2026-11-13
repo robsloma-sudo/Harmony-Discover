@@ -74,7 +74,7 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
         <View style={{flex:1}}>
           <Text style={s.statusTitle}>SHARED CAMERA · {tracking?.state?.toUpperCase().replace('_',' ') || 'STARTING'}</Text>
           <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}{depthFrame ? ` · ${metricDepthSamples} metric depth samples` : ''}</Text>
-          <Text style={s.statusBody}>LIQUID WORKER · {liquidMetrics?.workerAvailable?'AVAILABLE':'UNAVAILABLE'} · {liquidMetrics?.jobsCompleted ?? 0} jobs · {Math.round(liquidMetrics?.lastWorkerMs ?? 0)} ms worker · {Math.round(liquidMetrics?.segmentationMs ?? 0)} ms segmentation · {Math.round(liquidMetrics?.localFrameMs ?? 0)} ms local frame · {liquidMetrics?.framesSkipped ?? 0} skipped · {liquidMetrics?.workerErrors ?? 0} errors</Text>
+          <Text style={s.statusBody}>LIQUID WORKER · {liquidMetrics?.workerAvailable?'AVAILABLE':'UNAVAILABLE'} · {liquidMetrics?.jobsCompleted ?? 0} jobs · {Math.round(liquidMetrics?.lastWorkerMs ?? 0)} ms worker (max {Math.round(liquidMetrics?.maxWorkerMs ?? 0)} ms) · {Math.round(liquidMetrics?.segmentationMs ?? 0)} ms segmentation · {Math.round(liquidMetrics?.localFrameMs ?? 0)} ms local frame · {liquidMetrics?.framesSkipped ?? 0} skipped · {liquidMetrics?.workerErrors ?? 0} errors</Text>
         </View>
       </View>
       <Text style={s.note}>This panel reads the same camera session used by the main viewfinder. It never starts another camera. {lastReadAt ? `Last recognition: ${new Date(lastReadAt).toLocaleTimeString()}.` : 'Waiting for the first recognition result.'}</Text>
