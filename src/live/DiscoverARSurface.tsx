@@ -15,7 +15,7 @@ import { isConfirmedWebBottleTrack } from './webTrackPolicy';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
 import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
-import { getBottleCalibrationKey, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
+import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
 import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
 
 export type ARTrackingUpdate = {
@@ -297,7 +297,7 @@ function WebLiveCamera(props: NativeProps) {
         if (consensus.status === 'visible') {
           const labelRead = labelReadsByTrack.get(item.trackId);
           const identityKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure');
-          const profile = identityKey ? bottleVolumeProfiles[identityKey] : undefined;
+          const profile = identityKey ? (getCachedBottleVolumeProfile(identityKey) ?? bottleVolumeProfiles[identityKey]) : undefined;
           const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
             heightPercent: Math.round(consensus.normalizedHeight * 100),
@@ -858,7 +858,7 @@ export function DiscoverARSurface(props: NativeProps) {
               const consensus = assessLiquidInterface(observations);
               if (consensus.status === 'visible') {
                 const identityKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state);
-                const profile = identityKey ? nativeVolumeProfiles.current[identityKey] : undefined;
+                const profile = identityKey ? (getCachedBottleVolumeProfile(identityKey) ?? nativeVolumeProfiles.current[identityKey]) : undefined;
                 const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
                 current.liquidLevel = {
                   heightPercent: Math.round(consensus.normalizedHeight * 100),
