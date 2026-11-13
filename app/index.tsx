@@ -61,27 +61,28 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     const trackedBottle = liveCandidates.find(candidate => candidate.trackId === selectedTrackId)?.bottle;
     if (trackedBottle) setSelectedBottle(trackedBottle);
   }, [liveCandidates, selectedTrackId]);
+  const selectedBottleBrand = selectedBottle?.match?.brand || selectedBottle?.brand || '';
+  const selectedBottleProduct = selectedBottle?.product || '';
+  const selectedBottleCategory = selectedBottle?.category || 'other';
   useEffect(() => {
     let cancelled = false;
-    if (!selectedBottle) {
-      setSelectedBottleIntelligence(null);
-      setSelectedBottleIntelligenceLoading(false);
-      return () => { cancelled = true; };
-    }
-    const identityBottle = { ...selectedBottle, brand: selectedBottle.match?.brand || selectedBottle.brand };
-    if (!identityBottle.brand.trim() || !identityBottle.product.trim()) {
+    if (!selectedBottleBrand.trim() || !selectedBottleProduct.trim()) {
       setSelectedBottleIntelligence(null);
       setSelectedBottleIntelligenceLoading(false);
       return () => { cancelled = true; };
     }
     setSelectedBottleIntelligence(null);
     setSelectedBottleIntelligenceLoading(true);
-    void loadBottleIntelligenceProfile(identityBottle)
+    void loadBottleIntelligenceProfile({
+      brand: selectedBottleBrand,
+      product: selectedBottleProduct,
+      category: selectedBottleCategory,
+    })
       .then(profile => { if (!cancelled) setSelectedBottleIntelligence(profile); })
       .catch(() => { if (!cancelled) setSelectedBottleIntelligence(null); })
       .finally(() => { if (!cancelled) setSelectedBottleIntelligenceLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedBottle]);
+  }, [selectedBottleBrand, selectedBottleProduct, selectedBottleCategory]);
   const openBottleProfile = (candidate: WorldBottleCandidate) => {
     const bottle = candidate.bottle;
     const profileBottle: BottleRead = bottle || {
