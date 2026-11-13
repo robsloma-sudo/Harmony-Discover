@@ -133,4 +133,4 @@ jobs:
         run: npm install --global netlify-cli
 
       - name: Deploy isolated pull-request preview
-        run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias=discover-pr-${{ github.event.pull_request.number }} --dir=dist --no-build --message "Harmony Discover PR #${{ github.event.pull_request.number }} ${GITHUB_SHA}"
+        run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias=discover-pr-${{ github.event.pull_request.number }} --dir=dist --no-build --message "Harmony Discover pull request ${{ github.event.pull_request.number }} ${GITHUB_SHA}"
