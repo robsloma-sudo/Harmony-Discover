@@ -21,6 +21,8 @@ export type ARViewEvent = { nativeEvent: { state?: string; reason?: string; mess
 
 export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
 
+export type ARKitCameraPose = { width: number; height: number; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; imageOrientation: number };
+
 type NativeProps = ViewProps & {
   active?: boolean;
   recognitionEnabled?: boolean;
@@ -32,6 +34,7 @@ type NativeProps = ViewProps & {
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
+  onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
