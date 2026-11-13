@@ -304,7 +304,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
-      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !worldAnchoredTrackIds.includes(track.trackId) && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
+      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !worldAnchoredTrackIds.includes(track.trackId)) && (
         <View pointerEvents="box-none" style={s.liveDetectionLayer}>
           {liveCandidates.filter(track => track.confidence >= 0.45 && !worldAnchoredTrackIds.includes(track.trackId)).map(tracked => {
             const bottle = tracked.bottle;
