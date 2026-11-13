@@ -44,8 +44,10 @@ public class DiscoverARKitModule: Module {
       ]
     }
 
-    AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]]) -> [[String: Any]] in
-      Self.analyzeLiquidLevels(imageBase64, boxes: boxes)
+    AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]], promise: Promise) in
+      DispatchQueue.global(qos: .utility).async {
+        promise.resolve(Self.analyzeLiquidLevels(imageBase64, boxes: boxes))
+      }
     }
 
     View(DiscoverARView.self) {
