@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
   # Research spike only: native D-FINE inference with CPU + CoreML execution providers.
-  s.dependency 'onnxruntime-objc', '1.32.0'
+  s.dependency 'onnxruntime-objc', '1.24.3'
   s.source_files = '**/*.{h,m,mm,swift}'
   s.public_header_files = 'DfineOrtSessionProbe.h'
   s.pod_target_xcconfig = {
