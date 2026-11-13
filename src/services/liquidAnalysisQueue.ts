@@ -17,6 +17,7 @@ type LiquidWorkerMessage = {
   timestamp: number;
   results?: LiquidWorkerResult[];
   error?: string;
+  processingMs?: number;
 };
 
 type PendingJob = {
@@ -40,6 +41,12 @@ export class LiquidAnalysisQueue {
   private nextId = 1;
   private lastSubmittedAt = 0;
   private disposed = false;
+  private jobsDispatched = 0;
+  private jobsCompleted = 0;
+  private framesSkipped = 0;
+  private workerErrors = 0;
+  private lastWorkerMs = 0;
+  private maxWorkerMs = 0;
   private readonly onResults: (timestamp: number, results: LiquidWorkerResult[]) => void;
 
   constructor(
@@ -52,9 +59,15 @@ export class LiquidAnalysisQueue {
       this.worker.onmessage = (event: MessageEvent<LiquidWorkerMessage>) => {
         const message = event.data;
         this.inFlight = false;
+        if (message.error) this.workerErrors += 1;
         if (!this.disposed && !message.error && Array.isArray(message.results)
           && Date.now() - message.timestamp <= 1400) {
+          this.jobsCompleted += 1;
+          this.lastWorkerMs = Number.isFinite(message.processingMs) ? message.processingMs! : 0;
+          this.maxWorkerMs = Math.max(this.maxWorkerMs, this.lastWorkerMs);
           this.onResults(message.timestamp, message.results);
+        } else if (!message.error) {
+          this.framesSkipped += 1;
         }
         this.processPending();
       };
@@ -67,12 +80,26 @@ export class LiquidAnalysisQueue {
     }
   }
 
+  get metrics() {
+    return {
+      jobsDispatched: this.jobsDispatched,
+      jobsCompleted: this.jobsCompleted,
+      framesSkipped: this.framesSkipped,
+      workerErrors: this.workerErrors,
+      lastWorkerMs: this.lastWorkerMs,
+      maxWorkerMs: this.maxWorkerMs,
+    };
+  }
+
   get available(): boolean {
     return !!this.worker && !this.disposed;
   }
 
   submit(frame: ImageData, timestamp: number, tracks: LiquidTrackCrop[]): void {
-    if (!this.available || this.disposed || !tracks.length || timestamp - this.lastSubmittedAt < 650) return;
+    if (!this.available || this.disposed || !tracks.length || timestamp - this.lastSubmittedAt < 650) {
+      this.framesSkipped += 1;
+      return;
+    }
     const buffer = frame.data.buffer;
     if (!(buffer instanceof ArrayBuffer)) return;
     this.lastSubmittedAt = timestamp;
@@ -86,9 +113,10 @@ export class LiquidAnalysisQueue {
         .sort((a, b) => (b.bounds.width * b.bounds.height) - (a.bounds.width * a.bounds.height))
         .slice(0, 4),
     };
-    if (!job.tracks.length) return;
+    if (!job.tracks.length) { this.framesSkipped += 1; return; }
     if (this.inFlight) {
       // Replace stale queued work instead of building latency under load.
+      if (this.pending) this.framesSkipped += 1;
       this.pending = job;
       return;
     }
@@ -98,15 +126,18 @@ export class LiquidAnalysisQueue {
   private run(job: PendingJob): void {
     const worker = this.worker;
     if (!worker || this.disposed || Date.now() - job.timestamp > 1000) {
+      this.framesSkipped += 1;
       this.processPending();
       return;
     }
     const buffer = job.frame.data.buffer;
     if (!(buffer instanceof ArrayBuffer)) {
+      this.framesSkipped += 1;
       this.processPending();
       return;
     }
     this.inFlight = true;
+    this.jobsDispatched += 1;
     try {
       worker.postMessage({
         id: job.id,
@@ -129,6 +160,7 @@ export class LiquidAnalysisQueue {
     const next = this.pending;
     this.pending = null;
     if (Date.now() - next.timestamp <= 1000) this.run(next);
+    else this.framesSkipped += 1;
   }
 
   dispose(): void {
