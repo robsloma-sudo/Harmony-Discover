@@ -377,13 +377,13 @@ function liquidLevelWorkerMain() {
       }
       if(contrasts.length<Math.ceil(columns.length*MIN_COLUMN_SUPPORT)) continue;
       const support=contrasts.filter(v=>v>=MIN_DELTA_E).length/columns.length;
-      const sorted=[...contrasts].sort((a,b)=>a-b);
+      const sorted=contrasts.slice().sort((a,b)=>a-b);
       const contrast=sorted[Math.floor(sorted.length/2)];
       if(support>=MIN_COLUMN_SUPPORT && contrast*support>bestContrast*bestSupport) {
         bestY=y;bestContrast=contrast;bestSupport=support;
       }
     }
-    if(bestY<0||bestContrast<MIN_DELTA_E||bestSupport<MIN_COLUMN_SUPPORT) return {status:'insufficient_evidence'};
+    if(bestY<0||bestContrast<MIN_DELTA_E||bestSupport<MIN_COLUMN_SUPPORT) return {status:'insufficient_evidence',reason:'no_stable_horizontal_transition',method:'multi_column_lab_transition'};
     const radius=Math.max(4,Math.round(height*0.12));
     const samples:Array<{x:number;y:number}>=[];
     for(const x of columns) {
@@ -400,13 +400,13 @@ function liquidLevelWorkerMain() {
     const heights=samples.map(s=>s.y).sort((a,b)=>a-b);
     const medianY=heights.length?heights[Math.floor(heights.length/2)]:bestY;
     const spread=heights.length>=4?(heights[heights.length-1]-heights[0])/height:0;
-    const spatial=[...samples].sort((a,b)=>a.x-b.x);
+    const spatial=samples.slice().sort((a,b)=>a.x-b.x);
     const center=spatial.length>=5?spatial.slice(2,-2).map(s=>s.y):heights;
     const edges=spatial.length>=5?[spatial[0].y,spatial[1].y,spatial[spatial.length-2].y,spatial[spatial.length-1].y]:heights;
-    const avg=values=>values.reduce((a,b)=>a+b,0)/Math.max(1,values.length);
+    const avg=(values:number[])=>values.reduce((a,b)=>a+b,0)/Math.max(1,values.length);
     const curvature=(avg(center)-avg(edges))/height;
     const shape=spread<=0.025?'flat':(spread<=0.14&&Math.abs(curvature)>=0.008?'curved':'irregular');
-    return {status:'candidate',normalizedHeight:Math.max(0,Math.min(1,(bottom-medianY)/height)),confidence:Math.max(0,Math.min(1,(bestContrast/28)*bestSupport)),boundaryShape:shape};
+    return {status:'candidate',normalizedHeight:Math.max(0,Math.min(1,(bottom-medianY)/height)),confidence:Math.max(0,Math.min(1,(bestContrast/28)*bestSupport)),contrast:bestContrast,columnSupport:bestSupport,boundaryShape:shape,shapeSpread:spread,curvature:curvature,method:'multi_column_lab_transition'};
   }
 
   self.onmessage = function(event: MessageEvent) {
