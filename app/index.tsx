@@ -375,22 +375,35 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       </>}
       {selectedBottle && (
-        <>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close bottle profile"
-            onPress={() => { setSelectedBottle(null); setSelectedTrackId(null); }}
-            style={{ position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:68, backgroundColor:'rgba(0,0,0,0.48)' }}
-          />
-          <View style={{ position:'absolute', zIndex:69, left:8, right:8, bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76, height:Math.min(screenHeight*0.78,760), borderRadius:18, overflow:'hidden', borderWidth:1, borderColor:'rgba(198,163,106,0.58)', backgroundColor:'#0A0D12' }}>
+        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+          <View
+            pointerEvents="box-none"
+            style={{
+              position:'absolute',
+              zIndex:69,
+              left:8,
+              right:8,
+              bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,
+              height:Math.min(screenHeight*0.62,620),
+              borderRadius:18,
+              overflow:'hidden',
+              borderWidth:1,
+              borderColor:'rgba(198,163,106,0.58)',
+              backgroundColor:'#0A0D12',
+            }}
+          >
             <BottleProfilePanel
               bottle={selectedBottle}
               intelligence={selectedBottleIntelligence}
               intelligenceLoading={selectedBottleIntelligenceLoading}
-              onClose={() => { setSelectedBottle(null); setSelectedTrackId(null); setSelectedBottleIntelligence(null); }}
+              onClose={() => {
+                setSelectedBottle(null);
+                setSelectedTrackId(null);
+                setSelectedBottleIntelligence(null);
+              }}
             />
           </View>
-        </>
+        </View>
       )}
       {activeJourney && <JourneyPlayerOverlay item={activeJourney} onClose={()=>setActiveJourney(null)}/>}
       {settingsOpen && <>
