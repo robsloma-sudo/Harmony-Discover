@@ -57,6 +57,28 @@ Implementation constraints:
 5. Confirm how the CocoaPod's headers are imported into this Expo Swift module. The official docs describe a bridging header; if the generated Expo iOS project makes that awkward, add a small Objective-C shim inside the module rather than changing app-wide build settings blindly.
 6. Do not add the dependency or model to the production app in this research PR. First create a separate native spike branch, verify CocoaPods resolution and iOS simulator compilation, then test on physical iPhone hardware.
 
+## Second reproducible Apple Silicon macOS benchmark
+
+Successful updated run: https://github.com/robsloma-sudo/Harmony-Discover/actions/runs/43463326315
+This run includes the explicit SHA-256 gate and the expanded segmentation parity metrics. It used ONNX Runtime 1.32.0, a deterministic random float32 input [1,3,640,640], five warm-up inferences, and 25 timed inferences per provider.
+
+| Metric | CPU only | CoreML + CPU fallback |
+|---|---:|---:|
+| Session load | 87.97 ms | 3,158.41 ms |
+| First inference | 620.42 ms | 566.92 ms |
+| Warm p50 | 450.23 ms | 291.57 ms |
+| Warm p95 | 546.71 ms | 339.05 ms |
+
+CoreML warm p50 was 1.544x faster in this run (about 35% lower latency), but the result varied materially from the earlier run. CoreML initialization was 3.16 seconds. The CoreML session partitioned 155 node events to CoreML and 465 to CPU, so this is mixed-provider execution, not full graph offload.
+
+Output parity:
+- Labels: exact match.
+- Boxes: max absolute delta 0.002197; mean 0.0000413; p99 0.000275.
+- Scores: max absolute delta 0.00000323; mean 0.000000170; p99 0.000000887.
+- Masks: max absolute logit delta 0.759165; mean 0.060564; p99 0.278760; positive-logit agreement 100% on this one deterministic random input.
+
+The mask sign agreement is encouraging but not a quality certification. A single synthetic input cannot establish pixel-level segmentation accuracy on real images. The high mask logit delta requires real-image thresholded-mask comparisons before contours are trusted.
+
 ## Engineering interpretation
 
 1. CoreML is a promising execution path for this graph, but the 2.13-second session creation cost means the model must be initialized off the camera-critical path and reused. Recreating the session per frame is unacceptable.
