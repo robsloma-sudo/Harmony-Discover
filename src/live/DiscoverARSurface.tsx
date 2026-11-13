@@ -12,6 +12,8 @@ import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { detectLiquidBoundaryCandidate } from '../services/liquidLevelDetector';
+import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -33,7 +35,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus' } }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
@@ -164,7 +166,9 @@ function WebLiveCamera(props: NativeProps) {
     // attached between recognition passes instead of resetting by array index.
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
-    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }> }> = [];
+    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus' } }> = [];
+    // Liquid evidence is kept per local bottle track and never blocks cloud label recognition.
+    const liquidHistoryByTrack = new Map<number, LiquidLineObservation[]>();
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
@@ -364,11 +368,31 @@ function WebLiveCamera(props: NativeProps) {
         }), frameTimestamp);
         const candidates = localTracks
           .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
-          .map(local => ({
-            trackId: -Math.abs(local.trackId), x: local.bounds.x, y: local.bounds.y,
-            width: local.bounds.width, height: local.bounds.height,
-            confidence: local.confidence, contour: local.contour,
-          }));
+          .map(local => {
+            const trackId = -Math.abs(local.trackId);
+            const candidate = detectLiquidBoundaryCandidate(frame, {
+              x: local.bounds.x * frame.width,
+              y: local.bounds.y * frame.height,
+              width: local.bounds.width * frame.width,
+              height: local.bounds.height * frame.height,
+            });
+            let liquidLevel: { heightPercent: number; confidence: number; method: 'temporal_consensus' } | undefined;
+            if (candidate.status === 'candidate' && candidate.confidence >= 0.7) {
+              const history = liquidHistoryByTrack.get(trackId) ?? [];
+              const next = [...history, { frameId: String(frameTimestamp), normalizedHeight: candidate.normalizedHeight, confidence: candidate.confidence }].slice(-5);
+              liquidHistoryByTrack.set(trackId, next);
+              const consensus = assessLiquidInterface(next);
+              if (consensus.status === 'visible') {
+                liquidLevel = { heightPercent: Math.round(consensus.normalizedHeight * 100), confidence: consensus.confidence, method: 'temporal_consensus' };
+              }
+            }
+            return {
+              trackId, x: local.bounds.x, y: local.bounds.y,
+              width: local.bounds.width, height: local.bounds.height,
+              confidence: local.confidence, contour: local.contour,
+              ...(liquidLevel ? { liquidLevel } : {}),
+            };
+          });
         latestLocalCandidates = candidates;
         const cloudCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
