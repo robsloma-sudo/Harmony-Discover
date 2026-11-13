@@ -413,7 +413,7 @@ export function getBottleFamilyLabel(category: string, details: Record<string, u
   const labels: Record<BeverageFamily, string> = {
     armagnac:"Armagnac", cognac:"Cognac", other_brandy:"Brandy", pisco:"Pisco",
     rye_whiskey:"Rye whiskey", bourbon:"Bourbon", single_malt_scotch:"Single malt Scotch",
-    other_whiskey:"Whiskey", wine_red:"Red wine", wine_white:"White wine", wine_rose:"Rosé wine", wine_unknown:"Wine · style unconfirmed",
+    other_whiskey:"Whiskey", single_malt_whiskey:"Single malt whiskey", wine_red:"Red wine", wine_white:"White wine", wine_rose:"Rosé wine", wine_unknown:"Wine · style unconfirmed",
     sparkling_wine:"Sparkling wine", tequila:"Tequila", mezcal:"Mezcal", rum:"Rum", gin:"Gin",
     vodka:"Vodka", liqueur:"Liqueur / aperitif", other:"Beverage",
   };
