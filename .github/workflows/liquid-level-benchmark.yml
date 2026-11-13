@@ -1,0 +1,53 @@
+name: Harmony liquid-level research benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/liquid-benchmark/**"
+      - ".github/workflows/liquid-level-benchmark.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquid-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scripts/liquid-benchmark/requirements.txt
+
+      - name: Install benchmark dependencies
+        run: python -m pip install -r scripts/liquid-benchmark/requirements.txt
+
+      - name: Run same-image benchmark
+        run: python scripts/liquid-benchmark/benchmark.py --output-dir benchmark-results
+
+      - name: Publish benchmark summary
+        if: always() && hashFiles('benchmark-results/summary.md') != ''
+        run: cat benchmark-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metrics only (no source images)
+        if: always() && hashFiles('benchmark-results/summary.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmony-liquid-benchmark-results
+          path: |
+            benchmark-results/summary.md
+            benchmark-results/summary.json
+            benchmark-results/per-bottle.csv
+          if-no-files-found: warn
+          retention-days: 14
