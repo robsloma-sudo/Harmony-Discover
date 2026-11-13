@@ -318,8 +318,14 @@ function WebLiveCamera(props: NativeProps) {
     // cloud recognition before updating spatial boxes.
 
     const publishVisibleCandidates = () => {
+      // Prefer a fresh local geometry update over a cloud box that has already
+      // missed a recognition cycle. Otherwise keep the confirmed cloud track
+      // visible while local segmentation catches up.
       const cloudCandidates = webTracks
         .filter(isConfirmedWebBottleTrack)
+        .filter(track => !latestLocalCandidates.some(local =>
+          local.timestamp >= track.timestamp && isSameBottleBox(track, local)
+        ))
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour, bottle: track.bottle }));
       const localCandidates = latestLocalCandidates
         .filter(candidate => !cloudCandidates.some(cloud => isSameBottleBox(cloud, candidate)))
@@ -510,7 +516,7 @@ function WebLiveCamera(props: NativeProps) {
           return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
         }), frameTimestamp);
         const activeLocalTracks = localTracks.filter(local =>
-          !webTracks.some(cloud => isSameBottleBox(cloud, local.bounds))
+          !webTracks.some(cloud => cloud.misses === 0 && isConfirmedWebBottleTrack(cloud) && isSameBottleBox(cloud, local.bounds))
         );
         const candidates = activeLocalTracks.map(local => ({
           trackId: -Math.abs(local.trackId),
@@ -621,11 +627,7 @@ function WebLiveCamera(props: NativeProps) {
         updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
-        const cloudCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
-          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates.filter(local => !cloudCandidates.some(cloud => isSameBottleBox(cloud, local)))];
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
+        publishVisibleCandidates();
 
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
