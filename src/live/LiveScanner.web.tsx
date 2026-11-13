@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { router } from 'expo-router';
 import { readLiveFrame, saveBottleSightings, bottleErrorMessage, type BottleRead, type MenuGlimpse } from '../services/discoverLiveApi';
 import { useScan } from '../state/ScanContext';
+import { calculateLabelCrop } from './labelCrop';
 
 // One scanner for everything: bottles (beer, wine, spirits) and menus. Browser tier.
 // It is not a page: the home screen swaps it in once a photo is taken (or up to six are chosen from the library).
@@ -14,7 +15,7 @@ const OK_GLOW = '0 0 8px rgba(70,255,160,.55)';
 const word: CSSProperties = { color: '#f2f8ff', textShadow: GLOW, fontWeight: 700, fontFamily: "'Space Grotesk',system-ui,-apple-system,sans-serif", letterSpacing: 0.2 };
 const dim: CSSProperties = { ...word, color: '#d3e3ff', fontWeight: 500 };
 const fill: CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' };
-const EDGE_LONG = 420, SEND_LONG = 1100, SWEEP_MS = 2300, MAX_PHOTOS = 6;
+const EDGE_LONG = 420, SEND_LONG = 1600, SWEEP_MS = 2300, MAX_PHOTOS = 6;
 
 const CATEGORY: Record<string, string> = { tequila: 'Tequila', mezcal: 'Mezcal', whiskey: 'Whiskey', vodka: 'Vodka', gin: 'Gin', rum: 'Rum', brandy: 'Brandy', liqueur: 'Liqueur', amaro_aperitivo: 'Amaro / aperitivo', vermouth: 'Vermouth', wine: 'Wine', sparkling: 'Sparkling wine', beer: 'Beer', cider: 'Cider', non_alcoholic: 'Non-alcoholic', other: '' };
 const nameOf = (b: BottleRead) => [b.match?.brand || b.brand, b.product].filter(Boolean).join(' ');
@@ -58,22 +59,23 @@ function researchValue(b: BottleRead, key: string): string {
 async function makeFinePrintCrop(uri: string, box: BottleRead['label_box']): Promise<string | null> {
   if (!box) return null;
   const image = new Image();
-  await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('label_crop_load_failed')); image.src = uri; });
-  const padX = (box.x1 - box.x0) * 0.06, padY = (box.y1 - box.y0) * 0.08;
-  const x0 = Math.max(0, box.x0 - padX), y0 = Math.max(0, box.y0 - padY);
-  const x1 = Math.min(1, box.x1 + padX), y1 = Math.min(1, box.y1 + padY);
-  const sx = Math.round(x0 * image.naturalWidth), sy = Math.round(y0 * image.naturalHeight);
-  const sw = Math.max(1, Math.round((x1 - x0) * image.naturalWidth)), sh = Math.max(1, Math.round((y1 - y0) * image.naturalHeight));
-  const scale = Math.min(2.5, 1600 / Math.max(sw, sh));
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('label_crop_load_failed'));
+    image.src = uri;
+  });
+  const crop = calculateLabelCrop(box, image.naturalWidth, image.naturalHeight, {
+    paddingX: 0.10, paddingY: 0.12, maxLongEdge: 2048, maxUpscale: 2,
+  });
+  if (!crop) return null;
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(sw * scale)); canvas.height = Math.max(1, Math.round(sh * scale));
+  canvas.width = crop.outputWidth; canvas.height = crop.outputHeight;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '';
+  ctx.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.96).split(',')[1] || '';
 }
-
 // Share a small fine-print request pool across every photo in this scanner session.
 // A per-photo cap alone could still burst to 12 requests when six images are scanned.
 let activeFinePrintReads = 0;
@@ -109,7 +111,7 @@ async function makeFinePrintVariants(base64: string): Promise<EnhancementVariant
     image.src = `data:image/jpeg;base64,${base64}`;
   });
   const width = image.naturalWidth, height = image.naturalHeight;
-  if (!width || !height || width * height > 4_000_000) return [{ name: 'original', jpeg: base64, score: 0 }];
+  if (!width || !height || width * height > 4_500_000) return [{ name: 'original', jpeg: base64, score: 0 }];
   const sourceCanvas = document.createElement('canvas');
   sourceCanvas.width = width; sourceCanvas.height = height;
   const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
@@ -249,7 +251,7 @@ function PhotoScanner({ uri, state, compact, onLoaded }: { uri: string; state: P
       const s2 = Math.min(1, SEND_LONG / Math.max(iw, ih)), shot = document.createElement('canvas');
       shot.width = Math.round(iw * s2); shot.height = Math.round(ih * s2);
       shot.getContext('2d')!.drawImage(img, 0, 0, shot.width, shot.height);
-      onLoaded(shot.toDataURL('image/jpeg', 0.76).replace(/^data:image\/jpeg;base64,/, ''));
+      onLoaded(shot.toDataURL('image/jpeg', 0.86).replace(/^data:image\/jpeg;base64,/, ''));
       const s1 = EDGE_LONG / Math.max(iw, ih), EW = Math.max(2, Math.round(iw * s1)), EH = Math.max(2, Math.round(ih * s1));
       const work = document.createElement('canvas'); work.width = EW; work.height = EH;
       const wctx = work.getContext('2d', { willReadFrequently: true })!; wctx.drawImage(img, 0, 0, EW, EH);
