@@ -8,7 +8,7 @@
 export type BeverageFamily =
   | "armagnac" | "cognac" | "other_brandy" | "pisco"
   | "rye_whiskey" | "bourbon" | "single_malt_scotch" | "other_whiskey"
-  | "wine_red" | "wine_white" | "wine_rose" | "sparkling_wine"
+  | "wine_red" | "wine_white" | "wine_rose" | "wine_unknown" | "sparkling_wine"
   | "tequila" | "mezcal" | "rum" | "gin" | "vodka" | "liqueur" | "other";
 
 export type IntelligenceField = {
@@ -362,7 +362,7 @@ export function getBottleFamilyLabel(category: string, details: Record<string, u
   const labels: Record<BeverageFamily, string> = {
     armagnac:"Armagnac", cognac:"Cognac", other_brandy:"Brandy", pisco:"Pisco",
     rye_whiskey:"Rye whiskey", bourbon:"Bourbon", single_malt_scotch:"Single malt Scotch",
-    other_whiskey:"Whiskey", wine_red:"Red wine", wine_white:"White wine", wine_rose:"Rosé wine",
+    other_whiskey:"Whiskey", wine_red:"Red wine", wine_white:"White wine", wine_rose:"Rosé wine", wine_unknown:"Wine · style unconfirmed",
     sparkling_wine:"Sparkling wine", tequila:"Tequila", mezcal:"Mezcal", rum:"Rum", gin:"Gin",
     vodka:"Vodka", liqueur:"Liqueur / aperitif", other:"Beverage",
   };
