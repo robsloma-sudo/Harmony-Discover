@@ -555,6 +555,8 @@ export function DiscoverARSurface(props: NativeProps) {
       if (nativeFrameReadBusy) return;
       nativeFrameReadBusy = true;
       const frame = event.nativeEvent;
+      // The attached metric depth and image share this exact ARFrame timestamp.
+      if (frame.depthEstimate) props.onDepthEstimate?.({ nativeEvent: frame.depthEstimate });
       void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
         const signals = nativeVisionSignals.current;
         const signalsAreFresh = !!signals && Date.now() - signals.timestamp < 3500;
@@ -564,7 +566,7 @@ export function DiscoverARSurface(props: NativeProps) {
           text: mergedText,
           barcodes: signalsAreFresh ? signals!.barcodes : [],
           classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
-          frameTimestamp: Date.now(),
+          frameTimestamp: frame.timestamp,
           bottles: result.bottles,
           menu: result.menu,
           diagnostics: result.diagnostics,
