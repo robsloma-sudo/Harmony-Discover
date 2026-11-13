@@ -407,7 +407,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let transform = frame.camera.transform
     let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
     let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
-    DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return nil }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
+    DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
     return payload
   }
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
