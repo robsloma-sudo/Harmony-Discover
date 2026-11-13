@@ -42,7 +42,7 @@ final class DfineNativeRuntime {
         cacheDirectory: cacheURL.path
       )
       result["sha256"] = digest
-      result["runtimeVersion"] = "1.32.0"
+      result["runtimeVersion"] = "1.24.3"
       return result
     }
   }
