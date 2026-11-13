@@ -397,11 +397,25 @@ export default function LiveScanner({ photos, onClose, onJourneyItems, source = 
           const product = supported('product', fine.product);
           const category = supported('category', fine.category);
           const words = [...new Set([...bottle.words, ...candidates.flatMap(c => c.read.words)])].slice(0, 8);
+          const mergedBrand = bottle.brand || brand;
+          const mergedProduct = bottle.product || product;
+          const mergedCategory = category && category !== 'other' ? category : bottle.category;
+          for (const [field, value] of Object.entries({
+            brand: mergedBrand, product: mergedProduct, category: mergedCategory,
+            proof: bottle.proof || supported('proof', fine.proof),
+            size: bottle.size || supported('size', fine.size),
+            origin: bottle.origin || supported('origin', fine.origin),
+          })) {
+            const score = Number(fine.fieldConfidence?.[field] || 0);
+            if (value && score >= 0.78) fieldConfidence[field] = Math.max(Number(fieldConfidence[field] || 0), score);
+          }
+          const confidence = Math.max(bottle.confidence, Number(fine.fieldConfidence?.brand || 0));
           return { ...bottle, details, words,
-            brand: bottle.brand || brand,
-            product: bottle.product || product,
-            category: category && category !== 'other' ? category : bottle.category,
-            confidence: Math.max(bottle.confidence, Number(fine.fieldConfidence?.brand || 0)),
+            brand: mergedBrand,
+            product: mergedProduct,
+            category: mergedCategory,
+            confidence,
+            state: bottle.state === 'unsure' && !!mergedBrand && confidence >= 0.78 ? 'reported' : bottle.state,
             proof: bottle.proof || supported('proof', fine.proof),
             size: bottle.size || supported('size', fine.size),
             origin: bottle.origin || supported('origin', fine.origin),
