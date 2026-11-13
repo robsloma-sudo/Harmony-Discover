@@ -20,7 +20,7 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;workerAvailable:boolean}; onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}; onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
 
 
 function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
