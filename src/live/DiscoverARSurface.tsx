@@ -116,6 +116,7 @@ function WebLiveCamera(props: NativeProps) {
         recognitionTimer = 0;
         localDetectionTimer = 0;
         localBottleTracker.reset();
+        latestLocalCandidates = [];
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, source: 'local', candidates: [] } });
         callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
       } else if (callbacksRef.current.recognitionEnabled) {
@@ -151,6 +152,7 @@ function WebLiveCamera(props: NativeProps) {
     // attached between recognition passes instead of resetting by array index.
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
+    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }> }> = [];
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
@@ -242,11 +244,16 @@ function WebLiveCamera(props: NativeProps) {
         const candidates = localTracks
           .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
           .map(local => ({
-            trackId: local.trackId, x: local.bounds.x, y: local.bounds.y,
+            trackId: -Math.abs(local.trackId), x: local.bounds.x, y: local.bounds.y,
             width: local.bounds.width, height: local.bounds.height,
             confidence: local.confidence, contour: local.contour,
           }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: candidates.length, source: 'local', candidates } });
+        latestLocalCandidates = candidates;
+        const cloudCandidates = webTracks
+          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
+        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, source: 'local', candidates: visibleCandidates } });
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'local_segmentation_frame_failed: ' + error.message : 'local_segmentation_frame_failed' } });
       } finally {
@@ -309,15 +316,11 @@ function WebLiveCamera(props: NativeProps) {
         const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
-        const immediateCandidates = webTracks
+        const cloudCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
-        // Local candidates were already published while cloud recognition ran.
-        const maskCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
-          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: maskCandidates.length, candidates: maskCandidates } });
+        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
 
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
