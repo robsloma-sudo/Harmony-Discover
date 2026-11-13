@@ -195,22 +195,22 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
-      {permission.granted && !scanPhotos && liveCandidates.some(track => !!track.bottle && track.confidence >= 0.45) && (
+      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.58) && (
         <View pointerEvents="none" style={s.liveDetectionLayer}>
-          {liveCandidates.filter(track => track.bottle && track.confidence >= 0.45).map(tracked => {
-            const bottle = tracked.bottle!;
+          {liveCandidates.filter(track => track.confidence >= 0.58).map(tracked => {
+            const bottle = tracked.bottle;
             const left = Math.max(0, Math.min(1, tracked.x));
             const top = Math.max(0, Math.min(1, tracked.y));
             const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
-            const name = [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim();
+            const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim() : 'BOTTLE DETECTED';
             return (
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <MaskContourOverlay points={tracked.contour} color="#55D9FF" strokeWidth={2.2} />
                 <View style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
                   <View style={s.liveDetectionLabel}>
-                    <Text numberOfLines={1} style={s.liveDetectionName}>{name || bottle.category.replace(/_/g, ' ').toUpperCase()}</Text>
-                    <Text style={s.liveDetectionConfidence}>DETECTED · ID {Math.round(bottle.confidence * 100)}%</Text>
+                    <Text numberOfLines={1} style={s.liveDetectionName}>{name || (bottle ? bottle.category.replace(/_/g, ' ').toUpperCase() : 'BOTTLE DETECTED')}</Text>
+                    <Text style={s.liveDetectionConfidence}>{bottle ? `DETECTED · ID ${Math.round(bottle.confidence * 100)}%` : `LOCAL DETECTION · ${Math.round(tracked.confidence * 100)}%`}</Text>
                   </View>
                 </View>
               </View>
