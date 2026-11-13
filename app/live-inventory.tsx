@@ -20,7 +20,7 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;workerAvailable:boolean}; onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
 
 
 function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
@@ -55,7 +55,7 @@ function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
   </View>;
 }
 
-export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],barcodes=[],labelText=[],menu,lastReadAt}:LiveInventoryProps={}) {
+export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,liquidMetrics,candidates=[],bottles=[],barcodes=[],labelText=[],menu,lastReadAt}:LiveInventoryProps={}) {
   const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
   const toggle=(id:string)=>setExpanded(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id]);
   const metricDepthSamples=depthFrame?.depthMeters.filter(value=>Number.isFinite(value)&&value>0).length ?? 0;
@@ -74,6 +74,7 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
         <View style={{flex:1}}>
           <Text style={s.statusTitle}>SHARED CAMERA · {tracking?.state?.toUpperCase().replace('_',' ') || 'STARTING'}</Text>
           <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}{depthFrame ? ` · ${metricDepthSamples} metric depth samples` : ''}</Text>
+          <Text style={s.statusBody}>LIQUID WORKER · {liquidMetrics?.workerAvailable?'AVAILABLE':'UNAVAILABLE'} · {liquidMetrics?.jobsCompleted ?? 0} jobs · {Math.round(liquidMetrics?.lastWorkerMs ?? 0)} ms worker · {Math.round(liquidMetrics?.segmentationMs ?? 0)} ms segmentation · {liquidMetrics?.framesSkipped ?? 0} skipped · {liquidMetrics?.workerErrors ?? 0} errors</Text>
         </View>
       </View>
       <Text style={s.note}>This panel reads the same camera session used by the main viewfinder. It never starts another camera. {lastReadAt ? `Last recognition: ${new Date(lastReadAt).toLocaleTimeString()}.` : 'Waiting for the first recognition result.'}</Text>
