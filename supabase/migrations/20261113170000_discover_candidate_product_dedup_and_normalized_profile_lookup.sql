@@ -3,6 +3,49 @@
 alter table public.discover_products
   add column if not exists candidate_identity_key text;
 
+-- Backfill only unambiguous historical candidates. If multiple historical
+-- products already collide on the same identity, leave their keys NULL for
+-- manual reconciliation instead of silently merging potentially distinct SKUs.
+with latest_sighting as (
+  select distinct on (s.discover_product_id)
+    s.discover_product_id,s.read_brand,s.read_product,s.read_category,s.read_proof,s.read_size,s.read_vintage,s.label_details
+  from public.bottle_sightings s
+  where s.discover_product_id is not null
+  order by s.discover_product_id,s.seen_at desc,s.id desc
+), keyed as (
+  select p.id,
+    md5(concat_ws('|',
+      public.discover_norm(coalesce(s.read_brand,p.brand_name,'')),
+      public.discover_norm(coalesce(s.read_product,p.product_name,'')),
+      public.discover_norm(coalesce(s.read_category,p.product_class,'')),
+      public.discover_norm(coalesce(s.read_proof,'')),
+      public.discover_norm(coalesce(s.read_size,'')),
+      coalesce(s.read_vintage::text,''),
+      public.discover_norm(coalesce(s.label_details ->> 'sku','')),
+      public.discover_norm(coalesce(s.label_details ->> 'barcode','')),
+      public.discover_norm(coalesce(s.label_details ->> 'upc_ean','')),
+      public.discover_norm(coalesce(s.label_details ->> 'batch','')),
+      public.discover_norm(coalesce(s.label_details ->> 'lot_code','')),
+      public.discover_norm(coalesce(s.label_details ->> 'age_statement','')),
+      public.discover_norm(coalesce(s.label_details ->> 'cask_finish','')),
+      public.discover_norm(coalesce(s.label_details ->> 'cask_type','')),
+      public.discover_norm(coalesce(s.label_details ->> 'barrel_number','')),
+      public.discover_norm(coalesce(s.label_details ->> 'appellation','')),
+      public.discover_norm(coalesce(s.label_details ->> 'classification',''))
+    )) candidate_key
+  from public.discover_products p
+  join latest_sighting s on s.discover_product_id=p.id
+  where p.phg_product_id is null and p.status in ('candidate','needs_review')
+    and nullif(public.discover_norm(coalesce(s.read_brand,p.brand_name,'')),'') is not null
+    and nullif(public.discover_norm(coalesce(s.read_product,p.product_name,'')),'') is not null
+), unique_keys as (
+  select candidate_key from keyed group by candidate_key having count(*)=1
+)
+update public.discover_products p
+set candidate_identity_key=k.candidate_key
+from keyed k join unique_keys u using(candidate_key)
+where p.id=k.id;
+
 create unique index if not exists discover_products_candidate_identity_key_uidx
   on public.discover_products(candidate_identity_key)
   where candidate_identity_key is not null;
