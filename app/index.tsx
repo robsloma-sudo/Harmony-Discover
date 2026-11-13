@@ -40,6 +40,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  // Only exact cloud-read frames with attached metric depth advance physical tracking.
+  const [liveSpatialObservationFrame, setLiveSpatialObservationFrame] = useState<ARKitDepthFrame | null>(null);
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
@@ -255,6 +257,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               setAnchorSessionKey(value => value + 1);
               setLiveCandidates([]);
               setLiveDepthFrame(null);
+              setLiveSpatialObservationFrame(null);
               setLiveCameraPose(null);
             }
           }}
@@ -262,10 +265,18 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onLiquidMetrics={event => setLiveLiquidMetrics(event.nativeEvent)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
           onCameraPose={event => setLiveCameraPose(event.nativeEvent)}
-          onVisualCandidates={event => setLiveCandidates(attachBottleReadsToCandidates(event.nativeEvent.candidates, liveBottles).map(candidate => ({
-            ...candidate,
-            depthFrame: event.nativeEvent.depthFrame,
-          })))}
+          onVisualCandidates={event => {
+            const value = event.nativeEvent;
+            setLiveCandidates(attachBottleReadsToCandidates(value.candidates, liveBottles).map(candidate => ({
+              ...candidate,
+              depthFrame: value.depthFrame,
+            })));
+            // Local Vision propagation is image-space only; it must not age or
+            // confirm physical tracks. Only the cloud frame carries exact depth.
+            if (value.source !== 'local' && value.depthFrame?.unit === 'meters') {
+              setLiveSpatialObservationFrame(value.depthFrame);
+            }
+          }}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
             if (value.bottles) {
@@ -323,7 +334,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           })}
         </View>
       )}
-      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
+      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
       {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
         <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
         <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
