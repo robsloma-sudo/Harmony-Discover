@@ -94,7 +94,8 @@ export class LocalBottleTracker {
 
       const previous = bestIndex >= 0 ? this.tracks[bestIndex] : undefined;
       if (bestIndex >= 0) used.add(bestIndex);
-      const blend = previous ? 0.45 : 1;
+      // Keep a little temporal smoothing while responding quickly to camera motion.
+      const blend = previous ? 0.60 : 1;
       const bounds = previous ? {
         x: previous.bounds.x * (1 - blend) + detection.bounds.x * blend,
         y: previous.bounds.y * (1 - blend) + detection.bounds.y * blend,
