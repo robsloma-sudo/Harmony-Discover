@@ -54,6 +54,20 @@ describe('D-FINE raw ONNX instance-mask adapter', () => {
     expect(adaptDfineSegOnnxOutput({ ...output, masks: new Uint8Array(128) }, 1280, 720, 640, 640, 8000)).toEqual([]);
   });
 
+  it('suppresses moderately overlapping duplicate bottle proposals at the live-view NMS threshold', () => {
+    const width = 8, height = 8;
+    const mask = new Uint8Array(width * height).fill(1);
+    const output = {
+      labels: [39, 39],
+      boxes: new Float32Array([128, 64, 320, 512, 198, 64, 390, 512]),
+      scores: new Float32Array([0.91, 0.89]),
+      masks: new Uint8Array([...mask, ...mask]),
+      maskWidth: width,
+      maskHeight: height,
+    };
+    expect(adaptDfineSegOnnxOutput(output, 1280, 720, 640, 640, 8000, { nmsIoUThreshold: 0.45 })).toHaveLength(1);
+  });
+
   it('rejects malformed tensor dimensions and filters non-bottle classes', () => {
     const output = {
       labels: [1],

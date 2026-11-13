@@ -129,6 +129,21 @@ export class LocalBottleTracker {
       .map(({ trackId, bounds, confidence, contour, hits }) => ({ trackId, bounds, confidence, contour, hits }));
   }
 
+  applyOpticalFlow(updates: Array<{ trackId: number; bounds: NormalizedBounds }>): void {
+    const byId = new Map(updates.map(update => [update.trackId, update.bounds]));
+    this.tracks = this.tracks.map(track => {
+      const bounds = byId.get(track.trackId);
+      if (!bounds) return track;
+      const dx = bounds.x - track.bounds.x;
+      const dy = bounds.y - track.bounds.y;
+      return {
+        ...track,
+        bounds,
+        contour: track.contour?.map(point => ({ x: point.x + dx, y: point.y + dy })),
+      };
+    });
+  }
+
   reset(): void {
     this.tracks = [];
     this.nextId = 1_000_000;

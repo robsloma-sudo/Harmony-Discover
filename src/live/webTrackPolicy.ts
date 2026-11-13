@@ -13,7 +13,8 @@ export type WebBottleTrackState = {
 export function isConfirmedWebBottleTrack(track: WebBottleTrackState): boolean {
   return Number.isFinite(track.hits)
     && track.hits >= 2
-    && track.misses === 0
+    && track.misses >= 0
+    && track.misses <= 1
     && Number.isFinite(track.confidence)
     && track.confidence >= 0.45;
 }
