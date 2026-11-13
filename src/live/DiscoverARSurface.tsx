@@ -255,7 +255,7 @@ function WebLiveCamera(props: NativeProps) {
     };
     const startLocalDetectionLoop = () => {
       if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled) return;
-      void ensureSegmentationRunner()?.then(() => {
+      void Promise.resolve(ensureSegmentationRunner()).then(() => {
         if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
         void runLocalDetection();
         localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 1000);
