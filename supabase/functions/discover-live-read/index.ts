@@ -320,7 +320,7 @@ Deno.serve(async (req: Request) => {
   try { if (new URL(url).hostname !== PROJECT + ".supabase.co") return reply({ error: "environment_refused" }, 503, origin); }
   catch { return reply({ error: "environment_refused" }, 503, origin); }
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"), anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!serviceKey || !anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
+  if (!serviceKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
 
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!bearer) return reply({ error: "unauthorized" }, 401, origin);
@@ -343,6 +343,76 @@ Deno.serve(async (req: Request) => {
     return (Array.isArray(data) ? data : []) as Array<{ q: string; id: string | null; brand: string | null; product: string | null; category: string | null; proof: number | null; score: number | null }>;
   };
 
+  if (action === "profile") {
+    const brand = clean(body.brand, 80);
+    const productName = clean(body.product, 100);
+    const category = CATEGORIES.includes(String(body.category)) ? String(body.category) : "other";
+    if (!brand || !productName) return reply({ error: "bottle_identity_required" }, 400, origin);
+
+    // Exact identity only. Ambiguous or case-mismatched identities remain unknown;
+    // a scan must never load intelligence belonging to a neighboring SKU.
+    const { data: products, error: productError } = await db
+      .from("discover_products")
+      .select("id,brand_name,product_name,product_class,expression_variant,upc_gtin,ean,status,match_confidence,identity_payload")
+      .eq("brand_name", brand)
+      .eq("product_name", productName)
+      .limit(2);
+    if (productError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
+    if (!Array.isArray(products) || products.length !== 1) {
+      return reply({ ok: true, found: false, ambiguous: Array.isArray(products) && products.length > 1, category }, 200, origin);
+    }
+
+    const product = products[0];
+    const [
+      { data: packages, error: packageError },
+      { data: attributes, error: attributeError },
+      { data: evidence, error: evidenceError },
+      { count: sightingCount, error: sightingError },
+      { count: confirmedSightingCount, error: confirmedSightingError },
+    ] = await Promise.all([
+      db.from("discover_product_packages")
+        .select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload")
+        .eq("discover_product_id", product.id).limit(12),
+      db.from("discover_product_attributes")
+        .select("attribute_code,value_text,value_numeric,value_json,unit,state,confidence,evidence_id,updated_at")
+        .eq("discover_product_id", product.id).limit(120),
+      db.from("discover_product_evidence")
+        .select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at")
+        .eq("discover_product_id", product.id).order("captured_at", { ascending: false }).limit(40),
+      db.from("bottle_sightings")
+        .select("id", { count: "exact", head: true })
+        .eq("discover_product_id", product.id),
+      db.from("bottle_sightings")
+        .select("id", { count: "exact", head: true })
+        .eq("discover_product_id", product.id)
+        .in("evidence_state", ["user_confirmed", "user_corrected"]),
+    ]);
+    if (packageError || attributeError || evidenceError || sightingError || confirmedSightingError) {
+      return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
+    }
+    return reply({
+      ok: true,
+      found: true,
+      product: {
+        id: product.id,
+        brand: product.brand_name,
+        product: product.product_name,
+        category: product.product_class || category,
+        expression: product.expression_variant,
+        upc_gtin: product.upc_gtin,
+        ean: product.ean,
+        status: product.status,
+        match_confidence: product.match_confidence,
+        identity: product.identity_payload || {},
+      },
+      packages: Array.isArray(packages) ? packages : [],
+      attributes: Array.isArray(attributes) ? attributes : [],
+      evidence: Array.isArray(evidence) ? evidence : [],
+      sightings: { total: sightingCount || 0, confirmed: confirmedSightingCount || 0 },
+    }, 200, origin);
+  }
+
+  if (!anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
 
   if (action === "label_batch") {
     const incoming = Array.isArray(body.crops) ? body.crops.slice(0, 8) as Array<Record<string, unknown>> : [];
@@ -538,6 +608,8 @@ Deno.serve(async (req: Request) => {
           details: { ...b.details, ...research.details },
           field_confidence: { ...(b.field_confidence as Record<string,number> || {}), ...research.fieldConfidence },
           research_sources: research.sources,
+          research_details: research.details,
+          research_field_confidence: research.fieldConfidence,
         };
       } catch {
         return b;
@@ -555,10 +627,120 @@ Deno.serve(async (req: Request) => {
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
-    const { error } = await db.from("bottle_sightings").insert(rows);
-    if (error) { console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error.message, 160) })); return reply({ error: "save_failed" }, 503, origin); }
+    const { data: insertedRows, error } = await db.from("bottle_sightings").insert(rows).select("id");
+    if (error || !Array.isArray(insertedRows) || insertedRows.length !== rows.length) {
+      console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error?.message || "insert_returned_incomplete_rows", 160) }));
+      return reply({ error: "save_failed" }, 503, origin);
+    }
+
+    // Link each saved physical sighting to the Discover product identity ledger
+    // and enqueue its backend-only enrichment jobs. This is save-time work,
+    // never part of the live camera-frame path.
+    const productLinks = await Promise.all(insertedRows.map(async (inserted) => {
+      const { data: linked, error: linkError } = await db.rpc("discover_attach_sighting_to_product", {
+        p_sighting_id: inserted.id,
+      });
+      if (linkError) {
+        console.log(JSON.stringify({ evt: "bottle_product_link_error", sighting_id: inserted.id, msg: clean(linkError.message, 160) }));
+        return { linked: false, sighting_id: inserted.id, product_id: null, created_new: false };
+      }
+      const link = Array.isArray(linked) ? linked[0] : linked;
+      return {
+        linked: !!link?.discover_product_id,
+        sighting_id: inserted.id,
+        product_id: link?.discover_product_id || null,
+        created_new: link?.created_new === true,
+      };
+    }));
+
+    const allowedResearchSources = new Set([
+      "official_producer", "ttb_cola", "government_registry", "barcode_registry",
+      "retailer", "web_search", "other",
+    ]);
+    const persistedResearch = await Promise.all(productLinks.map(async (link, index) => {
+      if (!link.linked || !link.product_id) return { product_id: link.product_id, evidence: 0, attributes: 0 };
+      const researchedBottle = enriched[index] as Record<string, unknown>;
+      const researchDetails = researchedBottle.research_details && typeof researchedBottle.research_details === "object"
+        ? researchedBottle.research_details as Record<string, unknown> : {};
+      const researchScores = researchedBottle.research_field_confidence && typeof researchedBottle.research_field_confidence === "object"
+        ? researchedBottle.research_field_confidence as Record<string, unknown> : {};
+      const researchSources = Array.isArray(researchedBottle.research_sources)
+        ? researchedBottle.research_sources as Array<Record<string, unknown>> : [];
+      const evidenceRows: Array<Record<string, unknown>> = [];
+      for (const [attributeCode, rawValue] of Object.entries(researchDetails)) {
+        const value = clean(rawValue, 240);
+        const confidence = unit(researchScores[attributeCode]);
+        if (!value || confidence < 0.78) continue;
+        const supportingSources = researchSources.filter(source =>
+          Array.isArray(source.supports)
+          && (source.supports as unknown[]).map(item => clean(item, 80)).includes(attributeCode)
+          && /^https:\/\//.test(clean(source.url, 500))
+        ).slice(0, 2);
+        for (const source of supportingSources) {
+          const rawType = clean(source.source_type, 40);
+          evidenceRows.push({
+            discover_product_id: link.product_id,
+            attribute_code: attributeCode,
+            source_type: allowedResearchSources.has(rawType) ? rawType : "web_search",
+            source_name: clean(source.title, 180) || "Product research source",
+            source_url: clean(source.url, 500),
+            observed_value: { value, attribute_code: attributeCode },
+            confidence,
+            verification_state: "unreviewed",
+            metadata: { sighting_id: link.sighting_id, supports: [attributeCode] },
+          });
+        }
+      }
+      if (!evidenceRows.length) return { product_id: link.product_id, evidence: 0, attributes: 0 };
+
+      const { data: insertedEvidence, error: evidenceError } = await db
+        .from("discover_product_evidence")
+        .insert(evidenceRows)
+        .select("id,attribute_code");
+      if (evidenceError || !Array.isArray(insertedEvidence)) {
+        console.log(JSON.stringify({ evt: "bottle_research_evidence_error", product_id: link.product_id, msg: clean(evidenceError?.message || "evidence_insert_failed", 160) }));
+        return { product_id: link.product_id, evidence: 0, attributes: 0 };
+      }
+
+      const evidenceByAttribute = new Map<string, string>();
+      for (const item of insertedEvidence) {
+        if (item.attribute_code && !evidenceByAttribute.has(item.attribute_code)) evidenceByAttribute.set(item.attribute_code, item.id);
+      }
+      const attributeRows = [...evidenceByAttribute.entries()].flatMap(([attributeCode, evidenceId]) => {
+        const value = clean(researchDetails[attributeCode], 240);
+        const confidence = unit(researchScores[attributeCode]);
+        return value ? [{
+          discover_product_id: link.product_id,
+          attribute_code: attributeCode,
+          value_text: value,
+          state: "found",
+          confidence,
+          evidence_id: evidenceId,
+        }] : [];
+      });
+      if (!attributeRows.length) return { product_id: link.product_id, evidence: insertedEvidence.length, attributes: 0 };
+
+      // Never overwrite an existing attribute value automatically. New evidence
+      // remains available for review; verified or previously curated values win.
+      const { error: attributeError } = await db
+        .from("discover_product_attributes")
+        .upsert(attributeRows, { onConflict: "discover_product_id,attribute_code", ignoreDuplicates: true });
+      if (attributeError) {
+        console.log(JSON.stringify({ evt: "bottle_research_attribute_error", product_id: link.product_id, msg: clean(attributeError.message, 160) }));
+        return { product_id: link.product_id, evidence: insertedEvidence.length, attributes: 0 };
+      }
+      return { product_id: link.product_id, evidence: insertedEvidence.length, attributes: attributeRows.length };
+    }));
+
     return reply({
-      ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length,
+      ok: true,
+      saved: rows.length,
+      matched: rows.filter((x) => x.product_index_id).length,
+      research_evidence_saved: persistedResearch.reduce((total, item) => total + item.evidence, 0),
+      research_attributes_added: persistedResearch.reduce((total, item) => total + item.attributes, 0),
+      products_linked: productLinks.filter(link => link.linked).length,
+      products_created: productLinks.filter(link => link.created_new).length,
+      product_link_results: productLinks,
       enriched_bottles: enriched.map((b) => ({
         brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size,
         details: b.details, field_confidence: b.field_confidence, research_sources: b.research_sources,
