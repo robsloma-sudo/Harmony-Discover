@@ -8,14 +8,14 @@ const profile: BottleVolumeProfile = {
     { heightFraction: 0, volumeFraction: 0 },
     { heightFraction: 0.25, volumeFraction: 0.18 },
     { heightFraction: 0.6, volumeFraction: 0.55 },
-    { heightFraction: 1, volumeFraction: 1 },
+    { heightFraction: 0.82, volumeFraction: 1 },
   ],
 };
 
 describe('bottle volume calibration', () => {
   it('builds a bottle profile from empty, partial, and full measured samples', () => {
     const result = createBottleVolumeProfile('measured-750', 750, [
-      { heightFraction: 1, measuredMilliliters: 750 },
+      { heightFraction: 0.82, measuredMilliliters: 750 },
       { heightFraction: 0.5, measuredMilliliters: 360 },
       { heightFraction: 0, measuredMilliliters: 0 },
     ]);
@@ -42,6 +42,7 @@ describe('bottle volume calibration', () => {
   });
   it('refuses to estimate volume without a profile', () => {
     expect(estimateCalibratedBottleVolume(0.5).status).toBe('unavailable');
+    expect(estimateCalibratedBottleVolume(0.9, profile).status).toBe('unavailable');
   });
   it('rejects non-monotonic or incomplete calibration curves', () => {
     expect(validateBottleVolumeProfile({ ...profile, points: [...profile.points].reverse() })).toBe(false);
