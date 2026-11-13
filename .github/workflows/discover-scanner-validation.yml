@@ -7,6 +7,9 @@ on:
     paths:
       - "app/**"
       - "src/**"
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
       - "tests/**"
       - "modules/discover-arkit/**"
       - "package.json"
@@ -30,6 +33,18 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -55,6 +70,24 @@ jobs:
         run: |
           node scripts/copy-ort-wasm.mjs
           node scripts/smoke-dfine-wasm-runtime.mjs
+
+      - name: Type-check enrichment worker Edge Function
+        run: deno check --node-modules-dir=auto supabase/functions/discover-enrichment-worker/index.ts
+
+      - name: Smoke-test strict sighting attachment and queue-claim migrations
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-phase5-migration-smoke.sql
+
+      - name: Smoke-test daily bottle-save quota migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-bottle-save-limits-smoke.sql
+
+      - name: Smoke-test official research budget migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-official-research-budget-smoke.sql
 
       - name: TypeScript validation
         run: npm run typecheck
