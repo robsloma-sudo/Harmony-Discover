@@ -384,8 +384,10 @@ function WebLiveCamera(props: NativeProps) {
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
       lastRecognitionStartedAt = Date.now();
+      let labelFrameCanvas: HTMLCanvasElement | null = null;
       try {
         const canvas = document.createElement('canvas');
+        labelFrameCanvas = canvas;
         // Match the crop the user actually sees (object-fit: cover). On a
         // portrait phone the camera stream may be landscape; sending the full
         // uncropped frame makes the label much smaller than it appears on-screen.
@@ -429,6 +431,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
         recognitionBusy = false;
+        if (labelFrameCanvas && !disposed) void readCandidateLabels(labelFrameCanvas);
         const elapsed = Date.now() - lastRecognitionStartedAt;
         scheduleRecognition(Math.max(0, recognitionIntervalMs - elapsed));
       }
