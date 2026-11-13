@@ -42,7 +42,7 @@ type NativeProps = ViewProps & {
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
-  onLiquidMetrics?: (event: { nativeEvent: { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; segmentationMs: number; workerAvailable: boolean } }) => void;
+  onLiquidMetrics?: (event: { nativeEvent: { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; segmentationMs: number; localFrameMs: number; workerAvailable: boolean } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
 
@@ -274,6 +274,7 @@ function WebLiveCamera(props: NativeProps) {
     // Liquid work is isolated in a dedicated worker. If Worker support is
     // missing, the feature abstains instead of consuming camera/UI-thread time.
     let lastSegmentationMs = 0;
+    let lastLocalFrameMs = 0;
     const liquidAnalysisQueue = new LiquidAnalysisQueue((timestamp, results) => {
       if (disposed || !pageVisible || Date.now() - timestamp > 1400) return;
       let changed = false;
@@ -319,7 +320,7 @@ function WebLiveCamera(props: NativeProps) {
         if (timestamp - history.updatedAt > 7000) liquidHistoryByTrack.delete(trackId);
       }
       if (changed) publishVisibleCandidates();
-    }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs } }));
+    }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
       if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
@@ -410,6 +411,7 @@ function WebLiveCamera(props: NativeProps) {
       const video = videoRef.current;
       if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 2 || video.videoHeight < 2) return;
       localDetectionBusy = true;
+      const localFrameStartedAt = performance.now();
       const frameTimestamp = Date.now();
       try {
         const displayWidth = video.clientWidth || video.videoWidth;
@@ -463,6 +465,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         publishVisibleCandidates();
+        lastLocalFrameMs = performance.now() - localFrameStartedAt;
         void readCandidateLabels(canvas);
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'local_segmentation_frame_failed: ' + error.message : 'local_segmentation_frame_failed' } });
@@ -880,7 +883,7 @@ export function DiscoverARSurface(props: NativeProps) {
             onLiquidMetrics?.({ nativeEvent: {
               jobsDispatched: 1, jobsCompleted: analyses.length > 0 ? 1 : 0, framesSkipped: 0,
               workerErrors: 0, lastWorkerMs: nativeProcessingMs, maxWorkerMs: nativeProcessingMs,
-              segmentationMs: 0, workerAvailable: true,
+              segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
             } });
             if (changed) props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
           }).catch(() => {
