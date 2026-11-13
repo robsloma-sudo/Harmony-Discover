@@ -48,9 +48,9 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
 
   useEffect(() => {
     if (!observationFrame || observationFrame.unit !== "meters"
-      || !Number.isFinite(observationFrame.timestamp)
-      || observationFrame.timestamp <= lastProcessedFrameTimestampRef.current) return;
-    lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
+      || !Number.isFinite(observationFrame.timestamp)) return;
+    const isNewObservationFrame = observationFrame.timestamp > lastProcessedFrameTimestampRef.current;
+    if (isNewObservationFrame) lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
     const paired = candidates.flatMap(candidate => {
       if (candidate.timestamp === undefined || !Number.isFinite(candidate.timestamp)
         || Math.abs(candidate.timestamp - observationFrame.timestamp) > 0.12) return [];
@@ -112,9 +112,10 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
       }
     }
 
-    if (fresh.length || paired.length === 0) {
+    if (fresh.length || (isNewObservationFrame && paired.length === 0)) {
       // A unique cloud frame with no usable detections is a real miss and ages
-      // tracks once. Local-only frames never advance this path.
+      // tracks once. Duplicate callbacks may refresh metadata, but never count
+      // another hit or miss toward the physical track.
       const update = trackerRef.current!.update(fresh.map(({ observation }) => ({
         worldPoint: observation.worldPoint,
         confidence: observation.confidence,
