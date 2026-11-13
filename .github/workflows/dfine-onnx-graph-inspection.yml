@@ -1,6 +1,9 @@
 name: Inspect D-FINE ONNX graph for native iOS feasibility
 
 on:
+  push:
+    branches:
+      - research/dfine-onnx-graph-inspection-2026-11-13
   pull_request:
     branches:
       - main
