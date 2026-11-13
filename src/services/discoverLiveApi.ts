@@ -173,6 +173,8 @@ export async function saveBottleSightings(scanSessionId: string, venueName: stri
 export function bottleErrorMessage(error: unknown): string {
   const code = error instanceof BottleReadError ? error.message : '';
   if (code === 'daily_limit_reached') return "You've reached today's scan limit. It resets at midnight UTC.";
+  if (code === 'daily_save_limit_reached') return "You've reached today's bottle-save limit. It resets at midnight UTC.";
+  if (code === 'daily_save_limit_unavailable') return "Bottle saving is temporarily unavailable. Please try again.";
   if (code === 'rate_limited') return 'Scanning too fast. Hold steady for a moment.';
   if (code === 'not_configured') return "The scanner isn't connected yet.";
   if (code === 'origin_not_allowed') return "This address isn't allowed to scan yet.";
