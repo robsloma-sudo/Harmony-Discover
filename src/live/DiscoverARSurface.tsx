@@ -809,11 +809,6 @@ function FallbackNativeCamera(props: NativeProps) {
               frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics, barcodeStatus: 'unsupported',
             } });
             const tracked = trackNativeBottleReads(result.bottles);
-            setNativeTrackingSeeds(tracked.map(track => ({
-              trackId: track.trackId, sourceTimestamp: frame.timestamp,
-              x: track.x, y: track.y, width: track.width, height: track.height,
-              confidence: track.confidence,
-            })));
             props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
           }
         }
@@ -918,6 +913,11 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
+        setNativeTrackingSeeds(tracked.map(track => ({
+          trackId: track.trackId, sourceTimestamp: frame.timestamp,
+          x: track.x, y: track.y, width: track.width, height: track.height,
+          confidence: track.confidence,
+        })));
         const candidates = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle } as {
           trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
           liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
