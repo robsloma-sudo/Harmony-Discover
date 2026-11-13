@@ -175,7 +175,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
     let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
-    visionQueue.async { [weak self, pixelBufferBox] in
+    visionQueue.async { [weak self, pixelBufferBox, synchronizedDepth] in
       let pixelBuffer = pixelBufferBox.value
       let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
       let context = CIContext()
@@ -223,6 +223,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     lastVisionFrameTime = now
     let shouldSendCloudFrame = now - lastCloudFrameTime >= 2.5
     if shouldSendCloudFrame { lastCloudFrameTime = now }
+    // Pair metric depth with this exact ARFrame; periodic depth events are not precise enough.
+    let synchronizedDepth = shouldSendCloudFrame ? emitDepthFrame(frame) : nil
     let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
     let pixelBuffer = pixelBufferBox.value
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
@@ -260,7 +262,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       if let cloudFrameBase64 {
         DispatchQueue.main.async { [weak self] in
           guard let self, self.isActive else { return }
-          self.onFrame(["imageBase64": cloudFrameBase64, "timestamp": now])
+          var event: [String: Any] = ["imageBase64": cloudFrameBase64, "timestamp": now]
+          if let synchronizedDepth { event["depthEstimate"] = synchronizedDepth }
+          self.onFrame(event)
         }
       }
       do {
@@ -320,17 +324,17 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   /// Emits sampled metric depth. Zero represents an invalid sample.
-  private func emitDepthFrame(_ frame: ARFrame) {
-    guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return }
-    guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return }
+  private func emitDepthFrame(_ frame: ARFrame) -> [String: Any]? {
+    guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return nil }
+    guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return nil }
     let depthMap = depthData.depthMap
     guard let confidenceMap = depthData.confidenceMap else {
       onDepthStatus(["status": "depth_pixel_buffer_unavailable"])
-      return
+      return nil
     }
     let rawWidth = CVPixelBufferGetWidth(depthMap)
     let rawHeight = CVPixelBufferGetHeight(depthMap)
-    guard rawWidth > 0, rawHeight > 0 else { return }
+    guard rawWidth > 0, rawHeight > 0 else { return nil }
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
     let rotates = orientation == .right || orientation == .left
     // Rotate the depth/confidence grids into the same upright image orientation
@@ -342,7 +346,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     CVPixelBufferLockBaseAddress(depthMap, .readOnly)
     CVPixelBufferLockBaseAddress(confidenceMap, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(confidenceMap, .readOnly); CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-    guard let depthBase = CVPixelBufferGetBaseAddress(depthMap), let confidenceBase = CVPixelBufferGetBaseAddress(confidenceMap) else { return }
+    guard let depthBase = CVPixelBufferGetBaseAddress(depthMap), let confidenceBase = CVPixelBufferGetBaseAddress(confidenceMap) else { return nil }
     let depthValues = depthBase.assumingMemoryBound(to: Float32.self)
     let confidenceValues = confidenceBase.assumingMemoryBound(to: UInt8.self)
     let depthStride = CVPixelBufferGetBytesPerRow(depthMap) / MemoryLayout<Float32>.size
@@ -403,7 +407,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let transform = frame.camera.transform
     let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
     let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
-    DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
+    DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return nil }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
+    return payload
   }
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
     let incoming: [(rect: CGRect, confidence: CGFloat)] = observations.compactMap { item in
