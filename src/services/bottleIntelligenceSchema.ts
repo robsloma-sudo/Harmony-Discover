@@ -372,10 +372,10 @@ export function resolveBeverageFamily(category: string, details: Record<string, 
   const normalize = (value: unknown) => String(value ?? "")
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[’']/g, "")
     .replace(/[_-]+/g, " ")
-    .replace(/\\s+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
   const categoryKey = normalize(category);
   const hint = [category, details.subcategory, details.classification, details.style, details.appellation]
@@ -384,15 +384,15 @@ export function resolveBeverageFamily(category: string, details: Record<string, 
   if (/armagnac/.test(hint)) return "armagnac";
   if (/cognac/.test(hint)) return "cognac";
   if (/pisco/.test(hint)) return "pisco";
-  if (/\\brye\\b/.test(hint)) return "rye_whiskey";
+  if (/\brye\b/.test(hint)) return "rye_whiskey";
   if (/bourbon/.test(hint)) return "bourbon";
   if (/scotch|islay|speyside|highlands?|lowlands?|campbeltown|islands/.test(hint)) return "single_malt_scotch";
   if (/single malt/.test(hint)) return "single_malt_whiskey";
   if (/brandy|calvados|eau de vie/.test(hint) || categoryKey === "brandy") return "other_brandy";
   if (/sparkling|champagne|cremant|prosecco|cava/.test(hint) || categoryKey === "sparkling") return "sparkling_wine";
-  if (/\\brose\\b/.test(hint)) return "wine_rose";
-  if (categoryKey === "wine" && /\\bwhite\\b/.test(hint)) return "wine_white";
-  if (categoryKey === "wine" && /\\bred\\b/.test(hint)) return "wine_red";
+  if (/\brose\b/.test(hint)) return "wine_rose";
+  if (categoryKey === "wine" && /\bwhite\b/.test(hint)) return "wine_white";
+  if (categoryKey === "wine" && /\bred\b/.test(hint)) return "wine_red";
   if (categoryKey === "wine") return "wine_unknown"; // Never assume red, white or rosé without evidence.
   if (categoryKey === "whiskey" || categoryKey === "whisky") return "other_whiskey";
   if (categoryKey === "tequila") return "tequila";
