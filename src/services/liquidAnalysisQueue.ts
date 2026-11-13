@@ -40,6 +40,7 @@ type PendingJob = {
 export class LiquidAnalysisQueue {
   private worker: Worker | null;
   private inFlight = false;
+  private workerTimeout: ReturnType<typeof setTimeout> | null = null;
   private pending: PendingJob | null = null;
   private nextId = 1;
   private lastSubmittedAt = 0;
@@ -64,6 +65,8 @@ export class LiquidAnalysisQueue {
     if (this.worker) {
       this.worker.onmessage = (event: MessageEvent<LiquidWorkerMessage>) => {
         const message = event.data;
+        if (this.workerTimeout) clearTimeout(this.workerTimeout);
+        this.workerTimeout = null;
         this.inFlight = false;
         if (message.error) this.workerErrors += 1;
         if (!this.disposed && !message.error && Array.isArray(message.results)
@@ -79,6 +82,8 @@ export class LiquidAnalysisQueue {
         this.processPending();
       };
       this.worker.onerror = () => {
+        if (this.workerTimeout) clearTimeout(this.workerTimeout);
+        this.workerTimeout = null;
         this.workerErrors += 1;
         this.worker?.terminate();
         this.worker = null;
@@ -157,6 +162,16 @@ export class LiquidAnalysisQueue {
         buffer,
         tracks: job.tracks,
       }, [buffer]);
+      this.workerTimeout = setTimeout(() => {
+        if (this.disposed || !this.inFlight) return;
+        this.workerErrors += 1;
+        this.inFlight = false;
+        this.worker?.terminate();
+        this.worker = null;
+        this.pending = null;
+        this.workerTimeout = null;
+        this.onMetrics?.(this.metrics);
+      }, 2500);
     } catch {
       this.workerErrors += 1;
       this.inFlight = false;
@@ -178,6 +193,8 @@ export class LiquidAnalysisQueue {
   dispose(): void {
     this.disposed = true;
     this.pending = null;
+    if (this.workerTimeout) clearTimeout(this.workerTimeout);
+    this.workerTimeout = null;
     this.worker?.terminate();
     this.worker = null;
     this.inFlight = false;
