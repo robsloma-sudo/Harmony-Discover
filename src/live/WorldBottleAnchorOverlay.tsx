@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import type { ARKitDepthFrame } from "./DiscoverARSurface";
+import type { ARKitDepthFrame, ARKitCameraPose } from "./DiscoverARSurface";
 import { buildBottleWorldObservations } from "./bottleWorldAnchorBridge";
 import { SpatialBottleTracker, type SpatialTrack } from "./spatialBottleTracker";
 import { projectWorldRectangle } from "./worldAnchorProjection";
@@ -13,9 +13,9 @@ type Candidate = {
   depthFrame?: ARKitDepthFrame;
 };
 type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean };
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; sessionKey?: number; visible?: boolean };
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessionKey = 0, visible = true }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, currentCameraPose, sessionKey = 0, visible = true }: Props) {
   // One registry owns the physical bottle ID through visible, occluded and
   // reacquired states. It is deliberately reset when ARKit changes world space.
   const trackerRef = useRef<SpatialBottleTracker | null>(null);
@@ -95,13 +95,14 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
     setRevision(value => value + 1);
   }, [candidates, currentDepthFrame?.timestamp]);
 
-  if (!visible || !currentDepthFrame || currentDepthFrame.unit !== "meters") return null;
+  const projectionFrame = currentCameraPose ?? currentDepthFrame;
+  if (!visible || !projectionFrame || (!currentCameraPose && currentDepthFrame?.unit !== "meters")) return null;
   void revision;
   const anchors = tracksRef.current.flatMap(track => {
     if (track.state === "lost") return [];
     const metadata = metadataRef.current.get(track.physicalObjectId);
     if (!metadata) return [];
-    const rect = projectWorldRectangle(metadata.worldCorners, currentDepthFrame);
+    const rect = projectWorldRectangle(metadata.worldCorners, projectionFrame);
     return rect ? [{ id: track.physicalObjectId, rect, ...metadata, state: track.state }] : [];
   });
 
