@@ -45,7 +45,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Viewfinder boxes are image-space observations, not world-anchored AR
   // anchors. Expire them quickly so a slow recognition request cannot leave
   // detections pinned to screen coordinates after the camera has moved.
@@ -269,7 +269,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const value = event.nativeEvent;
             setLiveCandidates(attachBottleReadsToCandidates(value.candidates, liveBottles).map(candidate => ({
               ...candidate,
-              source: value.source ?? (value.depthFrame?.unit === 'meters' ? 'cloud' : undefined),
+              source: candidate.source ?? value.source ?? (value.depthFrame?.unit === 'meters' ? 'cloud' : undefined),
               depthFrame: value.depthFrame,
             })));
             // Local Vision propagation is image-space only; it must not age or
