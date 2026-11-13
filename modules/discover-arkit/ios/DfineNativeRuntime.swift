@@ -46,4 +46,10 @@ final class DfineNativeRuntime {
       return result
     }
   }
+  func smokeTest() throws -> [String: Any] {
+    try queue.sync {
+      try DfineOrtSessionProbe.runSmokeTest()
+    }
+  }
+
 }
