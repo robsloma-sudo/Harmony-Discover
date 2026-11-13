@@ -45,6 +45,16 @@ describe('LiquidAnalysisQueue', () => {
     expect(worker.terminated).toBe(true);
   });
 
+  it('abstains when dedicated workers are unavailable instead of using the UI thread', () => {
+    const onResults = vi.fn();
+    const queue = new LiquidAnalysisQueue(onResults, () => null);
+    expect(queue.available).toBe(false);
+    queue.submit(frame(), 30_000, [track(1)]);
+    expect(onResults).not.toHaveBeenCalled();
+    expect(queue.metrics.jobsDispatched).toBe(0);
+    queue.dispose();
+  });
+
   it('discards stale pending frames rather than processing old pixels', () => {
     let now = 20_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
