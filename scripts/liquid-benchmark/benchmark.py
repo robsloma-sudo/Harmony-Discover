@@ -255,7 +255,7 @@ def main():
         "methods": summaries,
         "failures": failures,
         "important_limitations": [
-            "Dataset is small (36 photographs, 65 annotated bottles) and not liquor-backbar-specific.",
+            "Dataset is small (36 photographs, 65 annotated bottles), not liquor-backbar-specific, and its annotated fill range does not test empty-bottle classification.",
             "The dataset repository does not expose a clear license; this benchmark downloads it transiently for evaluation only.",
             "No source images, model weights, or dataset annotations are committed or uploaded as artifacts.",
             "Runtime is measured on GitHub's Linux CPU runner, not iPhone Safari.",
