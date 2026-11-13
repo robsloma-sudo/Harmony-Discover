@@ -4,6 +4,7 @@ import {
   type DfineOrtRuntime,
   type DfineSegOnnxProvider,
 } from "./dfineSegOnnxProvider";
+import { DFINE_SEG_MODEL_SHA256, DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrity";
 
 declare global {
   interface Window {
@@ -11,8 +12,6 @@ declare global {
   }
 }
 
-const MODEL_URL = "/models/dfine_seg_n_coco.onnx";
-const MODEL_SHA256 = "999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30";
 const LOADER_URL = "/ort/ort-loader.js";
 
 let runtimeLoad: Promise<DfineOrtRuntime> | null = null;
@@ -63,14 +62,12 @@ function loadRuntime(): Promise<DfineOrtRuntime> {
 async function loadVerifiedModel(): Promise<Uint8Array> {
   if (modelLoad) return modelLoad;
   modelLoad = (async () => {
-    const response = await fetch(MODEL_URL, { cache: "force-cache" });
+    const response = await fetch(DFINE_SEG_MODEL_URL, { cache: "force-cache" });
     if (!response.ok) throw new Error(`D-FINE model request failed (${response.status}).`);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length) throw new Error("D-FINE model file is empty.");
     if (!globalThis.crypto?.subtle) throw new Error("Secure SHA-256 verification is unavailable in this browser.");
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    const actual = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, "0")).join("");
-    if (actual !== MODEL_SHA256) throw new Error("D-FINE model checksum verification failed.");
+    await verifyDfineModelBytes(bytes.buffer as ArrayBuffer, DFINE_SEG_MODEL_SHA256);
     return bytes;
   })().catch(error => {
     modelLoad = null;
