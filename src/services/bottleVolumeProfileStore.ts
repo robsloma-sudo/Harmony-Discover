@@ -2,6 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { validateBottleVolumeProfile, type BottleVolumeProfile } from './bottleVolumeCalibration';
 
 const STORAGE_KEY = 'harmony-discover:bottle-volume-profiles:v1';
+let cachedProfiles: Record<string, BottleVolumeProfile> = {};
+
+export function getCachedBottleVolumeProfile(identityKey: string): BottleVolumeProfile | undefined {
+  return cachedProfiles[identityKey];
+}
 
 type ProfileRegistry = { version: 1; profiles: Record<string, BottleVolumeProfile> };
 
@@ -21,6 +26,7 @@ export async function loadBottleVolumeProfiles(): Promise<ProfileRegistry> {
     for (const [key, profile] of Object.entries(parsed.profiles)) {
       if (key && profile && validateBottleVolumeProfile(profile)) profiles[key] = profile;
     }
+    cachedProfiles = profiles;
     return { version: 1, profiles };
   } catch {
     return { version: 1, profiles: {} };
@@ -31,6 +37,7 @@ export async function saveBottleVolumeProfileForIdentity(identityKey: string, pr
   if (!identityKey.trim() || !validateBottleVolumeProfile(profile)) throw new Error('A verified bottle identity and valid calibration profile are required.');
   const registry = await loadBottleVolumeProfiles();
   registry.profiles[identityKey] = profile;
+  cachedProfiles[identityKey] = profile;
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(registry));
 }
 
