@@ -4,6 +4,7 @@ import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, readLiveLabelBatch, type BottleRead, type LabelBatchRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
+import { sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
@@ -130,6 +131,11 @@ function WebLiveCamera(props: NativeProps) {
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
     let labelBatchBusy = false;
+    let lastSentFrameSignature: Uint8Array | null = null;
+    let lastLiveReadAt = 0;
+    let lastLiveBottleCount = 0;
+    const unchangedFrameHeartbeatMs = 15_000;
+    const emptyFrameRetryMs = 5_000;
     let nextLabelBatchAt = Date.now() + 2200;
     const labelReadsByTrack = new Map<number, LabelBatchRead>();
     const lastLabelReadAt = new Map<number, number>();
@@ -557,6 +563,21 @@ function WebLiveCamera(props: NativeProps) {
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const frameTimestamp = Date.now();
+        const frameSignature = sampleLumaGrid(
+          context.getImageData(0, 0, canvas.width, canvas.height).data,
+          canvas.width,
+          canvas.height,
+        );
+        const now = Date.now();
+        const sceneChanged = shouldReadChangedFrame(lastSentFrameSignature, frameSignature);
+        const heartbeatMs = lastLiveBottleCount > 0 ? unchangedFrameHeartbeatMs : emptyFrameRetryMs;
+        if (!sceneChanged && now - lastLiveReadAt < heartbeatMs) {
+          // Keep local barcode decoding alive, but do not spend an Anthropic read
+          // on an unchanged shelf. Empty frames retry sooner so a missed first
+          // detection cannot leave a static camera view blind for long.
+          labelFrameCanvas = null;
+          return;
+        }
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
         // Barcode decoding is deliberately independent from bottle recognition.
         // Keep this frame's canvas and timestamp so a late barcode result can be
@@ -591,6 +612,9 @@ function WebLiveCamera(props: NativeProps) {
         }
         const result = await readLiveFrame(jpeg);
         if (disposed) return;
+        lastSentFrameSignature = frameSignature;
+        lastLiveReadAt = Date.now();
+        lastLiveBottleCount = result.bottles.length;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
