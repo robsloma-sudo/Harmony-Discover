@@ -36,12 +36,13 @@ describe("local bottle tracking acceptance", () => {
     expect(tracker.update([], 10_001)).toHaveLength(0);
   });
 
-  it("resets track identity when the camera session is reset", () => {
+  it("clears prior tracks on camera-session reset and starts a fresh observation", () => {
     const tracker = new LocalBottleTracker();
-    const [first] = tracker.update([proposal(0.2)], 1_000);
+    tracker.update([proposal(0.2)], 1_000);
     tracker.reset();
-    const [afterReset] = tracker.update([proposal(0.2)], 2_000);
-    expect(afterReset?.trackId).not.toBe(first?.trackId);
+    expect(tracker.update([], 2_000)).toHaveLength(0);
+    const [afterReset] = tracker.update([proposal(0.2)], 3_000);
+    expect(afterReset).toMatchObject({ trackId: 1_000_000, hits: 1, confidence: 0.9 });
   });
 
   it("removes a nested cork/neck fragment but preserves a separate bottle", () => {
