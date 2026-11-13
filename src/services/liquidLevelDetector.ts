@@ -1,0 +1,168 @@
+/**
+ * Fast, local liquid-interface candidate detector.
+ *
+ * This is a deliberately conservative pixel-analysis baseline. It does not
+ * classify bottles or estimate volume. It searches a supplied bottle crop for
+ * a horizontal colour transition supported across multiple interior columns.
+ * Callers must provide bottle bounds from an independently confirmed track.
+ *
+ * Confidence is a ranking score, not a calibrated probability. Do not persist
+ * a volume estimate from a single frame; fuse distinct frames and require
+ * bottle-profile calibration first.
+ */
+export type PixelFrame = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray | Uint8Array;
+};
+
+export type PixelBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type OcclusionBand = { top: number; bottom: number };
+
+export type LiquidBoundaryCandidate =
+  | {
+      status: 'candidate';
+      /** Liquid height measured from the bottom of the supplied bottle bounds. */
+      normalizedHeight: number;
+      /** Heuristic score in [0, 1], not a calibrated probability. */
+      confidence: number;
+      contrast: number;
+      columnSupport: number;
+      method: 'multi_column_lab_transition';
+    }
+  | {
+      status: 'insufficient_evidence';
+      reason: string;
+      method: 'multi_column_lab_transition';
+    };
+
+type Lab = { l: number; a: number; b: number };
+
+const COLUMN_FRACTIONS = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82];
+const WINDOW_RADIUS = 3;
+const MIN_DELTA_E = 7;
+const MIN_COLUMN_SUPPORT = 0.42;
+
+function srgbToLinear(value: number): number {
+  const channel = value / 255;
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+}
+
+function rgbToLab(r: number, g: number, b: number): Lab {
+  const R = srgbToLinear(r);
+  const G = srgbToLinear(g);
+  const B = srgbToLinear(b);
+  const x = (R * 0.4124564 + G * 0.3575761 + B * 0.1804375) / 0.95047;
+  const y = (R * 0.2126729 + G * 0.7151522 + B * 0.0721750);
+  const z = (R * 0.0193339 + G * 0.1191920 + B * 0.9503041) / 1.08883;
+  const f = (v: number) => v > 0.008856451679 ? Math.cbrt(v) : 7.787037037 * v + 16 / 116;
+  const fx = f(x), fy = f(y), fz = f(z);
+  return { l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+}
+
+function meanLab(frame: PixelFrame, x: number, fromY: number, toY: number): Lab | null {
+  let r = 0, g = 0, b = 0, count = 0;
+  const left = Math.max(0, Math.min(frame.width - 1, Math.round(x)));
+  const top = Math.max(0, fromY);
+  const bottom = Math.min(frame.height - 1, toY);
+  for (let y = top; y <= bottom; y += 1) {
+    const offset = (y * frame.width + left) * 4;
+    const alpha = frame.data[offset + 3] ?? 255;
+    if (alpha < 32) continue;
+    r += frame.data[offset];
+    g += frame.data[offset + 1];
+    b += frame.data[offset + 2];
+    count += 1;
+  }
+  return count ? rgbToLab(r / count, g / count, b / count) : null;
+}
+
+function deltaE(a: Lab, b: Lab): number {
+  return Math.hypot(a.l - b.l, a.a - b.a, a.b - b.b);
+}
+
+function isOccluded(normalizedY: number, bands: OcclusionBand[]): boolean {
+  return bands.some(band => normalizedY >= band.top && normalizedY <= band.bottom);
+}
+
+export function detectLiquidBoundaryCandidate(
+  frame: PixelFrame,
+  bounds: PixelBounds,
+  options: {
+    occlusionBands?: OcclusionBand[];
+    minContrast?: number;
+    minColumnSupport?: number;
+  } = {},
+): LiquidBoundaryCandidate {
+  const invalid = !frame || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) ||
+    frame.width < 8 || frame.height < 12 || !frame.data ||
+    frame.data.length < frame.width * frame.height * 4 ||
+    !bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) ||
+    bounds.width < 8 || bounds.height < 12;
+  if (invalid) {
+    return { status: 'insufficient_evidence', reason: 'Invalid image frame or bottle bounds.', method: 'multi_column_lab_transition' };
+  }
+
+  const left = Math.max(0, Math.floor(bounds.x));
+  const right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
+  const top = Math.max(0, Math.floor(bounds.y));
+  const bottom = Math.min(frame.height, Math.ceil(bounds.y + bounds.height));
+  const width = right - left;
+  const height = bottom - top;
+  if (width < 8 || height < 12) {
+    return { status: 'insufficient_evidence', reason: 'Bottle crop is outside the image or too small.', method: 'multi_column_lab_transition' };
+  }
+
+  const occlusions = options.occlusionBands ?? [];
+  const minContrast = options.minContrast ?? MIN_DELTA_E;
+  const minSupport = options.minColumnSupport ?? MIN_COLUMN_SUPPORT;
+  if (!Number.isFinite(minContrast) || minContrast <= 0 ||
+      !Number.isFinite(minSupport) || minSupport <= 0 || minSupport > 1 ||
+      occlusions.some(b => !Number.isFinite(b.top) || !Number.isFinite(b.bottom) || b.top < 0 || b.bottom > 1 || b.bottom < b.top)) {
+    return { status: 'insufficient_evidence', reason: 'Invalid detector thresholds or occlusion bands.', method: 'multi_column_lab_transition' };
+  }
+
+  const columns = COLUMN_FRACTIONS.map(fraction => left + fraction * (width - 1));
+  let best = { y: -1, contrast: 0, support: 0 };
+  const firstY = top + Math.max(4, Math.floor(height * 0.08));
+  const lastY = bottom - Math.max(4, Math.floor(height * 0.04));
+
+  for (let y = firstY; y <= lastY; y += 1) {
+    const normalizedY = (y - top) / height;
+    if (isOccluded(normalizedY, occlusions)) continue;
+    const contrasts: number[] = [];
+    for (const x of columns) {
+      const above = meanLab(frame, x, y - WINDOW_RADIUS, y - 1);
+      const below = meanLab(frame, x, y + 1, y + WINDOW_RADIUS);
+      if (above && below) contrasts.push(deltaE(above, below));
+    }
+    if (contrasts.length < Math.ceil(columns.length * minSupport)) continue;
+    const supported = contrasts.filter(value => value >= minContrast).length / columns.length;
+    const sorted = [...contrasts].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const score = median * supported;
+    if (supported >= minSupport && score > best.contrast * best.support) {
+      best = { y, contrast: median, support: supported };
+    }
+  }
+
+  if (best.y < 0 || best.contrast < minContrast || best.support < minSupport) {
+    return { status: 'insufficient_evidence', reason: 'No stable horizontal transition was supported across enough bottle columns.', method: 'multi_column_lab_transition' };
+  }
+
+  const confidence = Math.max(0, Math.min(1, (best.contrast / 28) * best.support));
+  return {
+    status: 'candidate',
+    normalizedHeight: Math.max(0, Math.min(1, (bottom - best.y) / height)),
+    confidence,
+    contrast: best.contrast,
+    columnSupport: best.support,
+    method: 'multi_column_lab_transition',
+  };
+}
