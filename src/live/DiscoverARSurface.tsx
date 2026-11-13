@@ -245,22 +245,10 @@ function WebLiveCamera(props: NativeProps) {
             })
           : Promise.resolve([]);
         const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
-        const result = await readLiveFrame(jpeg);
-        const decodedBarcodes = await barcodePromise;
-        if (disposed) return;
-        const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
-        const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
-        // Publish model detections immediately; optional local segmentation must
-        // never block the basic bottle boxes from reaching the viewfinder.
-        const immediateCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
-          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
+        // Run cloud recognition and local segmentation concurrently, but do
+        // not make local visual feedback wait for the cloud round trip.
+        const readPromise = readLiveFrame(jpeg);
         const instances = await segmentationPromise;
-        // D-FINE proposals are independent bottle detections. Preserve those
-        // that do not overlap a cloud-read bottle as unidentified local tracks.
         const localTracks = localBottleTracker.update(instances.map(instance => {
           const contour = extractMaskContour(instance.data, instance.width, instance.height, {
             bounds: instance.bounds, minimumPixels: 12, minimumArea: 0.001, maxPoints: 96,
@@ -274,6 +262,23 @@ function WebLiveCamera(props: NativeProps) {
             width: local.bounds.width, height: local.bounds.height,
             confidence: local.confidence, contour: local.contour,
           }));
+        if (!disposed && localCandidates.length) {
+          callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: localCandidates.length, source: 'local', candidates: localCandidates } });
+        }
+        const result = await readPromise;
+        const decodedBarcodes = await barcodePromise;
+        if (disposed) return;
+        const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
+        const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
+        // Publish model detections immediately; optional local segmentation must
+        // never block the basic bottle boxes from reaching the viewfinder.
+        const immediateCandidates = webTracks
+          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: immediateCandidates.length, candidates: immediateCandidates } });
+        // Local candidates were already published while cloud recognition ran.
         if (!disposed && instances.length && Date.now() - frameTimestamp <= 3000) {
           const segmented = associateInstanceMasks(
             trackedCandidates.slice(0, 8).map(track => ({
