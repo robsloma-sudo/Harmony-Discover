@@ -21,6 +21,7 @@ describe("ARKit bottle world-anchor bridge", () => {
     expect(result.observations).toHaveLength(1);
     expect(result.observations[0].worldPoint).toEqual({ x: 0, y: 0, z: -2 });
     expect(result.observations[0].depthMetres).toBe(2);
+    expect(result.observations[0].worldCorners).toHaveLength(4);
     expect(result.observations[0].geometryComplete).toBe(true);
     expect(result.observations[0].visualKey).toBe("maker reserve");
   });
