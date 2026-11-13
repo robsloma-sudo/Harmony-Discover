@@ -168,7 +168,7 @@ function WebLiveCamera(props: NativeProps) {
     let webTracks: WebTrack[] = [];
     let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus' } }> = [];
     // Liquid evidence is kept per local bottle track and never blocks cloud label recognition.
-    const liquidHistoryByTrack = new Map<number, LiquidLineObservation[]>();
+    const liquidHistoryByTrack = new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>();
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
@@ -378,9 +378,10 @@ function WebLiveCamera(props: NativeProps) {
             });
             let liquidLevel: { heightPercent: number; confidence: number; method: 'temporal_consensus' } | undefined;
             if (candidate.status === 'candidate' && candidate.confidence >= 0.7) {
-              const history = liquidHistoryByTrack.get(trackId) ?? [];
+              const previous = liquidHistoryByTrack.get(trackId);
+              const history = previous && frameTimestamp - previous.updatedAt <= 2200 ? previous.observations : [];
               const next = [...history, { frameId: String(frameTimestamp), normalizedHeight: candidate.normalizedHeight, confidence: candidate.confidence }].slice(-5);
-              liquidHistoryByTrack.set(trackId, next);
+              liquidHistoryByTrack.set(trackId, { observations: next, updatedAt: frameTimestamp });
               const consensus = assessLiquidInterface(next);
               if (consensus.status === 'visible') {
                 liquidLevel = { heightPercent: Math.round(consensus.normalizedHeight * 100), confidence: consensus.confidence, method: 'temporal_consensus' };
