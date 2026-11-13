@@ -65,7 +65,7 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
           {!intelligenceLoading && !intelligence ? <Text style={styles.missing}>No exact shared product record found yet. This bottle remains available as a local scan profile.</Text> : null}
           {intelligence ? (
             <>
-              <Text style={styles.sourceMeta}>PRODUCT RECORD · {intelligence.product.status.toUpperCase()} · {intelligence.attributes.length} ATTRIBUTES · {intelligence.evidence.length} EVIDENCE RECORDS</Text>
+              <Text style={styles.sourceMeta}>PRODUCT RECORD · {intelligence.product.status.toUpperCase()} · {intelligence.sightings.total} SIGHTINGS · {intelligence.sightings.confirmed} CONFIRMED · {intelligence.attributes.length} ATTRIBUTES</Text>
               {intelligence.packages.map((pkg, index) => {
                 const values = [
                   pkg.package_size_ml ? String(pkg.package_size_ml) + " mL" : "",
