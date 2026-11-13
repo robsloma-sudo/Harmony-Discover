@@ -27,14 +27,13 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   const url = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const workerToken = Deno.env.get("DISCOVER_ENRICHMENT_WORKER_TOKEN") ?? "";
-  if (!workerToken || !serviceKey) return json({ error: "worker_not_configured" }, 503);
+  if (!serviceKey) return json({ error: "worker_not_configured" }, 503);
   try {
     if (new URL(url).hostname !== PROJECT + ".supabase.co") return json({ error: "environment_refused" }, 503);
   } catch { return json({ error: "environment_refused" }, 503); }
 
-  const supplied = req.headers.get("x-discover-worker-token") ?? "";
-  if (!safeEqual(supplied, workerToken)) return json({ error: "unauthorized" }, 401);
+  const supplied = req.headers.get("x-discover-cron-secret") ?? "";
+  if (supplied.length < 32 || supplied.length > 512) return json({ error: "unauthorized" }, 401);
   if (req.headers.get("content-type")?.toLowerCase().startsWith("application/json") !== true) {
     return json({ error: "content_type_must_be_json" }, 415);
   }
@@ -54,6 +53,9 @@ Deno.serve(async (req: Request) => {
   const worker = String(body.worker ?? "discover-identity-worker").replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 80) || "discover-identity-worker";
 
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { data: allowed, error: authError } = await db.rpc("discover_check_cron_secret", { p_given: supplied });
+  if (authError || allowed !== true) return json({ error: "unauthorized" }, 401);
+
   const { data: claimed, error: claimError } = await db.rpc("discover_claim_enrichment_jobs", {
     p_worker: worker,
     p_limit: requestedLimit,
