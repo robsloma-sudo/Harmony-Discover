@@ -45,6 +45,10 @@ Outputs:
 - `benchmark-results/summary.json`
 - `benchmark-results/per-bottle.csv`
 
+## First completed result
+
+The first CI run evaluated 36 images / 65 bottle crops. CIELAB gradient: 23.71 pp MAE at 1.46 ms median/crop; Lab+S K-means: 20.75 pp at 4.21 ms; Chan-Vese: 23.07 pp at 57.55 ms. A separate YOLOv11-nano comparator achieved 16.81 pp MAE on its 50 usable liquid masks (76.9% coverage), at 20.66 ms median/crop. Full interpretation and caveats: [`docs/research/liquid-level-benchmark-2026-11-12.md`](../../docs/research/liquid-level-benchmark-2026-11-12.md).
+
 ## What this benchmark does and does not prove
 
 All three algorithms receive the same ground-truth bottle crop. This isolates liquid-boundary estimation from bottle detection. It measures fill-height error in percentage points and CPU runtime per crop.
