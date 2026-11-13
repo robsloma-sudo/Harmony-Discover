@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
-import { requireNativeViewManager } from 'expo-modules-core';
+import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, readLiveLabelBatch, type BottleRead, type LabelBatchRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { SegmentationRunner } from './segmentationEngine';
@@ -16,6 +16,7 @@ import { assessLiquidInterface, type LiquidLineObservation } from '../services/l
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
 import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
 import { getBottleCalibrationKey, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
+import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -44,6 +45,18 @@ type NativeProps = ViewProps & {
   onLiquidMetrics?: (event: { nativeEvent: { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; segmentationMs: number; workerAvailable: boolean } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
+
+
+type NativeLiquidAnalysisModule = {
+  analyzeLiquidLevels: (imageBase64: string, boxes: Array<{ trackId: number; x: number; y: number; width: number; height: number }>) => Promise<Array<{
+    trackId: number; normalizedHeight: number; confidence: number; boundaryShape: string; opticalScore: number; processingMs: number;
+  }>>;
+};
+let NativeLiquidAnalyzer: NativeLiquidAnalysisModule | null = null;
+if (Platform.OS === 'ios') {
+  try { NativeLiquidAnalyzer = requireNativeModule<NativeLiquidAnalysisModule>('DiscoverARKit'); }
+  catch { NativeLiquidAnalyzer = null; }
+}
 
 let NativeARView: React.ComponentType<NativeProps> | null = null;
 if (Platform.OS === 'ios') {
@@ -753,12 +766,21 @@ export function DiscoverARSurface(props: NativeProps) {
   const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
   const nativeFrameReadBusy = useRef(false);
   const nativeSessionGeneration = useRef(0);
+  const nativeLiquidHistory = useRef(new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>());
+  const nativeVolumeProfiles = useRef<Record<string, BottleVolumeProfile>>({});
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    let active = true;
+    void loadBottleVolumeProfiles().then(registry => { if (active) nativeVolumeProfiles.current = registry.profiles; });
+    return () => { active = false; };
+  }, []);
   const resetNativeSession = () => {
     nativeSessionGeneration.current += 1;
     nativeFrameReadBusy.current = false;
     nativeRecognitionTracks = [];
     nextNativeRecognitionTrackId = 1;
     nativeVisionSignals.current = null;
+    nativeLiquidHistory.current.clear();
   };
   useEffect(() => () => {
     nativeSessionGeneration.current += 1;
@@ -766,7 +788,8 @@ export function DiscoverARSurface(props: NativeProps) {
   }, []);
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
-  return <NativeARView {...props}
+  const { onLiquidMetrics, ...nativeViewProps } = props;
+  return <NativeARView {...nativeViewProps}
     onARReady={event => {
       if (event.nativeEvent.state === 'starting') resetNativeSession();
       props.onARReady?.(event);
@@ -787,7 +810,7 @@ export function DiscoverARSurface(props: NativeProps) {
       const frame = event.nativeEvent;
       // The attached metric depth and image share this exact ARFrame timestamp.
       if (frame.depthEstimate) props.onDepthEstimate?.({ nativeEvent: frame.depthEstimate });
-      void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
+      void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(async result => {
         if (generation !== nativeSessionGeneration.current) return;
         const signals = nativeVisionSignals.current;
         const signalsAreFresh = !!signals && Date.now() - signals.timestamp < 3500;
@@ -804,7 +827,67 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
-        props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, depthFrame: frame.depthEstimate, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle })) } });
+        let candidates = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle } as {
+          trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
+          liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
+        }));
+        let nativeProcessingMs = 0;
+        let analysesCompleted = 0;
+        if (NativeLiquidAnalyzer && tracked.length) {
+          try {
+            const analyses = await NativeLiquidAnalyzer.analyzeLiquidLevels(frame.imageBase64, tracked.map(track => ({
+              trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height,
+            })));
+            if (generation !== nativeSessionGeneration.current) return;
+            analysesCompleted = analyses.length > 0 ? 1 : 0;
+            nativeProcessingMs = analyses.reduce((max, item) => Math.max(max, Number(item.processingMs) || 0), 0);
+            for (const item of analyses) {
+              const current = candidates.find(candidate => candidate.trackId === item.trackId);
+              if (!current || item.opticalScore < 0.55 || item.confidence < 0.7 || item.boundaryShape === 'irregular') {
+                nativeLiquidHistory.current.delete(item.trackId);
+                continue;
+              }
+              const previous = nativeLiquidHistory.current.get(item.trackId);
+              const history = previous && frame.timestamp - previous.updatedAt <= 7 ? previous.observations : [];
+              const observations = [...history, {
+                frameId: String(frame.timestamp),
+                normalizedHeight: item.normalizedHeight,
+                confidence: item.confidence,
+              }].slice(-5);
+              nativeLiquidHistory.current.set(item.trackId, { observations, updatedAt: frame.timestamp });
+              const consensus = assessLiquidInterface(observations);
+              if (consensus.status === 'visible') {
+                const identityKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state);
+                const profile = identityKey ? nativeVolumeProfiles.current[identityKey] : undefined;
+                const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
+                current.liquidLevel = {
+                  heightPercent: Math.round(consensus.normalizedHeight * 100),
+                  confidence: consensus.confidence,
+                  method: 'temporal_consensus',
+                  ...(calibrated.status === 'calibrated' ? { calibratedVolume: {
+                    milliliters: calibrated.milliliters, fluidOunces: calibrated.fluidOunces, profileId: calibrated.profileId,
+                  } } : {}),
+                };
+              }
+            }
+            for (const [trackId, history] of nativeLiquidHistory.current) {
+              if (frame.timestamp - history.updatedAt > 7) nativeLiquidHistory.current.delete(trackId);
+            }
+          } catch {
+            // Bottle recognition remains independent if local liquid analysis fails.
+          }
+        }
+        onLiquidMetrics?.({ nativeEvent: {
+          jobsDispatched: NativeLiquidAnalyzer && tracked.length ? 1 : 0,
+          jobsCompleted: analysesCompleted,
+          framesSkipped: NativeLiquidAnalyzer ? 0 : 1,
+          workerErrors: 0,
+          lastWorkerMs: nativeProcessingMs,
+          maxWorkerMs: nativeProcessingMs,
+          segmentationMs: 0,
+          workerAvailable: !!NativeLiquidAnalyzer,
+        } });
+        props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
       }).catch(error => {
         if (generation === nativeSessionGeneration.current) {
           props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
