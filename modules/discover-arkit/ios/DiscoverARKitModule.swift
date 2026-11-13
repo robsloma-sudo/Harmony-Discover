@@ -791,11 +791,16 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
 
   /// Propagates bottle boxes at up to 10 Hz between cloud recognition passes.
   private func processLocalTrackingFrame(_ frame: ARFrame, generation: Int) {
-    let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
+    let pixelBuffer = frame.capturedImage
+    CVPixelBufferRetain(pixelBuffer)
+    let pixelBufferBox = SendablePixelBuffer(value: pixelBuffer)
     let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
     visionQueue.async { [weak self, pixelBufferBox] in
-      defer { self?.localTrackingFrameGate.signal() }
+      defer {
+        CVPixelBufferRelease(pixelBufferBox.value)
+        self?.localTrackingFrameGate.signal()
+      }
       guard let self, self.isActive, self.isRecognitionEnabled,
             self.recognitionGeneration == generation,
             !self.activeTrackingRequests.isEmpty else { return }
