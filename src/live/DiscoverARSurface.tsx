@@ -306,7 +306,7 @@ function WebLiveCamera(props: NativeProps) {
         if (timestamp - history.updatedAt > 7000) liquidHistoryByTrack.delete(trackId);
       }
       if (changed) publishVisibleCandidates();
-    }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, workerAvailable: liquidAnalysisQueue.available } }));
+    }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs } }));
 
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
       if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
