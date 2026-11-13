@@ -10,10 +10,11 @@ export function getCachedBottleVolumeProfile(identityKey: string): BottleVolumeP
 
 type ProfileRegistry = { version: 1; profiles: Record<string, BottleVolumeProfile> };
 
-export function getBottleCalibrationKey(match: { id: string; score: number } | null | undefined, state: string): string | null {
+export function getBottleCalibrationKey(match: { id: string; score: number } | null | undefined, state: string, size?: string): string | null {
   if (state !== 'matched' || !match || typeof match.id !== 'string' || !match.id.trim() ||
       !Number.isFinite(match.score) || match.score < 0.9) return null;
-  return match.id.trim();
+  const sizeKey = String(size ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() || 'unspecified-size';
+  return `${match.id.trim()}::${sizeKey}`;
 }
 
 export async function loadBottleVolumeProfiles(): Promise<ProfileRegistry> {
