@@ -14,7 +14,7 @@ type ProfileRegistry = { version: 1; profiles: Record<string, BottleVolumeProfil
 export function getBottleCalibrationKey(match: { id: string; score: number } | null | undefined, state: string, size?: string): string | null {
   if (state !== 'matched' || !match || typeof match.id !== 'string' || !match.id.trim() ||
       !Number.isFinite(match.score) || match.score < 0.9) return null;
-  const sizeKey = String(size ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() || 'unspecified-size';
+  const sizeKey = String(size ?? '').toLowerCase().replace(/([0-9])([a-z])/g, '$1 $2').replace(/([a-z])([0-9])/g, '$1 $2').replace(/[^a-z0-9]+/g, ' ').trim() || 'unspecified-size';
   return `${match.id.trim()}::${sizeKey}`;
 }
 
