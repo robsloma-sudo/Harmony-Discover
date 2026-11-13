@@ -15,9 +15,9 @@ type Candidate = {
 };
 type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean; candidate: Candidate };
 export type WorldBottleCandidate = Candidate;
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; observationFrame?: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, currentCameraPose, sessionKey = 0, visible = true, onSelectBottle }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observationFrame, currentCameraPose, sessionKey = 0, visible = true, onSelectBottle }: Props) {
   // One registry owns the physical bottle ID through visible, occluded and
   // reacquired states. It is deliberately reset when ARKit changes world space.
   const trackerRef = useRef<SpatialBottleTracker | null>(null);
@@ -31,6 +31,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
   const metadataRef = useRef(new Map<string, AnchorMetadata>());
   const identityRegistryRef = useRef(new PhysicalBottleIdentityRegistry(0.85, 0.9));
   const tracksRef = useRef<SpatialTrack[]>([]);
+  const lastProcessedFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -38,23 +39,34 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     metadataRef.current.clear();
     identityRegistryRef.current.clear();
     tracksRef.current = [];
+    lastProcessedFrameTimestampRef.current = Number.NEGATIVE_INFINITY;
     setRevision(value => value + 1);
   }, [sessionKey]);
 
   useEffect(() => {
+    // Process each exact cloud-read/depth frame once. Local Vision box updates
+    // and periodic 30 Hz camera-pose/depth events must not count as new bottle
+    // observations or mark a still-visible bottle occluded.
+    if (!observationFrame || observationFrame.unit !== "meters"
+      || !Number.isFinite(observationFrame.timestamp)
+      || observationFrame.timestamp <= lastProcessedFrameTimestampRef.current) return;
+    lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
+
     const paired = candidates.flatMap(candidate => {
-      const frame = candidate.depthFrame;
-      if (!frame || candidate.timestamp === undefined) return [];
+      if (candidate.timestamp === undefined
+        || Math.abs(candidate.timestamp - observationFrame.timestamp) > 0.12) return [];
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
         confidence: candidate.confidence, timestamp: candidate.timestamp,
         contour: candidate.contour,
         bottle: candidate.bottle,
-      }], frame);
+      }], observationFrame);
       return result.observations.map(observation => ({ observation, candidate }));
     });
-    const now = Date.now();
+    // ARKit timestamps are monotonic seconds. Use the source-frame timestamp
+    // so one camera frame can never satisfy the two-hit confirmation rule twice.
+    const now = observationFrame.timestamp * 1000;
     const update = trackerRef.current!.update(paired.map(({ observation }) => ({
       worldPoint: observation.worldPoint,
       confidence: observation.confidence,
@@ -96,7 +108,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
     for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
     setRevision(value => value + 1);
-  }, [candidates, currentDepthFrame?.timestamp]);
+  }, [candidates, observationFrame?.timestamp, sessionKey]);
 
   const projectionFrame = currentCameraPose ?? currentDepthFrame;
   if (!visible || !projectionFrame || (!currentCameraPose && currentDepthFrame?.unit !== "meters")) return null;
