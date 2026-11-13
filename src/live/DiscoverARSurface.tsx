@@ -420,14 +420,32 @@ function WebLiveCamera(props: NativeProps) {
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const frameTimestamp = Date.now();
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        const barcodePromise = barcodeDetector ? barcodeDetector.detect(canvas).catch(() => []) : Promise.resolve([]);
+        // Barcode decoding is deliberately independent from bottle recognition.
+        // Keep this frame's canvas and timestamp so a late barcode result can be
+        // traced to the image that produced it without delaying the bottle boxes.
+        if (barcodeDetector) {
+          void barcodeDetector.detect(canvas).then(decodedBarcodes => {
+            if (disposed || !decodedBarcodes.length) return;
+            callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: {
+              text: [],
+              barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })),
+              barcodeStatus: 'available',
+              classifications: [],
+              frameTimestamp,
+              imageWidth: canvas.width,
+              imageHeight: canvas.height,
+            } });
+          }).catch(() => {
+            // Barcode support is best-effort; a decoder failure must never
+            // turn a successful bottle recognition pass into a failed pass.
+          });
+        }
         const result = await readLiveFrame(jpeg);
-        const decodedBarcodes = await barcodePromise;
         if (disposed) return;
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
-        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })), barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        const trackedCandidates = updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
+        updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })));
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
         const cloudCandidates = webTracks
