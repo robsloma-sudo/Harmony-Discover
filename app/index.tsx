@@ -304,7 +304,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
         <View pointerEvents="box-none" style={s.liveDetectionLayer}>
-          {liveCandidates.filter(track => track.confidence >= 0.45).map(tracked => {
+          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)).map(tracked => {
             const bottle = tracked.bottle;
             const left = Math.max(0, Math.min(1, tracked.x));
             const top = Math.max(0, Math.min(1, tracked.y));
