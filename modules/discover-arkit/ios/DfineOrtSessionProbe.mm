@@ -1,5 +1,6 @@
 #import "DfineOrtSessionProbe.h"
 #import <onnxruntime.h>
+#import <QuartzCore/QuartzCore.h>
 
 static dispatch_queue_t DfineSessionQueue;
 static ORTEnv *DfineEnvironment;
@@ -110,6 +111,80 @@ static NSString *DfineLoadedModelPath;
   if (operationError && error) {
     *error = operationError;
   }
+  return result;
+}
+
+
++ (NSDictionary<NSString *, id> *)runSmokeTestWithError:(NSError **)error {
+  __block NSDictionary<NSString *, id> *result = nil;
+  __block NSError *operationError = nil;
+
+  dispatch_sync(DfineSessionQueue, ^{
+    @autoreleasepool {
+      if (!DfineSession) {
+        operationError = [NSError errorWithDomain:@"DfineOrtSessionProbe" code:5 userInfo:@{
+          NSLocalizedDescriptionKey: @"D-FINE session has not been initialized."
+        }];
+        return;
+      }
+
+      const NSUInteger elementCount = 3 * 640 * 640;
+      NSMutableData *inputData = [NSMutableData dataWithLength:elementCount * sizeof(float)];
+      ORTValue *inputValue = [[ORTValue alloc] initWithTensorData:inputData
+                                                      elementType:ORTTensorElementDataTypeFloat
+                                                            shape:@[@1, @3, @640, @640]
+                                                            error:&operationError];
+      if (!inputValue || operationError) return;
+
+      CFTimeInterval startedAt = CACurrentMediaTime();
+      NSDictionary<NSString *, ORTValue *> *outputs = [DfineSession runWithInputs:@{@"input": inputValue}
+                                                                       outputNames:[NSSet setWithArray:@[@"labels", @"boxes", @"scores", @"masks"]]
+                                                                        runOptions:nil
+                                                                             error:&operationError];
+      if (!outputs || operationError) return;
+      double elapsedMs = (CACurrentMediaTime() - startedAt) * 1000.0;
+
+      NSMutableDictionary<NSString *, NSArray<NSNumber *> *> *shapes = [NSMutableDictionary dictionary];
+      for (NSString *name in @[@"labels", @"boxes", @"scores", @"masks"]) {
+        ORTValue *value = outputs[name];
+        if (!value) {
+          operationError = [NSError errorWithDomain:@"DfineOrtSessionProbe" code:6 userInfo:@{
+            NSLocalizedDescriptionKey: [NSString stringWithFormat:@"D-FINE inference did not return %@.", name]
+          }];
+          return;
+        }
+        ORTTensorTypeAndShapeInfo *info = [value tensorTypeAndShapeInfoWithError:&operationError];
+        if (!info || operationError) return;
+        shapes[name] = info.shape;
+      }
+
+      NSDictionary<NSString *, NSArray<NSNumber *> *> *expected = @{
+        @"labels": @[@1, @300],
+        @"boxes": @[@1, @300, @4],
+        @"scores": @[@1, @300],
+        @"masks": @[@1, @300, @160, @160]
+      };
+      if (![shapes isEqualToDictionary:expected]) {
+        operationError = [NSError errorWithDomain:@"DfineOrtSessionProbe" code:7 userInfo:@{
+          NSLocalizedDescriptionKey: @"D-FINE output tensor shapes do not match the pinned model contract.",
+          @"actualShapes": shapes,
+          @"expectedShapes": expected
+        }];
+        return;
+      }
+
+      result = @{
+        @"inferenceSucceeded": @YES,
+        @"inputShape": @[@1, @3, @640, @640],
+        @"outputShapes": shapes,
+        @"inferenceMs": @(elapsedMs),
+        @"inputKind": @"deterministic zero tensor",
+        @"note": @"Synthetic smoke test only; not a bottle-recognition or camera-performance test."
+      };
+    }
+  });
+
+  if (operationError && error) *error = operationError;
   return result;
 }
 
