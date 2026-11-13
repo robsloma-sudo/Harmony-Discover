@@ -84,6 +84,7 @@ export class LiquidAnalysisQueue {
         this.worker = null;
         this.pending = null;
         this.inFlight = false;
+        this.onMetrics?.(this.metrics);
       };
     }
   }
@@ -162,6 +163,7 @@ export class LiquidAnalysisQueue {
       worker.terminate();
       this.worker = null;
       this.pending = null;
+      this.onMetrics?.(this.metrics);
     }
   }
 
