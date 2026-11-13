@@ -14,6 +14,7 @@ on:
       - "src/**"
       - "modules/discover-arkit/**"
       - "plugins/**"
+      - "docs/native-dfine-ios-coreml-spike.md"
       - "package.json"
       - "package-lock.json"
       - "app.json"
