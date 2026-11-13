@@ -151,8 +151,8 @@ function WebLiveCamera(props: NativeProps) {
     let barcodeDetector: BarcodeDetectorLike | null = null;
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     let lastRecognitionStartedAt = 0;
-    // Run close to the DEV endpoint's 30-frame/minute ceiling without exceeding it.
-    // 2200ms permits ~27 starts/minute; one in-flight request still prevents overlap.
+    // Full-frame reads and label batches share the DEV endpoint's 30-request/minute quota.
+    // Each path is paced at 4.4s and recognitionBusy serializes them under the shared ceiling.
     const recognitionIntervalMs = 4400;
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
@@ -216,8 +216,8 @@ function WebLiveCamera(props: NativeProps) {
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
-    // Local D-FINE detection has its own cadence. It must not wait for the
-    // paid/cloud label reader (4.5s) to finish before updating spatial boxes.
+    // Local D-FINE detection has its own cadence. It must not wait for slower
+    // cloud recognition before updating spatial boxes.
 
     const publishVisibleCandidates = () => {
       const cloudCandidates = webTracks
@@ -252,7 +252,11 @@ function WebLiveCamera(props: NativeProps) {
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
-          .map(candidate => ({ ...candidate, bottle: undefined as BottleRead | undefined })),
+          .filter(local => {
+            const previousRead = labelReadsByTrack.get(local.trackId);
+            return !(previousRead?.brand && previousRead.confidence >= 0.85);
+          })
+          .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
       const crops: Array<{ trackId: number; image: string }> = [];
