@@ -6,7 +6,7 @@ export type LiquidTrackCrop = {
   bounds: { x: number; y: number; width: number; height: number };
 };
 
-export type LiquidQueueMetrics = { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number };
+export type LiquidQueueMetrics = { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; workerAvailable: boolean };
 
 export type LiquidWorkerResult = {
   trackId: number;
@@ -96,6 +96,7 @@ export class LiquidAnalysisQueue {
       workerErrors: this.workerErrors,
       lastWorkerMs: this.lastWorkerMs,
       maxWorkerMs: this.maxWorkerMs,
+      workerAvailable: this.available,
     };
   }
 
