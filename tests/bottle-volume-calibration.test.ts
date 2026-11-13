@@ -50,6 +50,17 @@ describe('bottle volume calibration', () => {
     expect(estimateCalibratedBottleVolume(0.5).status).toBe('unavailable');
     expect(estimateCalibratedBottleVolume(0.9, profile).status).toBe('unavailable');
   });
+  it('rejects calibration curves with a flat volume segment', () => {
+    expect(validateBottleVolumeProfile({
+      id: 'flat-segment', capacityMl: 750,
+      points: [
+        { heightFraction: 0, volumeFraction: 0 },
+        { heightFraction: 0.3, volumeFraction: 0.4 },
+        { heightFraction: 0.6, volumeFraction: 0.4 },
+        { heightFraction: 0.82, volumeFraction: 1 },
+      ],
+    })).toBe(false);
+  });
   it('rejects non-monotonic or incomplete calibration curves', () => {
     expect(validateBottleVolumeProfile({ ...profile, points: [...profile.points].reverse() })).toBe(false);
     expect(validateBottleVolumeProfile({ ...profile, points: profile.points.slice(1) })).toBe(false);
