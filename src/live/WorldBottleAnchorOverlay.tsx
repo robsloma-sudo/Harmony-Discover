@@ -74,16 +74,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
     const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
     for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
     setRevision(value => value + 1);
-  }, [candidates]);
-
-  useEffect(() => {
-    // Keep occluded bottle identities available while the camera is turned away.
-    const update = trackerRef.current?.update([], Date.now());
-    tracksRef.current = update?.tracks ?? [];
-    const active = new Set(tracksRef.current.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
-    for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
-    setRevision(value => value + 1);
-  }, [currentDepthFrame?.timestamp]);
+    // This effect also runs on fresh depth frames, so unseen identities age out\n    // without a second empty update that could immediately mark fresh detections occluded.\n    const active = new Set(tracksRef.current.filter(track => track.state !== "lost").map(track => track.physicalObjectId));\n    for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);\n    setRevision(value => value + 1);\n  }, [candidates, currentDepthFrame?.timestamp]);
 
   if (!visible || !currentDepthFrame || currentDepthFrame.unit !== "meters") return null;
   void revision;
