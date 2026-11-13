@@ -10,5 +10,7 @@ Pod::Spec.new do |s|
   s.source         = { :git => 'https://github.com/robsloma-sudo/Harmony-Discover.git' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
+  # Research spike only: native D-FINE inference with CPU + CoreML execution providers.
+  s.dependency 'onnxruntime-objc', '1.32.0'
   s.source_files = '**/*.{h,m,mm,swift}'
 end
