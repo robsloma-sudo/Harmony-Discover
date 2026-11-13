@@ -10,6 +10,7 @@ import { LocalBottleTracker } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
+import { isConfirmedWebBottleTrack } from './webTrackPolicy';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -212,7 +213,7 @@ function WebLiveCamera(props: NativeProps) {
       webTracks = next;
       // Do not expose one-frame guesses as visible bottle tracks. A track must
       // be seen twice and may survive only one missed recognition interval.
-      return next.filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+      return next.filter(isConfirmedWebBottleTrack)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
@@ -221,9 +222,11 @@ function WebLiveCamera(props: NativeProps) {
 
     const publishVisibleCandidates = () => {
       const cloudCandidates = webTracks
-        .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+        .filter(isConfirmedWebBottleTrack)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-      const localCandidates = latestLocalCandidates.map(candidate => {
+      const localCandidates = latestLocalCandidates
+        .filter(candidate => !cloudCandidates.some(cloud => intersectionOverUnion(cloud, candidate) > 0.25))
+        .map(candidate => {
         const read = labelReadsByTrack.get(candidate.trackId);
         if (!read) return candidate;
         const bottle: BottleRead = {
