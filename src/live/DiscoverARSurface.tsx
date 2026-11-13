@@ -41,6 +41,7 @@ type NativeProps = ViewProps & {
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
+  onLiquidMetrics?: (event: { nativeEvent: { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; segmentationMs: number; workerAvailable: boolean } }) => void;
   onRecognitionUpdate?: (event: { nativeEvent: { text: string[]; barcodes: Array<{ value: string; symbology: string }>; textItems?: Array<{ text: string; confidence: number; box: { x0: number; y0: number; x1: number; y1: number } }>; barcodeItems?: Array<{ value: string; symbology: string; box: { x0: number; y0: number; x1: number; y1: number } }>; imageWidth?: number; imageHeight?: number; classifications: Array<{ identifier: string; confidence: string }>; frameTimestamp: number; bottles?: Awaited<ReturnType<typeof readLiveFrame>>['bottles']; menu?: Awaited<ReturnType<typeof readLiveFrame>>['menu']; diagnostics?: Awaited<ReturnType<typeof readLiveFrame>>['diagnostics']; barcodeStatus?: 'available' | 'unsupported' } }) => void;
 };
 
@@ -63,8 +64,8 @@ function WebLiveCamera(props: NativeProps) {
   const { active, recognitionEnabled, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionSchedulerRef = useRef<(() => void) | null>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -259,6 +260,7 @@ function WebLiveCamera(props: NativeProps) {
 
     // Liquid work is isolated in a dedicated worker. If Worker support is
     // missing, the feature abstains instead of consuming camera/UI-thread time.
+    let lastSegmentationMs = 0;
     const liquidAnalysisQueue = new LiquidAnalysisQueue((timestamp, results) => {
       if (disposed || !pageVisible || Date.now() - timestamp > 1400) return;
       let changed = false;
@@ -304,7 +306,7 @@ function WebLiveCamera(props: NativeProps) {
         if (timestamp - history.updatedAt > 7000) liquidHistoryByTrack.delete(trackId);
       }
       if (changed) publishVisibleCandidates();
-    });
+    }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, workerAvailable: liquidAnalysisQueue.available } }));
 
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
       if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
@@ -412,7 +414,9 @@ function WebLiveCamera(props: NativeProps) {
         if (!context) return;
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+        const segmentationStartedAt = performance.now();
         const instances = await segmentationRunner.runInference(frame, frameTimestamp);
+        lastSegmentationMs = performance.now() - segmentationStartedAt;
         if (disposed || !pageVisible || Date.now() - frameTimestamp > 1400) return;
         const localTracks = localBottleTracker.update(instances.map(instance => {
           const contour = extractMaskContour(instance.data, instance.width, instance.height, {
