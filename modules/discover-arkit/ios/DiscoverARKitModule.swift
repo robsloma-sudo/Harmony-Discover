@@ -175,7 +175,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
     let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
-    visionQueue.async { [weak self, pixelBufferBox, synchronizedDepth] in
+    visionQueue.async { [weak self, pixelBufferBox] in
       let pixelBuffer = pixelBufferBox.value
       let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
       let context = CIContext()
@@ -215,7 +215,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let now = frame.timestamp
     if now - lastDepthFrameTime >= 0.50 {
       lastDepthFrameTime = now
-      emitDepthFrame(frame)
+      _ = emitDepthFrame(frame)
     }
     guard isRecognitionEnabled else { return }
     // Run local OCR/barcode/classification at 2 Hz; cloud bottle identification remains paced at 2.5 seconds.
