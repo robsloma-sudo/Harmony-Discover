@@ -1,8 +1,8 @@
 Pod::Spec.new do |s|
   s.name           = 'DiscoverARKit'
   s.version        = '0.1.0'
-  s.summary        = 'Native ARKit capability diagnostics for Harmony Discover.'
-  s.description    = 'A local Expo module that reports runtime ARKit tracking, depth and mesh capabilities.'
+  s.summary        = 'Native ARKit tracking, depth, and background liquid analysis for Harmony Discover.'
+  s.description    = 'A local Expo module for ARKit tracking, depth capabilities, and background bottle liquid-level analysis.'
   s.author         = 'Harmony Discover'
   s.homepage       = 'https://github.com/robsloma-sudo/Harmony-Discover'
   s.license        = { :type => 'MIT' }

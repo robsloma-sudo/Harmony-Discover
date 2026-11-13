@@ -5,6 +5,7 @@ import Vision
 import CoreImage
 import UIKit
 import CoreVideo
+import ImageIO
 
 private struct SendablePixelBuffer: @unchecked Sendable {
   let value: CVPixelBuffer
@@ -43,6 +44,12 @@ public class DiscoverARKitModule: Module {
       ]
     }
 
+    AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]], promise: Promise) in
+      DispatchQueue.global(qos: .utility).async {
+        promise.resolve(Self.analyzeLiquidLevels(imageBase64, boxes: boxes))
+      }
+    }
+
     View(DiscoverARView.self) {
       Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame")
       Prop("active") { (view: DiscoverARView, active: Bool) in
@@ -60,6 +67,209 @@ public class DiscoverARKitModule: Module {
       AsyncFunction("resume") { (view: DiscoverARView) in
         view.setActive(true)
       }
+    }
+  }
+
+
+  /// Decodes a camera JPEG and measures liquid-interface candidates off the
+  /// main thread. Boxes are normalized top-left image coordinates. This
+  /// method is intentionally local-only and returns no image or label data.
+  private static func analyzeLiquidLevels(_ imageBase64: String, boxes: [[String: Double]]) -> [[String: Any]] {
+    let startedAt = CFAbsoluteTimeGetCurrent()
+    guard let data = Data(base64Encoded: imageBase64),
+          let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return [] }
+    let width = image.width
+    let height = image.height
+    guard width >= 32, height >= 32 else { return [] }
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    let rendered = pixels.withUnsafeMutableBytes { raw -> Bool in
+      guard let base = raw.baseAddress,
+            let context = CGContext(data: base, width: width, height: height, bitsPerComponent: 8,
+              bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+      context.interpolationQuality = .low
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return true
+    }
+    guard rendered else { return [] }
+
+    func luma(_ x: Int, _ y: Int) -> Double {
+      let px = min(width - 1, max(0, x))
+      let py = min(height - 1, max(0, y))
+      let offset = (py * width + px) * 4
+      return 0.2126 * Double(pixels[offset]) + 0.7152 * Double(pixels[offset + 1]) + 0.0722 * Double(pixels[offset + 2])
+    }
+    func mean(_ x: Int, _ start: Int, _ end: Int) -> Double {
+      if end < start { return luma(x, start) }
+      var sum = 0.0
+      var count = 0
+      for y in start...end { sum += luma(x, y); count += 1 }
+      return count > 0 ? sum / Double(count) : 0
+    }
+    func median(_ values: [Double]) -> Double {
+      let sorted = values.sorted()
+      guard !sorted.isEmpty else { return 0 }
+      return sorted[sorted.count / 2]
+    }
+
+    var output: [[String: Any]] = []
+    for box in boxes {
+      guard let trackValue = box["trackId"], let xValue = box["x"], let yValue = box["y"],
+            let widthValue = box["width"], let heightValue = box["height"],
+            trackValue.isFinite, xValue.isFinite, yValue.isFinite, widthValue.isFinite, heightValue.isFinite,
+            widthValue > 0, heightValue > 0 else { continue }
+      let left = max(0, Int(floor(xValue * Double(width))))
+      let right = min(width, Int(ceil((xValue + widthValue) * Double(width))))
+      let top = max(0, Int(floor(yValue * Double(height))))
+      let bottom = min(height, Int(ceil((yValue + heightValue) * Double(height))))
+      let cropWidth = right - left
+      let cropHeight = bottom - top
+      guard cropWidth >= 24, cropHeight >= 48 else { continue }
+
+      // Fast optical observability gate: do not report fill for severe glare,
+      // near-black/opaque crops, or effectively flat imagery.
+      var optical: [Double] = []
+      var clipped = 0
+      var deepShadows = 0
+      var opticalSum = 0.0
+      var opticalSumSquares = 0.0
+      for row in 0..<13 {
+        let y = min(bottom - 1, top + Int((Double(row) + 0.5) / 13.0 * Double(cropHeight)))
+        for column in 0..<7 {
+          let x = min(right - 1, left + Int((0.18 + Double(column) * 0.64 / 6.0) * Double(cropWidth)))
+          let value = luma(x, y)
+          optical.append(value)
+          opticalSum += value
+          opticalSumSquares += value * value
+          if value <= 12 { deepShadows += 1 }
+          let offset = (y * width + x) * 4
+          if min(pixels[offset], min(pixels[offset + 1], pixels[offset + 2])) >= 248 { clipped += 1 }
+        }
+      }
+      guard optical.count >= 40 else { continue }
+      let range = (optical.max() ?? 0) - (optical.min() ?? 0)
+      let average = opticalSum / Double(optical.count)
+      let variance = max(0, opticalSumSquares / Double(optical.count) - average * average)
+      let clippedFraction = Double(clipped) / Double(optical.count)
+      let deepShadowFraction = Double(deepShadows) / Double(optical.count)
+      guard clippedFraction < 0.42, deepShadowFraction < 0.82,
+            average > 9, range >= 5, sqrt(variance) >= 2.5 else { continue }
+      let opticalScore = max(0, min(1,
+        (1 - clippedFraction * 1.8) *
+        (1 - deepShadowFraction * 0.8) *
+        (0.55 + min(1, range / 55.0) * 0.45)
+      ))
+      guard opticalScore >= 0.55 else { continue }
+
+      let columnFractions: [Double] = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82]
+      var columns: [Int] = []
+      columns.reserveCapacity(columnFractions.count)
+      for fraction in columnFractions {
+        let offset = Int(fraction * Double(cropWidth - 1))
+        columns.append(left + offset)
+      }
+      let firstY = top + max(4, Int(Double(cropHeight) * 0.08))
+      let lastY = bottom - max(4, Int(Double(cropHeight) * 0.04))
+      guard lastY > firstY else { continue }
+
+      // Printed label bands have sustained high cross-column texture. Mask
+      // those rows. Hand/glass occlusion that is not separable is rejected by
+      // the multi-column support and temporal-consensus gates.
+      var occludedRows = Set<Int>()
+      let occlusionStartY = top + Int(Double(cropHeight) * 0.06)
+      let occlusionEndY = bottom - Int(Double(cropHeight) * 0.06)
+      var occlusionY = occlusionStartY
+      while occlusionY < occlusionEndY {
+        var samples: [Double] = []
+        samples.reserveCapacity(9)
+        for sampleIndex in 0..<9 {
+          let sampleFraction = 0.18 + (Double(sampleIndex) * 0.64 / 8.0)
+          let sampleX = left + Int(sampleFraction * Double(cropWidth - 1))
+          samples.append(luma(sampleX, occlusionY))
+        }
+        var sampleSum = 0.0
+        for sample in samples {
+          sampleSum += sample
+        }
+        let sampleCount = Double(samples.count)
+        let sampleAverage = sampleSum / sampleCount
+        var squaredDeviationSum = 0.0
+        for sample in samples {
+          let deviation = sample - sampleAverage
+          squaredDeviationSum += deviation * deviation
+        }
+        let variance = squaredDeviationSum / sampleCount
+        if sqrt(variance) >= 34 {
+          occludedRows.insert(occlusionY)
+          occludedRows.insert(min(bottom - 1, occlusionY + 1))
+        }
+        occlusionY += 2
+      }
+
+      var bestY = -1
+      var bestContrast = 0.0
+      var bestSupport = 0.0
+      for y in firstY...lastY where !occludedRows.contains(y) {
+        var deltas: [Double] = []
+        deltas.reserveCapacity(columns.count)
+        for column in columns {
+          let aboveMean = mean(column, y - 3, y - 1)
+          let belowMean = mean(column, y + 1, y + 3)
+          let delta = abs(aboveMean - belowMean)
+          deltas.append(delta)
+        }
+        let supported = deltas.reduce(0) { count, delta in count + (delta >= 18 ? 1 : 0) }
+        let support = Double(supported) / Double(columns.count)
+        let contrast = median(deltas)
+        if support >= 0.71 && contrast * support > bestContrast * bestSupport {
+          bestY = y
+          bestContrast = contrast
+          bestSupport = support
+        }
+      }
+      guard bestY >= 0, bestContrast >= 18, bestSupport >= 0.71 else { continue }
+
+      let radius = max(4, Int(Double(cropHeight) * 0.12))
+      var columnSamples: [(x: Int, y: Int)] = []
+      for x in columns {
+        var strongestY = -1
+        var strongestContrast = 0.0
+        for y in max(firstY, bestY - radius)...min(lastY, bestY + radius) where !occludedRows.contains(y) {
+          let contrast = abs(mean(x, y - 3, y - 1) - mean(x, y + 1, y + 3))
+          if contrast > strongestContrast { strongestContrast = contrast; strongestY = y }
+        }
+        if strongestY >= 0 && strongestContrast >= 18 { columnSamples.append((x, strongestY)) }
+      }
+      guard columnSamples.count >= 4 else { continue }
+      let heights = columnSamples.map { $0.y }.sorted()
+      let medianY = heights[heights.count / 2]
+      let spread = Double(heights.last! - heights.first!) / Double(cropHeight)
+      let spatial = columnSamples.sorted { $0.x < $1.x }
+      let center = spatial.count >= 5 ? spatial.dropFirst(2).dropLast(2).map { Double($0.y) } : heights.map(Double.init)
+      let edges = spatial.count >= 5
+        ? [Double(spatial[0].y), Double(spatial[1].y), Double(spatial[spatial.count - 2].y), Double(spatial[spatial.count - 1].y)]
+        : heights.map(Double.init)
+      let centerMean = center.reduce(0, +) / Double(max(1, center.count))
+      let edgeMean = edges.reduce(0, +) / Double(max(1, edges.count))
+      let curvature = (centerMean - edgeMean) / Double(cropHeight)
+      let shape = spread <= 0.025 ? "flat" : (spread <= 0.14 && abs(curvature) >= 0.008 ? "curved" : "irregular")
+      guard shape != "irregular" else { continue }
+      let confidence = min(1, max(0, (bestContrast / 45.0) * bestSupport))
+      output.append([
+        "trackId": Int(trackValue),
+        "normalizedHeight": min(1, max(0, Double(bottom - medianY) / Double(cropHeight))),
+        "confidence": confidence,
+        "boundaryShape": shape,
+        "opticalScore": opticalScore,
+        "processingMs": 0
+      ])
+    }
+    let elapsedMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
+    return output.map { item in
+      var value = item
+      value["processingMs"] = elapsedMs
+      return value
     }
   }
 

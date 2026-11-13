@@ -40,9 +40,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveTracking, setLiveTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'camera_starting' });
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
+  const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Viewfinder boxes are image-space observations, not world-anchored AR
   // anchors. Expire them quickly so a slow recognition request cannot leave
   // detections pinned to screen coordinates after the camera has moved.
@@ -258,6 +259,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             }
           }}
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
+          onLiquidMetrics={event => setLiveLiquidMetrics(event.nativeEvent)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
           onCameraPose={event => setLiveCameraPose(event.nativeEvent)}
           onVisualCandidates={event => setLiveCandidates(attachBottleReadsToCandidates(event.nativeEvent.candidates, liveBottles).map(candidate => ({
@@ -358,7 +360,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       </View>
       {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} mode={scanMode} onClose={()=>setScanPhotos(null)} onJourneyItems={setJourneyItems} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
       {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
-      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} barcodes={liveBarcodes} labelText={liveLabelText} menu={liveMenu} lastReadAt={liveReadAt} /></View>}
+      {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} liquidMetrics={liveLiquidMetrics} candidates={liveCandidates} bottles={liveBottles} barcodes={liveBarcodes} labelText={liveLabelText} menu={liveMenu} lastReadAt={liveReadAt} /></View>}
       {activePanel && activePanel !== 'inventory' && activePanel !== 'menu' && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:30,backgroundColor:activePanel==='lidar'?'rgba(0,0,0,0.08)':'rgba(0,0,0,0.42)'}} />
         <View style={{position:'absolute',zIndex:31,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:activePanel==='lidar'?'46%':activePanel==='nearby'?'88%':undefined,maxHeight:activePanel==='lidar'?'50%':activePanel==='nearby'?'90%':'78%',padding:activePanel==='lidar'?10:activePanel==='nearby'?8:16,borderRadius:20,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(198,163,106,0.48)'}}>

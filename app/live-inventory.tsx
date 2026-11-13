@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import type { ARTrackingUpdate, ARKitDepthFrame } from '../src/live/DiscoverARSurface';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { createBottleVolumeProfile } from '../src/services/bottleVolumeCalibration';
+import { getBottleCalibrationKey, parseBottleCalibrationSamples, saveBottleVolumeProfileForIdentity } from '../src/services/bottleVolumeProfileStore';
 
 const C={bg:'#090D12',panel:'#111821',line:'rgba(198,163,106,0.24)',gold:'#C6A36A',white:'#F0F1F2',muted:'#929AA5',green:'#7DFFB5',amber:'#FFD27A'};
 const GROUPS=[
@@ -18,9 +20,42 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-type LiveInventoryProps = { onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}; onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
 
-export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,candidates=[],bottles=[],barcodes=[],labelText=[],menu,lastReadAt}:LiveInventoryProps={}) {
+
+function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
+  const identityKey = getBottleCalibrationKey(bottle.match, bottle.state, bottle.size);
+  const [capacity,setCapacity] = useState('');
+  const [samples,setSamples] = useState('');
+  const [status,setStatus] = useState('');
+  const [saving,setSaving] = useState(false);
+  if (!identityKey) return null;
+  const save = async () => {
+    const capacityMl = Number(capacity);
+    if (!Number.isFinite(capacityMl) || capacityMl <= 0) { setStatus('Enter the bottle capacity in milliliters.'); return; }
+    try {
+      const parsed = parseBottleCalibrationSamples(samples);
+      const built = createBottleVolumeProfile(identityKey, capacityMl, parsed);
+      if (built.status !== 'created') { setStatus(built.reason.replace(/_/g,' ')); return; }
+      setSaving(true);
+      await saveBottleVolumeProfileForIdentity(identityKey,built.profile);
+      setStatus('Calibration saved for this verified product.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Calibration could not be saved.');
+    } finally { setSaving(false); }
+  };
+  return <View style={s.calibration}>
+    <Text style={s.calibrationTitle}>BOTTLE-SHAPE CALIBRATION</Text>
+    <Text style={s.calibrationHint}>Verified product match · calibration is stored on this device and applies only to this product.</Text>
+    <TextInput value={capacity} onChangeText={setCapacity} keyboardType="decimal-pad" placeholder="Rated capacity (ml), e.g. 750" placeholderTextColor="#78818C" style={s.calibrationInput}/>
+    <TextInput value={samples} onChangeText={setSamples} placeholder="height:ml pairs - 0:0, 0.5:350, 0.82:750" placeholderTextColor="#78818C" style={s.calibrationInput}/>
+    <Text style={s.calibrationHint}>For each known measured volume, enter the live FILL HEIGHT relative to the detected bottle bounds as a fraction (52% = 0.52). Include empty 0:0, at least one measured partial fill, and the actual full-capacity fill line, which may be below 1. More measured points improve the shape curve. Do not guess samples.</Text>
+    <Pressable disabled={saving} onPress={save} style={s.calibrationButton}><Text style={s.calibrationButtonText}>{saving?'SAVING...':'SAVE BOTTLE CALIBRATION'}</Text></Pressable>
+    {!!status && <Text style={s.calibrationStatus}>{status}</Text>}
+  </View>;
+}
+
+export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_depth_provider',depthFrame,liquidMetrics,candidates=[],bottles=[],barcodes=[],labelText=[],menu,lastReadAt}:LiveInventoryProps={}) {
   const [expanded,setExpanded]=useState<string[]>(['identity','sku']);
   const toggle=(id:string)=>setExpanded(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id]);
   const metricDepthSamples=depthFrame?.depthMeters.filter(value=>Number.isFinite(value)&&value>0).length ?? 0;
@@ -39,6 +74,7 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
         <View style={{flex:1}}>
           <Text style={s.statusTitle}>SHARED CAMERA · {tracking?.state?.toUpperCase().replace('_',' ') || 'STARTING'}</Text>
           <Text style={s.statusBody}>{bottles.length} bottle reads · {candidates.length} tracked candidates · {depthStatus.replace(/_/g,' ')}{depthFrame ? ` · ${metricDepthSamples} metric depth samples` : ''}</Text>
+          <Text style={s.statusBody}>LIQUID WORKER · {liquidMetrics?.workerAvailable?'AVAILABLE':'UNAVAILABLE'} · {liquidMetrics?.jobsCompleted ?? 0} jobs · {Math.round(liquidMetrics?.lastWorkerMs ?? 0)} ms worker (max {Math.round(liquidMetrics?.maxWorkerMs ?? 0)} ms) · {liquidMetrics?.segmentationMs && liquidMetrics.segmentationMs > 0 ? Math.round(liquidMetrics.segmentationMs) + ' ms segmentation' : 'segmentation n/a'} · {liquidMetrics?.localFrameMs && liquidMetrics.localFrameMs > 0 ? Math.round(liquidMetrics.localFrameMs) + ' ms local frame' : 'frame n/a'} · {liquidMetrics?.framesSkipped ?? 0} skipped · {liquidMetrics?.workerErrors ?? 0} errors</Text>
         </View>
       </View>
       <Text style={s.note}>This panel reads the same camera session used by the main viewfinder. It never starts another camera. {lastReadAt ? `Last recognition: ${new Date(lastReadAt).toLocaleTimeString()}.` : 'Waiting for the first recognition result.'}</Text>
@@ -48,12 +84,13 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
       {candidates.length ? candidates.map((candidate,index)=>{
         const bottle=(candidate as typeof candidate & {trackId?:number;bottle?:BottleRead}).bottle;
         const confidence=Math.round(candidate.confidence*100);
+        const fillLabel=candidate.liquidLevel ? ` · FILL HEIGHT ~${candidate.liquidLevel.heightPercent}%` : ''; 
         return <View key={String((candidate as typeof candidate & {trackId?:number}).trackId ?? index)} style={s.group}>
           <View style={s.groupButton}><View style={{flex:1}}>
             <Text style={s.groupTitle}>{bottle ? [bottle.match?.brand||bottle.brand,bottle.product].filter(Boolean).join(' ')||'Bottle detected' : 'Bottle detected · reading label'}</Text>
-            <Text style={s.groupHint}>{bottle ? bottle.category.toUpperCase()+' · '+Math.round(bottle.confidence*100)+'% ID CONFIDENCE · '+bottle.state.toUpperCase() : 'PROVISIONAL · '+confidence+'% DETECTION CONFIDENCE · IDENTITY PENDING'}</Text>
+            <Text style={s.groupHint}>{bottle ? bottle.category.toUpperCase()+' · '+Math.round(bottle.confidence*100)+'% ID CONFIDENCE · '+bottle.state.toUpperCase()+fillLabel : 'PROVISIONAL · '+confidence+'% DETECTION CONFIDENCE · IDENTITY PENDING'+fillLabel}</Text>
           </View></View>
-          <View style={s.groupBody}><Text style={s.emptyHint}>{bottle ? [bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ')||'Bottle detected; additional label facts are still being read.' : 'Spatial track is live. Brand, product and package details will populate when AI recognition returns.'}</Text></View>
+          <View style={s.groupBody}><Text style={s.emptyHint}>{bottle ? [bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ')||'Bottle detected; additional label facts are still being read.' : 'Spatial track is live. Brand, product and package details will populate when AI recognition returns.'}{candidate.liquidLevel ? ` Visual fill height relative to the detected bottle bounds · ${Math.round(candidate.liquidLevel.confidence*100)}% signal confidence.` : ''}{candidate.liquidLevel?.calibratedVolume ? ` Calibrated volume: ${Math.round(candidate.liquidLevel.calibratedVolume.milliliters)} ml / ${candidate.liquidLevel.calibratedVolume.fluidOunces.toFixed(1)} fl oz.` : candidate.liquidLevel ? ' No bottle-specific volume calibration is saved yet.' : ''}</Text>{bottle && <BottleCalibrationEditor key={bottle.match?.id + ':' + (bottle.size ?? '')} bottle={bottle}/>}</View>
         </View>;
       }) : bottles.length ? bottles.map((bottle,index)=><View key={`read-${index}-${bottle.box.x0}-${bottle.box.y0}`} style={s.group}><View style={s.groupButton}><View style={{flex:1}}><Text style={s.groupTitle}>{[bottle.brand,bottle.product].filter(Boolean).join(' ') || 'Unidentified beverage'}</Text><Text style={s.groupHint}>{bottle.category.toUpperCase()} · {Math.round(bottle.confidence*100)}% confidence · {bottle.state.toUpperCase()}</Text></View></View><View style={s.groupBody}><Text style={s.emptyHint}>{[bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ') || 'No additional label facts returned yet.'}</Text></View></View>) : <Text style={s.emptyHint}>Point the camera at bottles. A provisional inventory row appears as soon as local detection stabilizes; product identity fills in when the AI label read completes.</Text>}
       <Text style={s.section}>LIVE LABEL SIGNALS · {barcodes.length} BARCODES · {labelText.length} TEXT READS</Text>
@@ -97,6 +134,13 @@ const s=StyleSheet.create({
  groupHint:{color:C.muted,fontSize:9,marginTop:3},
  chevron:{color:C.gold,fontSize:22,width:24,textAlign:'center'},
  groupBody:{paddingBottom:12,paddingRight:24},
+ calibration:{marginTop:10,padding:10,borderRadius:9,borderWidth:1,borderColor:'rgba(198,163,106,0.22)',backgroundColor:'#0C1219'},
+ calibrationTitle:{color:C.gold,fontSize:8,fontWeight:'900',letterSpacing:1},
+ calibrationHint:{color:C.muted,fontSize:8,lineHeight:12,marginTop:5},
+ calibrationInput:{marginTop:7,minHeight:36,paddingHorizontal:9,paddingVertical:7,borderRadius:7,borderWidth:1,borderColor:'rgba(198,163,106,0.25)',color:C.white,fontSize:10},
+ calibrationButton:{marginTop:8,padding:9,borderRadius:7,backgroundColor:'#C6A36A',alignItems:'center'},
+ calibrationButtonText:{color:'#111821',fontSize:8,fontWeight:'900',letterSpacing:0.8},
+ calibrationStatus:{color:C.amber,fontSize:8,marginTop:6},
  empty:{color:C.amber,fontSize:10,fontWeight:'800'},
  emptyHint:{color:C.muted,fontSize:9,lineHeight:14,marginTop:4},
  footer:{paddingVertical:18,alignItems:'center'},
