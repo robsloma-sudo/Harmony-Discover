@@ -246,6 +246,21 @@ function WebLiveCamera(props: NativeProps) {
       const upperBottle = child.y + child.height <= parent.y + parent.height * 0.55;
       return coverage >= 0.72 && centered && upperBottle;
     };
+    // Cross-model boxes can have different extents (cloud label/body box vs
+    // local bottle silhouette). Associate by center as well as IoU so one
+    // physical bottle is not painted twice merely because box sizes differ.
+    const isCrossSourceSameBottle = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
+      if (isSameBottleBox(a, b)) return true;
+      const centerDistance = Math.hypot(
+        (a.x + a.width / 2) - (b.x + b.width / 2),
+        (a.y + a.height / 2) - (b.y + b.height / 2),
+      );
+      const areaA = a.width * a.height;
+      const areaB = b.width * b.height;
+      const areaRatio = areaA > 0 && areaB > 0 ? Math.max(areaA, areaB) / Math.min(areaA, areaB) : Infinity;
+      return centerDistance <= 0.055 && areaRatio <= 4.5;
+    };
+
     const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead }>, frameTimestamp: number) => {
       const now = Date.now();
       const used = new Set<number>();
@@ -323,20 +338,19 @@ function WebLiveCamera(props: NativeProps) {
       // Prefer a fresh local geometry update over a cloud box that has already
       // missed a recognition cycle. Otherwise keep the confirmed cloud track
       // visible while local segmentation catches up.
+      const freshLocalCandidates = latestLocalCandidates.filter(local => Date.now() - local.timestamp <= 900);
       const cloudCandidates = webTracks
         .filter(isConfirmedWebBottleTrack)
-        .filter(track => !latestLocalCandidates.some(local =>
-          local.timestamp >= track.timestamp && isSameBottleBox(track, local)
-        ))
+        .filter(track => !freshLocalCandidates.some(local => isCrossSourceSameBottle(track, local)))
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour, bottle: track.bottle }));
-      const localCandidates = latestLocalCandidates
-        .filter(candidate => !cloudCandidates.some(cloud => isSameBottleBox(cloud, candidate)))
+      const localCandidates = freshLocalCandidates
+        .filter(candidate => !cloudCandidates.some(cloud => isCrossSourceSameBottle(cloud, candidate)))
         .map(candidate => {
         // Geometry can switch to a newer local segmentation box while the
         // bottle identity still belongs to its confirmed cloud track. Preserve
         // that identity so a box does not regress to an anonymous placeholder.
         const matchingCloud = webTracks.find(track =>
-          isConfirmedWebBottleTrack(track) && isSameBottleBox(track, candidate)
+          isConfirmedWebBottleTrack(track) && isCrossSourceSameBottle(track, candidate)
         );
         const read = labelReadsByTrack.get(candidate.trackId);
         if (!read) return matchingCloud?.bottle ? { ...candidate, bottle: matchingCloud.bottle } : candidate;
