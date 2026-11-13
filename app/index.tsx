@@ -237,7 +237,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
-          onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
+          onTrackingUpdate={event => {
+            const tracking = event.nativeEvent;
+            setLiveTracking(tracking);
+            if (tracking.state === 'paused' || tracking.state === 'interrupted' || tracking.state === 'not_available') {
+              // Keep the open profile as a snapshot, but don't let a reused
+              // track ID from a new camera session overwrite its identity.
+              setSelectedTrackId(null);
+            }
+          }}
           onARReady={event => {
             if (event.nativeEvent.state === 'starting') {
               setAnchorSessionKey(value => value + 1);
