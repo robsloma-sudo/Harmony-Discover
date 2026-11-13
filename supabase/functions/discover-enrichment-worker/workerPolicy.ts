@@ -1,6 +1,5 @@
-export const SUPPORTED_JOB_TYPES = ["identity_match"] as const;
+export const SUPPORTED_JOB_TYPES = ["identity_match", "official_source_lookup"] as const;
 export const DEFERRED_JOB_TYPES = [
-  "official_source_lookup",
   "barcode_lookup",
   "cola_lookup",
   "field_extraction",

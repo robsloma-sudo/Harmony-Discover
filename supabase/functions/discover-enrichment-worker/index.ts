@@ -5,6 +5,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { readUtf8RequestBodyWithinLimit } from "./requestLimits.ts";
 import { DEFERRED_JOB_TYPES, SUPPORTED_JOB_TYPES, getIdentityJobRetryPlan, validateIdentityJobReferences } from "./workerPolicy.ts";
+import { buildProfilePrompt } from "./researchProfiles.ts";
+import { RESEARCH_DETAIL_FIELDS, researchBottleDetails } from "./researchEngine.ts";
 
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MAX_BATCH = 5;
@@ -49,11 +51,16 @@ Deno.serve(async (req: Request) => {
   const { data: allowed, error: authError } = await db.rpc("discover_check_cron_secret", { p_given: supplied });
   if (authError || allowed !== true) return json({ error: "unauthorized" }, 401);
 
+  const researchApiKey = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
+  const claimJobTypes = SUPPORTED_JOB_TYPES.filter(type => type !== "official_source_lookup" || !!researchApiKey);
+  // Each source lookup can take up to 35 seconds. Two research jobs keep a
+  // cron invocation comfortably inside its 120-second HTTP timeout.
+  const claimLimit = claimJobTypes.includes("official_source_lookup") ? Math.min(requestedLimit, 2) : requestedLimit;
   const { data: claimed, error: claimError } = await db.rpc("discover_claim_enrichment_jobs", {
     p_worker: worker,
-    p_limit: requestedLimit,
+    p_limit: claimLimit,
     p_stale_after_seconds: 600,
-    p_job_types: [...SUPPORTED_JOB_TYPES],
+    p_job_types: [...claimJobTypes],
   });
   if (claimError) {
     console.error(JSON.stringify({ event: "queue_claim_failed", message: claimError.message.slice(0, 180) }));
@@ -73,16 +80,144 @@ Deno.serve(async (req: Request) => {
       const [{ data: product, error: productError }, { data: sighting, error: sightingError }] = await Promise.all([
         db.from("discover_products").select("id,status,brand_name,product_name,identity_payload")
           .eq("id", productId).maybeSingle(),
-        db.from("bottle_sightings").select("id,discover_product_id,product_index_id,read_brand,read_product")
+        db.from("bottle_sightings").select("id,consumer_id,discover_product_id,product_index_id,read_brand,read_product,read_category,read_proof,read_size,read_vintage,read_confidence,label_details")
           .eq("id", sightingId).maybeSingle(),
       ]);
-      if (productError) throw new Error("discover_product_not_found");
-      if (sightingError) throw new Error("sighting_product_link_mismatch");
-      const output = {
-        result: "identity_checked",
-        ...validateIdentityJobReferences(job, product, sighting),
-        checked_at: new Date().toISOString(),
-      };
+      if (productError || !product) throw new Error("discover_product_not_found");
+      if (sightingError || !sighting) throw new Error("sighting_product_link_mismatch");
+      const sightingRow = sighting as NonNullable<typeof sighting>;
+      const validated = validateIdentityJobReferences(job, product, sightingRow);
+      let output: Record<string, unknown>;
+
+      if (job.job_type === "official_source_lookup") {
+        const labelDetails = sightingRow.label_details && typeof sightingRow.label_details === "object"
+          ? sightingRow.label_details as Record<string, unknown> : {};
+        const fieldConfidence = labelDetails._field_confidence && typeof labelDetails._field_confidence === "object"
+          ? labelDetails._field_confidence as Record<string, unknown> : {};
+        const brandIsStrong = !!sightingRow.read_brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
+        const productIsStrong = !!sightingRow.read_product && Number(fieldConfidence.product ?? 0) >= 0.90;
+        if (!brandIsStrong || !productIsStrong) {
+          output = { result: "abstained_low_identity_confidence", ...validated, evidence_saved: 0, attributes_added: 0 };
+        } else {
+          const knownDetails: Record<string, unknown> = {
+            ...labelDetails,
+            vintage: labelDetails.vintage ?? sightingRow.read_vintage ?? undefined,
+            package_size: labelDetails.package_size ?? sightingRow.read_size ?? undefined,
+          };
+          const { data: existingAttributes, error: existingAttributesError } = await db.from("discover_product_attributes")
+            .select("attribute_code,state").eq("discover_product_id", productId);
+          if (existingAttributesError) throw new Error("existing_product_attributes_unavailable");
+          const alreadyHandled = new Set((existingAttributes ?? [])
+            .filter((row: { attribute_code?: string; state?: string }) =>
+              !!row.attribute_code && row.state !== "queued"
+            )
+            .map((row: { attribute_code?: string }) => String(row.attribute_code)));
+          const missing = RESEARCH_DETAIL_FIELDS.filter(field =>
+            !String(knownDetails[field] ?? "").replace(/\s+/g, " ").trim() && !alreadyHandled.has(field)
+          );
+          if (!missing.length) {
+            output = { result: "no_missing_research_fields", ...validated, evidence_saved: 0, attributes_added: 0 };
+          } else {
+            const identity = {
+              brand: sightingRow.read_brand, product: sightingRow.read_product,
+              category: sightingRow.read_category, proof: sightingRow.read_proof,
+              size: sightingRow.read_size, details: knownDetails,
+            };
+            const profile = buildProfilePrompt(String(sightingRow.read_category ?? "other"), identity, missing);
+            const { data: budgetOk, error: budgetError } = await db.rpc("discover_reserve_bottle_research_budget", {
+              p_consumer: sightingRow.consumer_id, p_jobs: 1, p_search_units: profile.searchUses,
+              p_user_jobs_max: 5, p_project_jobs_max: 100, p_user_search_max: 10, p_project_search_max: 200,
+            });
+            if (budgetError) throw new Error("research_budget_unavailable");
+            if (budgetOk !== true) {
+              const now = new Date();
+              const nextUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+              const { data: deferredRow, error: deferError } = await db.from("discover_enrichment_jobs").update({
+                status: "retry",
+                attempts: Math.max(0, Number(job.attempts ?? 1) - 1),
+                available_at: nextUtcDay,
+                locked_at: null,
+                locked_by: null,
+                last_error: "daily_research_budget_exhausted",
+                updated_at: now.toISOString(),
+              }).eq("id", jobId).eq("status", "processing").eq("locked_by", worker).select("id").maybeSingle();
+              if (deferError || !deferredRow) throw new Error("research_budget_defer_write_failed_or_lock_lost");
+              results.push({ id: jobId, outcome: "deferred" });
+              continue;
+            }
+
+            const model = Deno.env.get("DISCOVER_RESEARCH_MODEL") || Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
+            const research = await researchBottleDetails(
+              researchApiKey, model, identity, missing, profile.prompt, profile.searchUses,
+            );
+            const evidenceRows: Array<Record<string, unknown>> = [];
+            const sourceType = (kind: string, sourceUrl: string) => {
+              if (["manufacturer", "distillery", "winery", "brand_owner"].includes(kind)) return "official_producer";
+              if (kind === "regulator") {
+                const host = (() => { try { return new URL(sourceUrl).hostname.toLowerCase(); } catch { return ""; } })();
+                return host.includes("ttb.gov") || host.includes("ttbonline.gov") ? "ttb_cola" : "government_registry";
+              }
+              if (kind === "gs1") return "barcode_registry";
+              if (kind === "retailer") return "retailer";
+              return "other";
+            };
+            for (const [attributeCode, value] of Object.entries(research.details)) {
+              const confidence = Number(research.scores[attributeCode] ?? 0);
+              const supporting = research.sources.filter(source => source.supports.includes(attributeCode)).slice(0, 2);
+              for (const source of supporting) {
+                evidenceRows.push({
+                  discover_product_id: productId,
+                  attribute_code: attributeCode,
+                  source_type: sourceType(source.source_type, source.url),
+                  source_name: source.title || "Product research source",
+                  source_url: source.url,
+                  observed_value: { value, attribute_code: attributeCode, product_expression: identity.product },
+                  confidence,
+                  verification_state: "unreviewed",
+                  metadata: { sighting_id: sightingId, profile: profile.key, supports: [attributeCode] },
+                });
+              }
+            }
+            let insertedEvidence: Array<{ id: string; attribute_code: string }> = [];
+            if (evidenceRows.length) {
+              const { data, error } = await db.from("discover_product_evidence").insert(evidenceRows).select("id,attribute_code");
+              if (error || !Array.isArray(data)) throw new Error("research_evidence_insert_failed");
+              insertedEvidence = data;
+            }
+            const evidenceByAttribute = new Map<string, string>();
+            for (const row of insertedEvidence) {
+              if (row.attribute_code && !evidenceByAttribute.has(row.attribute_code)) evidenceByAttribute.set(row.attribute_code, row.id);
+            }
+            const attributeRows = [...evidenceByAttribute.entries()].flatMap(([attributeCode, evidenceId]) => {
+              const value = research.details[attributeCode];
+              return value ? [{
+                discover_product_id: productId,
+                attribute_code: attributeCode,
+                value_text: value,
+                state: "found",
+                confidence: research.scores[attributeCode],
+                evidence_id: evidenceId,
+              }] : [];
+            });
+            if (attributeRows.length) {
+              const { error } = await db.from("discover_product_attributes")
+                .upsert(attributeRows, { onConflict: "discover_product_id,attribute_code", ignoreDuplicates: true });
+              if (error) throw new Error("research_attribute_insert_failed");
+            }
+            output = {
+              result: Object.keys(research.details).length ? "research_complete" : "no_verified_research",
+              ...validated,
+              research_profile: profile.key,
+              evidence_saved: insertedEvidence.length,
+              attributes_added: attributeRows.length,
+              researched_fields: Object.keys(research.details),
+            };
+          }
+        }
+      } else {
+        output = { result: "identity_checked", ...validated };
+      }
+
       const { data: completedRow, error: completeError } = await db.from("discover_enrichment_jobs").update({
         status: "complete",
         output_payload: output,
@@ -118,6 +253,6 @@ Deno.serve(async (req: Request) => {
     failed: results.filter(x => x.outcome === "failed").length,
     results,
     supported_job_types: [...SUPPORTED_JOB_TYPES],
-    deferred_job_types: [...DEFERRED_JOB_TYPES],
+    deferred_job_types: [...DEFERRED_JOB_TYPES, ...(!researchApiKey ? ["official_source_lookup"] : [])],
   });
 });
