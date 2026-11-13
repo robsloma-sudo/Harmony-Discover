@@ -8,11 +8,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.9";
+const VERSION = "0.4.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
 const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
+const USER_SAVES_PER_DAY = 20, PROJECT_SAVES_PER_DAY = 500;
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
 const MIN_LABEL_CONFIDENCE = 0.65;
 const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "pisco", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "non_alcoholic_beer", "other"];
@@ -348,15 +349,19 @@ Deno.serve(async (req: Request) => {
     const productName = clean(body.product, 100);
     const category = CATEGORIES.includes(String(body.category)) ? String(body.category) : "other";
     if (!brand || !productName) return reply({ error: "bottle_identity_required" }, 400, origin);
+    const { data: profileOk, error: profileLimitError } = await db.rpc("discover_rate_limit", {
+      p_subject: subject, p_bucket: "bottle_profile", p_max: 60, p_window_seconds: 60,
+    });
+    if (profileLimitError || profileOk !== true) {
+      return reply({ error: profileLimitError ? "profile_rate_limit_unavailable" : "profile_rate_limited" }, profileLimitError ? 503 : 429, origin);
+    }
 
     // Exact identity only. Ambiguous or case-mismatched identities remain unknown;
     // a scan must never load intelligence belonging to a neighboring SKU.
-    const { data: products, error: productError } = await db
-      .from("discover_products")
-      .select("id,brand_name,product_name,product_class,expression_variant,upc_gtin,ean,status,match_confidence,identity_payload")
-      .eq("brand_name", brand)
-      .eq("product_name", productName)
-      .limit(2);
+    const { data: products, error: productError } = await db.rpc("discover_find_exact_product", {
+      p_brand: brand,
+      p_product: productName,
+    });
     if (productError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
     if (!Array.isArray(products) || products.length !== 1) {
       return reply({ ok: true, found: false, ambiguous: Array.isArray(products) && products.length > 1, category }, 200, origin);
@@ -597,6 +602,14 @@ Deno.serve(async (req: Request) => {
         proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {}, research_sources: Array.isArray(b.research_sources) ? b.research_sources : [] }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
+    const { data: dailySaveOk, error: dailySaveError } = await db.rpc("discover_bottle_save_allow", {
+      p_subject: subject,
+      p_user_max: USER_SAVES_PER_DAY,
+      p_global_max: PROJECT_SAVES_PER_DAY,
+    });
+    if (dailySaveError || dailySaveOk !== true) {
+      return reply({ error: dailySaveError ? "daily_save_limit_unavailable" : "daily_save_limit_reached" }, dailySaveError ? 503 : 429, origin);
+    }
     // Research only on an explicit save, never on every live camera frame.
     // Cap per-save research to keep latency and third-party search spend predictable.
     const enriched = await Promise.all(incoming.map(async (b, index) => {

@@ -1,5 +1,5 @@
 # Function gateway settings for the Harmony Discover DEV project.
-# The endpoint verifies the user's bearer token itself with Supabase Auth.
+# Endpoints verify user auth or worker-specific authentication themselves.
 [functions.discover-voice-session]
 verify_jwt = false
 
@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.discover-live-read]
 verify_jwt = true
+
+[functions.discover-enrichment-worker]
+verify_jwt = false
