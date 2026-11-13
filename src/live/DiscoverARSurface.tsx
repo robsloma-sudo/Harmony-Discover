@@ -164,7 +164,7 @@ function WebLiveCamera(props: NativeProps) {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     const ensureSegmentationRunner = () => {
       if (segmentationRunner || segmentationLoading || segmentationLoadFailed || disposed) return segmentationLoading;
-      segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5 }).then(provider => {
+      segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5, nmsIoUThreshold: 0.45 }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
         segmentationRunner = new SegmentationRunner(provider, {
           // Keep local bottle geometry responsive on mobile; the runner is
