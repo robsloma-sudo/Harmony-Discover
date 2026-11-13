@@ -131,20 +131,36 @@ public class DiscoverARKitModule: Module {
       // near-black/opaque crops, or effectively flat imagery.
       var optical: [Double] = []
       var clipped = 0
+      var deepShadows = 0
+      var opticalSum = 0.0
+      var opticalSumSquares = 0.0
       for row in 0..<13 {
         let y = min(bottom - 1, top + Int((Double(row) + 0.5) / 13.0 * Double(cropHeight)))
         for column in 0..<7 {
           let x = min(right - 1, left + Int((0.18 + Double(column) * 0.64 / 6.0) * Double(cropWidth)))
-          optical.append(luma(x, y))
+          let value = luma(x, y)
+          optical.append(value)
+          opticalSum += value
+          opticalSumSquares += value * value
+          if value <= 12 { deepShadows += 1 }
           let offset = (y * width + x) * 4
           if min(pixels[offset], min(pixels[offset + 1], pixels[offset + 2])) >= 248 { clipped += 1 }
         }
       }
       guard optical.count >= 40 else { continue }
       let range = (optical.max() ?? 0) - (optical.min() ?? 0)
-      let average = optical.reduce(0, +) / Double(optical.count)
+      let average = opticalSum / Double(optical.count)
+      let variance = max(0, opticalSumSquares / Double(optical.count) - average * average)
       let clippedFraction = Double(clipped) / Double(optical.count)
-      guard clippedFraction < 0.42, average > 9, range >= 5 else { continue }
+      let deepShadowFraction = Double(deepShadows) / Double(optical.count)
+      guard clippedFraction < 0.42, deepShadowFraction < 0.82,
+            average > 9, range >= 5, sqrt(variance) >= 2.5 else { continue }
+      let opticalScore = max(0, min(1,
+        (1 - clippedFraction * 1.8) *
+        (1 - deepShadowFraction * 0.8) *
+        (0.55 + min(1, range / 55.0) * 0.45)
+      ))
+      guard opticalScore >= 0.55 else { continue }
 
       let columns = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82].map { left + Int($0 * Double(cropWidth - 1)) }
       let firstY = top + max(4, Int(Double(cropHeight) * 0.08))
@@ -211,7 +227,7 @@ public class DiscoverARKitModule: Module {
         "normalizedHeight": min(1, max(0, Double(bottom - medianY) / Double(cropHeight))),
         "confidence": confidence,
         "boundaryShape": shape,
-        "opticalScore": min(1, max(0, 1 - clippedFraction * 1.8)),
+        "opticalScore": opticalScore,
         "processingMs": 0
       ])
     }
