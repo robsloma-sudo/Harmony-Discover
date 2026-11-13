@@ -44,3 +44,9 @@ export function shouldReadChangedFrame(
 ): boolean {
   return !previous || changedCellRatio(previous, current) >= minimumChangedRatio;
 }
+
+/** Return the remaining time until the last successful read's heartbeat. */
+export function frameGateRetryDelay(now: number, lastReadAt: number, heartbeatMs: number): number {
+  if (![now, lastReadAt, heartbeatMs].every(Number.isFinite) || heartbeatMs < 0) return 0;
+  return Math.max(0, heartbeatMs - Math.max(0, now - lastReadAt));
+}
