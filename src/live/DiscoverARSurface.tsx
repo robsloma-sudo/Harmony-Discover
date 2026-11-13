@@ -13,6 +13,7 @@ import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
@@ -126,6 +127,12 @@ function WebLiveCamera(props: NativeProps) {
     let frameCheck = 0;
     let recognitionTimer = 0;
     let localDetectionTimer = 0;
+    let opticalFlowFrame = 0;
+    let opticalFlowCanvas: HTMLCanvasElement | null = null;
+    let opticalFlowContext: CanvasRenderingContext2D | null = null;
+    let previousOpticalGray: Uint8Array | null = null;
+    let previousOpticalSize = '';
+    let lastOpticalFlowAt = 0;
     let localDetectionBusy = false;
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
@@ -159,6 +166,7 @@ function WebLiveCamera(props: NativeProps) {
       } else if (callbacksRef.current.recognitionEnabled) {
         scheduleRecognition(250);
         startLocalDetectionLoop();
+        startOpticalFlow();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -367,6 +375,93 @@ function WebLiveCamera(props: NativeProps) {
       });
       const visibleCandidates = [...cloudCandidates, ...localCandidates];
       callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
+    };
+
+
+    // Run sparse Lucas–Kanade flow between detector updates. D-FINE establishes
+    // object identity/shape; optical flow carries those boxes across camera
+    // frames at ~15Hz so they remain attached while the camera moves.
+    const startOpticalFlow = () => {
+      if (disposed || !pageVisible || opticalFlowFrame || !callbacksRef.current.recognitionEnabled) return;
+      const tick = (time: number) => {
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled) {
+          opticalFlowFrame = 0;
+          previousOpticalGray = null;
+          return;
+        }
+        const video = videoRef.current;
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
+          lastOpticalFlowAt = time;
+          const displayWidth = video.clientWidth || video.videoWidth;
+          const displayHeight = video.clientHeight || video.videoHeight;
+          const displayAspect = displayWidth / displayHeight;
+          const sourceAspect = video.videoWidth / video.videoHeight;
+          let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+          if (sourceAspect > displayAspect) { sw = video.videoHeight * displayAspect; sx = (video.videoWidth - sw) / 2; }
+          else if (sourceAspect < displayAspect) { sh = video.videoWidth / displayAspect; sy = (video.videoHeight - sh) / 2; }
+          const scale = Math.min(1, 320 / Math.max(sw, sh));
+          const width = Math.max(24, Math.round(sw * scale));
+          const height = Math.max(24, Math.round(sh * scale));
+          if (!opticalFlowCanvas) {
+            opticalFlowCanvas = document.createElement('canvas');
+            opticalFlowContext = opticalFlowCanvas.getContext('2d', { willReadFrequently: true });
+          }
+          if (opticalFlowCanvas && opticalFlowContext) {
+            if (opticalFlowCanvas.width !== width || opticalFlowCanvas.height !== height) {
+              opticalFlowCanvas.width = width;
+              opticalFlowCanvas.height = height;
+              previousOpticalGray = null;
+            }
+            opticalFlowContext.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+            const gray = rgbaToGrayscale(opticalFlowContext.getImageData(0, 0, width, height).data, width, height);
+            const sizeKey = width + 'x' + height;
+            if (previousOpticalGray && previousOpticalSize === sizeKey) {
+              const now = Date.now();
+              const freshLocal = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 1200);
+              const activeCloud = webTracks.filter(track => isConfirmedWebBottleTrack(track)
+                && !freshLocal.some(local => isCrossSourceSameBottle(track, local)));
+              const targets = [
+                ...freshLocal.map(candidate => ({ source: 'local' as const, id: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })),
+                ...activeCloud.map(track => ({ source: 'cloud' as const, id: track.id, x: track.x, y: track.y, width: track.width, height: track.height })),
+              ];
+              if (targets.length) {
+                const results = trackBoxesWithOpticalFlow(previousOpticalGray, gray, width, height, targets);
+                let moved = false;
+                const updates = new Map<string, { x: number; y: number }>();
+                results.forEach((result, index) => {
+                  if (!result || result.trackedPoints < 3 || result.quality < 0.45) return;
+                  const before = targets[index]!;
+                  const dx = result.box.x - before.x, dy = result.box.y - before.y;
+                  if (Math.abs(dx) + Math.abs(dy) < 0.00015) return;
+                  updates.set(before.source + ':' + before.id, { x: result.box.x, y: result.box.y });
+                  moved = true;
+                });
+                if (moved) {
+                  latestLocalCandidates = latestLocalCandidates.map(candidate => {
+                    const next = updates.get('local:' + candidate.trackId);
+                    if (!next) return candidate;
+                    const dx = next.x - candidate.x, dy = next.y - candidate.y;
+                    return { ...candidate, x: next.x, y: next.y, timestamp: now,
+                      contour: candidate.contour?.map(point => ({ x: point.x + dx, y: point.y + dy })) };
+                  });
+                  webTracks = webTracks.map(track => {
+                    const next = updates.get('cloud:' + track.id);
+                    if (!next) return track;
+                    const dx = next.x - track.x, dy = next.y - track.y;
+                    return { ...track, x: next.x, y: next.y, timestamp: now, lastSeenAt: now,
+                      contour: track.contour?.map(point => ({ x: point.x + dx, y: point.y + dy })) };
+                  });
+                  publishVisibleCandidates();
+                }
+              }
+            }
+            previousOpticalGray = gray;
+            previousOpticalSize = sizeKey;
+          }
+        }
+        opticalFlowFrame = window.requestAnimationFrame(tick);
+      };
+      opticalFlowFrame = window.requestAnimationFrame(tick);
     };
 
     // Liquid work is isolated in a dedicated worker. If Worker support is
@@ -726,7 +821,7 @@ function WebLiveCamera(props: NativeProps) {
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
             callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
-            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(0); startLocalDetectionLoop(); }
+            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(0); startLocalDetectionLoop(); startOpticalFlow(); }
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
@@ -737,7 +832,7 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
-    recognitionSchedulerRef.current = () => { scheduleRecognition(0); startLocalDetectionLoop(); };
+    recognitionSchedulerRef.current = () => { scheduleRecognition(0); startLocalDetectionLoop(); startOpticalFlow(); };
     void start();
 
     return () => {
@@ -746,6 +841,8 @@ function WebLiveCamera(props: NativeProps) {
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
       if (localDetectionTimer) window.clearInterval(localDetectionTimer);
+      if (opticalFlowFrame) window.cancelAnimationFrame(opticalFlowFrame);
+      previousOpticalGray = null;
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (depthTimer) window.clearInterval(depthTimer);
       localBottleTracker.reset();
