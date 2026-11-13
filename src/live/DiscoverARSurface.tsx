@@ -12,6 +12,7 @@ import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
 import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
@@ -560,8 +561,20 @@ function WebLiveCamera(props: NativeProps) {
         // Barcode decoding is deliberately independent from bottle recognition.
         // Keep this frame's canvas and timestamp so a late barcode result can be
         // traced to the image that produced it without delaying the bottle boxes.
-        if (barcodeDetector) {
-          void barcodeDetector.detect(canvas).then(decodedBarcodes => {
+        {
+          const barcodeCanvas = document.createElement('canvas');
+          barcodeCanvas.width = canvas.width;
+          barcodeCanvas.height = canvas.height;
+          barcodeCanvas.getContext('2d')?.drawImage(canvas, 0, 0);
+          // Prefer native decoding, then fall back to local EAN/UPC decoding
+          // for iOS Safari versions without BarcodeDetector support.
+          void (async () => {
+            let decodedBarcodes: Array<{ rawValue: string; format: string }> = [];
+            if (barcodeDetector) {
+              try { decodedBarcodes = await barcodeDetector.detect(barcodeCanvas); } catch { decodedBarcodes = []; }
+            }
+            return decodedBarcodes.length ? decodedBarcodes : decodeEanFromCanvas(barcodeCanvas);
+          })().then(decodedBarcodes => {
             if (disposed || !decodedBarcodes.length) return;
             callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: {
               text: [],
@@ -569,12 +582,11 @@ function WebLiveCamera(props: NativeProps) {
               barcodeStatus: 'available',
               classifications: [],
               frameTimestamp,
-              imageWidth: canvas.width,
-              imageHeight: canvas.height,
+              imageWidth: barcodeCanvas.width,
+              imageHeight: barcodeCanvas.height,
             } });
           }).catch(() => {
-            // Barcode support is best-effort; a decoder failure must never
-            // turn a successful bottle recognition pass into a failed pass.
+            // Barcode support is best-effort; decoder failures are non-fatal.
           });
         }
         const result = await readLiveFrame(jpeg);
