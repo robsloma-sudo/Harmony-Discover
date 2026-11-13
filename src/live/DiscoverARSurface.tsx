@@ -394,7 +394,7 @@ function WebLiveCamera(props: NativeProps) {
           return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
         }), frameTimestamp);
         const candidates = localTracks
-          .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
+          .filter(local => !webTracks.some(cloud => isSameBottleBox(cloud, local.bounds)))
           .map(local => ({
             trackId: -Math.abs(local.trackId), x: local.bounds.x, y: local.bounds.y,
             width: local.bounds.width, height: local.bounds.height,
