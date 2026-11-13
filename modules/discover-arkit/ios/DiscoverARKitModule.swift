@@ -51,7 +51,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame", "onSpatialAnchorStatus")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -63,9 +63,6 @@ public class DiscoverARKitModule: Module {
       }
       Prop("trackingSeeds") { (view: DiscoverARView, seeds: [[String: Any]]) in
         view.setTrackingSeeds(seeds)
-      }
-      Prop("spatialAnchors") { (view: DiscoverARView, candidates: [[String: Any]]) in
-        view.updateSpatialAnchors(candidates)
       }
       AsyncFunction("pause") { (view: DiscoverARView) in
         view.setActive(false)
@@ -299,8 +296,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var isRecognitionEnabled = false
   private var recognitionGeneration = 0
   private var lastTrackingState = ""
-  private var spatialAnchors: [String: ARAnchor] = [:]
-  private var spatialAnchorStates: [String: String] = [:]
 
   let onTrackingUpdate = EventDispatcher()
   let onARReady = EventDispatcher()
@@ -394,10 +389,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     isActive = false
     recognitionGeneration += 1
     visionQueue.async { [weak self] in self?.clearLocalTrackingState() }
-    for anchor in spatialAnchors.values { sceneView.session.remove(anchor: anchor) }
-    spatialAnchors.removeAll()
-    spatialAnchorStates.removeAll()
-    onSpatialAnchorStatus(["activeCount": 0])
     rectangleOverlay.path = nil
     previousCandidates.removeAll()
     sceneView.session.pause()
@@ -413,68 +404,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       return
     }
     isActive = true
-    spatialAnchors.removeAll()
-    spatialAnchorStates.removeAll()
-    onSpatialAnchorStatus(["activeCount": 0])
     sceneView.session.run(Self.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     onARReady(["state": "starting"])
-  }
-
-  /// Maintains lightweight ARKit world anchors for confirmed physical bottle centres.
-  /// These are spatial reference markers, not full bottle meshes or 3D bounding boxes.
-  func updateSpatialAnchors(_ candidates: [[String: Any]]) {
-    guard Thread.isMainThread else {
-      DispatchQueue.main.async { [weak self] in self?.updateSpatialAnchors(candidates) }
-      return
-    }
-    guard isActive else { return }
-    var seen = Set<String>()
-    for candidate in candidates {
-      guard let trackID = candidate["physicalObjectId"] as? String,
-            let x = candidate["x"] as? Double,
-            let y = candidate["y"] as? Double,
-            let z = candidate["z"] as? Double,
-            let state = candidate["state"] as? String,
-            ["confirmed", "potential", "occluded"].contains(state),
-            [x, y, z].allSatisfy({ $0.isFinite }) else { continue }
-      seen.insert(trackID)
-      let previous = spatialAnchors[trackID]
-      let oldPoint = previous.map {
-        SIMD3<Float>($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z)
-      }
-      let newPoint = SIMD3<Float>(Float(x), Float(y), Float(z))
-      let moved = oldPoint.map { simd_distance($0, newPoint) > 0.025 } ?? true
-      guard moved || spatialAnchorStates[trackID] != state else { continue }
-      if let previous { sceneView.session.remove(anchor: previous) }
-      var transform = matrix_identity_float4x4
-      transform.columns.3 = SIMD4<Float>(Float(x), Float(y), Float(z), 1)
-      let anchor = ARAnchor(name: "discover-" + state + "-" + trackID, transform: transform)
-      spatialAnchors[trackID] = anchor
-      spatialAnchorStates[trackID] = state
-      sceneView.session.add(anchor: anchor)
-    }
-    let removed = spatialAnchors.keys.filter { !seen.contains($0) }
-    for trackID in removed {
-      if let anchor = spatialAnchors.removeValue(forKey: trackID) {
-        sceneView.session.remove(anchor: anchor)
-      }
-      spatialAnchorStates.removeValue(forKey: trackID)
-    }
-    onSpatialAnchorStatus(["activeCount": spatialAnchors.count])
-  }
-
-  public func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
-    guard let name = anchor.name, name.hasPrefix("discover-") else { return nil }
-    let parts = name.split(separator: "-", maxSplits: 2).map(String.init)
-    guard parts.count == 3 else { return nil }
-    let color: UIColor = parts[1] == "confirmed"
-      ? UIColor(red: 0.20, green: 1.0, blue: 0.55, alpha: 0.95)
-      : UIColor(red: 1.0, green: 0.22, blue: 0.24, alpha: 0.95)
-    let marker = SCNSphere(radius: 0.025)
-    marker.firstMaterial?.diffuse.contents = color
-    marker.firstMaterial?.emission.contents = color
-    marker.firstMaterial?.lightingModel = .constant
-    return SCNNode(geometry: marker)
   }
 
   /// Captures the current ARKit camera image from the same session used for tracking.
@@ -793,17 +724,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       0, fyOriented * scaleY, cyOriented * scaleY,
       0, 0, 1
     ]
-    // Map upright image rays back into ARKit's camera-local X/Y axes.
-    let cameraRayBasis: [Double]
-    switch orientation {
-    case .right: cameraRayBasis = [0, 1, 1, 0]
-    case .left: cameraRayBasis = [0, -1, -1, 0]
-    case .down: cameraRayBasis = [-1, 0, 0, 1]
-    default: cameraRayBasis = [1, 0, 0, -1]
-    }
     let transform = frame.camera.transform
     let transformValues = (0..<4).flatMap { column in (0..<4).map { row in Double(transform[column, row]) } }
-    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraRayBasis": cameraRayBasis, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
+    let payload: [String: Any] = ["width": outputWidth, "height": outputHeight, "sourceWidth": sourceWidth, "sourceHeight": sourceHeight, "depthMeters": meters, "confidence": confidence, "cameraIntrinsics": intrinsicsValues, "cameraTransform": transformValues, "timestamp": frame.timestamp, "unit": "meters", "source": frame.smoothedSceneDepth == nil ? "sceneDepth" : "smoothedSceneDepth", "imageOrientation": orientation.rawValue]
     DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
     return payload
   }
