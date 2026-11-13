@@ -323,7 +323,8 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private func emitDepthFrame(_ frame: ARFrame) {
     guard #available(iOS 14.0, *) else { onDepthStatus(["status": "ios_depth_api_unavailable"]); return }
     guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else { onDepthStatus(["status": "waiting_for_lidar_depth"]); return }
-    guard let depthMap = depthData.depthMap, let confidenceMap = depthData.confidenceMap else {
+    let depthMap = depthData.depthMap
+    guard let confidenceMap = depthData.confidenceMap else {
       onDepthStatus(["status": "depth_pixel_buffer_unavailable"])
       return
     }
