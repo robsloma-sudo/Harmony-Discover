@@ -320,16 +320,72 @@ Deno.serve(async (req: Request) => {
   try { if (new URL(url).hostname !== PROJECT + ".supabase.co") return reply({ error: "environment_refused" }, 503, origin); }
   catch { return reply({ error: "environment_refused" }, 503, origin); }
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"), anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!serviceKey || !anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
+  if (!serviceKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
 
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!bearer) return reply({ error: "unauthorized" }, 401, origin);
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: auth, error: authError } = await db.auth.getUser(bearer);
   if (authError || !auth?.user) return reply({ error: "unauthorized" }, 401, origin);
-  const subject = auth.user.id;
+  if (action === "profile") {
+    const brand = clean(body.brand, 80);
+    const productName = clean(body.product, 100);
+    const category = CATEGORIES.includes(String(body.category)) ? String(body.category) : "other";
+    if (!brand || !productName) return reply({ error: "bottle_identity_required" }, 400, origin);
 
-  if (Number(req.headers.get("content-length") || "0") > MAX_BODY_BYTES) return reply({ error: "payload_too_large" }, 413, origin);
+    // Exact, case-insensitive product identity only. Ambiguous matches are
+    // deliberately not merged: one label read must never open another SKU.
+    const escapeLike = (value: string) => value.replace(/[\\\\%_]/g, "\\\\  const subject = auth.user.id;
+
+  if (Number(req.headers.get("content-length") || "0") > MAX_BODY_BYTES)");
+    const { data: products, error: productError } = await db
+      .from("discover_products")
+      .select("id,brand_name,product_name,product_class,expression_variant,upc_gtin,ean,status,match_confidence,identity_payload")
+      .ilike("brand_name", escapeLike(brand))
+      .ilike("product_name", escapeLike(productName))
+      .limit(2);
+    if (productError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
+    if (!Array.isArray(products) || products.length !== 1) {
+      return reply({ ok: true, found: false, ambiguous: Array.isArray(products) && products.length > 1, category }, 200, origin);
+    }
+
+    const product = products[0];
+    const [{ data: packages, error: packageError }, { data: attributes, error: attributeError }, { data: evidence, error: evidenceError }] = await Promise.all([
+      db.from("discover_product_packages")
+        .select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload")
+        .eq("discover_product_id", product.id).limit(12),
+      db.from("discover_product_attributes")
+        .select("attribute_code,value_text,value_numeric,value_json,unit,state,confidence,evidence_id,updated_at")
+        .eq("discover_product_id", product.id).limit(120),
+      db.from("discover_product_evidence")
+        .select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at")
+        .eq("discover_product_id", product.id).order("captured_at", { ascending: false }).limit(40),
+    ]);
+    if (packageError || attributeError || evidenceError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
+    return reply({
+      ok: true,
+      found: true,
+      product: {
+        id: product.id,
+        brand: product.brand_name,
+        product: product.product_name,
+        category: product.product_class || category,
+        expression: product.expression_variant,
+        upc_gtin: product.upc_gtin,
+        ean: product.ean,
+        status: product.status,
+        match_confidence: product.match_confidence,
+        identity: product.identity_payload || {},
+      },
+      packages: Array.isArray(packages) ? packages : [],
+      attributes: Array.isArray(attributes) ? attributes : [],
+      evidence: Array.isArray(evidence) ? evidence : [],
+    }, 200, origin);
+  }
+
+  if (!anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
+
+  if (Number(req.headers.get("content-length") || "0") return reply({ error: "payload_too_large" }, 413, origin);
   const raw = await req.text();
   if (raw.length > MAX_BODY_BYTES) return reply({ error: "payload_too_large" }, 413, origin);
   let body: Record<string, unknown>;
