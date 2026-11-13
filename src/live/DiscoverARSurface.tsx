@@ -261,6 +261,10 @@ function WebLiveCamera(props: NativeProps) {
       for (const item of results) {
         const current = latestLocalCandidates.find(candidate => candidate.trackId === item.trackId);
         if (!current) continue; // Track disappeared while the worker was busy.
+        if (item.optical.status !== 'observable' || item.optical.score < 0.55) {
+          liquidHistoryByTrack.delete(item.trackId);
+          continue;
+        }
         if (item.result.status !== 'candidate' || item.result.confidence < 0.7) continue;
         const previous = liquidHistoryByTrack.get(item.trackId);
         const history = previous && timestamp - previous.updatedAt <= 2200 ? previous.observations : [];
