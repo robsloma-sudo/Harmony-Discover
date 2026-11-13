@@ -9,7 +9,8 @@ import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
 import { WorldBottleAnchorOverlay, type WorldBottleCandidate } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
-import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
+import type { BottleRead, MenuGlimpse, BottleIntelligenceProfile } from '../src/services/discoverLiveApi';
+import { loadBottleIntelligenceProfile } from '../src/services/discoverLiveApi';
 import { attachBottleReadsToCandidates } from '../src/services/bottleCandidateAssociation';
 import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
@@ -52,12 +53,35 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   }, [liveCandidates]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [selectedBottle, setSelectedBottle] = useState<BottleRead | null>(null);
+  const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
+  const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   useEffect(() => {
     if (selectedTrackId === null) return;
     const trackedBottle = liveCandidates.find(candidate => candidate.trackId === selectedTrackId)?.bottle;
     if (trackedBottle) setSelectedBottle(trackedBottle);
   }, [liveCandidates, selectedTrackId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedBottle) {
+      setSelectedBottleIntelligence(null);
+      setSelectedBottleIntelligenceLoading(false);
+      return () => { cancelled = true; };
+    }
+    const identityBottle = { ...selectedBottle, brand: selectedBottle.match?.brand || selectedBottle.brand };
+    if (!identityBottle.brand.trim() || !identityBottle.product.trim()) {
+      setSelectedBottleIntelligence(null);
+      setSelectedBottleIntelligenceLoading(false);
+      return () => { cancelled = true; };
+    }
+    setSelectedBottleIntelligence(null);
+    setSelectedBottleIntelligenceLoading(true);
+    void loadBottleIntelligenceProfile(identityBottle)
+      .then(profile => { if (!cancelled) setSelectedBottleIntelligence(profile); })
+      .catch(() => { if (!cancelled) setSelectedBottleIntelligence(null); })
+      .finally(() => { if (!cancelled) setSelectedBottleIntelligenceLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedBottle]);
   const openBottleProfile = (candidate: WorldBottleCandidate) => {
     const bottle = candidate.bottle;
     const profileBottle: BottleRead = bottle || {
@@ -352,7 +376,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <View style={{ position:'absolute', zIndex:69, left:8, right:8, bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76, height:Math.min(screenHeight*0.78,760), borderRadius:18, overflow:'hidden', borderWidth:1, borderColor:'rgba(198,163,106,0.58)', backgroundColor:'#0A0D12' }}>
             <BottleProfilePanel
               bottle={selectedBottle}
-              onClose={() => { setSelectedBottle(null); setSelectedTrackId(null); }}
+              intelligence={selectedBottleIntelligence}
+              intelligenceLoading={selectedBottleIntelligenceLoading}
+              onClose={() => { setSelectedBottle(null); setSelectedTrackId(null); setSelectedBottleIntelligence(null); }}
             />
           </View>
         </>
