@@ -121,7 +121,9 @@ export function buildBottleWorldObservations(
       worldPoint,
       worldCorners,
       confidence: candidate.confidence,
-      geometryComplete: !!candidate.contour && candidate.contour.length >= 4,
+      // A validated metric-depth rectangle is complete enough to maintain a
+      // physical screen-space box. The contour remains optional visual detail.
+      geometryComplete: worldCorners.length === 4 && cameraPoint.sampleCount >= 4,
       ...(identity ? { visualKey: identity } : {}),
       box,
       depthMetres: cameraPoint.depthMetres,
