@@ -102,9 +102,23 @@ export function buildBottleWorldObservations(
     if (!worldPoint) { reject("invalid_camera_transform"); continue; }
     const identity = [candidate.bottle?.brand, candidate.bottle?.product]
       .filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const worldCorners = [
+      [box.x0, box.y0], [box.x1, box.y0], [box.x1, box.y1], [box.x0, box.y1],
+    ].flatMap(([x, y]) => {
+      const u = x * depth.width, v = y * depth.height, z = cameraPoint.depthMetres;
+      const corner = {
+        x: ((u - intrinsics.cx) / intrinsics.fx) * z,
+        y: -((v - intrinsics.cy) / intrinsics.fy) * z,
+        z, depthMetres: z, sampleCount: cameraPoint.sampleCount,
+      };
+      const worldCorner = cameraPointToWorld(corner, frame.cameraTransform, orientation);
+      return worldCorner ? [worldCorner] : [];
+    });
+    if (worldCorners.length !== 4) { reject("invalid_camera_transform"); continue; }
     observations.push({
       trackId: candidate.trackId,
       worldPoint,
+      worldCorners,
       confidence: candidate.confidence,
       geometryComplete: !!candidate.contour && candidate.contour.length >= 4,
       ...(identity ? { visualKey: identity } : {}),
