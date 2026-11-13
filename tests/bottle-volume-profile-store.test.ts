@@ -36,7 +36,7 @@ describe('bottle volume profile store', () => {
       points:[
         {heightFraction:0,volumeFraction:0},
         {heightFraction:0.5,volumeFraction:0.47},
-        {heightFraction:1,volumeFraction:1},
+        {heightFraction:0.82,volumeFraction:1},
       ],
     };
     await saveBottleVolumeProfileForIdentity('sku-1',profile);
