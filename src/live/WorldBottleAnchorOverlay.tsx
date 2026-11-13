@@ -55,7 +55,10 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
     );
     for (const observation of observations) {
       const track = tracksRef.current.find(item => item.sourceTrackId === observation.trackId || item.trackId === observation.trackId);
-      if (!track) continue;
+      // The world tracker deliberately rejects implausible jumps without
+      // refreshing lastSeenAt. Do not let an outlier overwrite the retained
+      // rectangle corners after that rejection.
+      if (!track || track.lastSeenAt !== now) continue;
       const candidate = candidates.find(item => item.trackId === observation.trackId);
       const name = [candidate?.bottle?.brand, candidate?.bottle?.product].filter(Boolean).join(" ").trim()
         || candidate?.bottle?.category?.replace(/_/g, " ")
