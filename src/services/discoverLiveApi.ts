@@ -45,6 +45,59 @@ export type MenuGlimpse = { visible: boolean; title: string; box?: { x0: number;
 export type LabelRead = { words: string[]; brand: string; product: string; category: string; proof: string; size: string; origin: string; details: Record<string, string | string[]>; fieldConfidence: Record<string, number> };
 export type LiveRead = { bottles: BottleRead[]; labelRead: LabelRead | null; menu: MenuGlimpse; diagnostics: { version: string; model: string; providerMs: number; bottlesReturned: number; bottlesConfident: number; bottlesMatched: number } };
 
+export type BottleIntelligenceAttribute = {
+  attribute_code: string;
+  value_text: string | null;
+  value_numeric: number | null;
+  value_json: unknown;
+  unit: string | null;
+  state: 'queued' | 'found' | 'not_disclosed' | 'not_applicable' | 'conflicting' | 'needs_review';
+  confidence: number | null;
+  evidence_id: string | null;
+  updated_at: string;
+};
+export type BottleIntelligenceEvidence = {
+  attribute_code: string | null;
+  source_type: string;
+  source_name: string | null;
+  source_url: string | null;
+  observed_value: unknown;
+  confidence: number | null;
+  verification_state: 'unreviewed' | 'corroborated' | 'verified' | 'rejected' | 'conflicting';
+  captured_at: string;
+  expires_at: string | null;
+};
+export type BottleIntelligenceProfile = {
+  product: {
+    id: string;
+    brand: string;
+    product: string;
+    category: string;
+    expression: string | null;
+    upc_gtin: string | null;
+    ean: string | null;
+    status: string;
+    match_confidence: number | null;
+    identity: Record<string, unknown>;
+  };
+  packages: Array<Record<string, unknown>>;
+  attributes: BottleIntelligenceAttribute[];
+  evidence: BottleIntelligenceEvidence[];
+};
+
+/** Loads shared product intelligence only after a user opens a bottle profile. */
+export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'brand' | 'product' | 'category'>): Promise<BottleIntelligenceProfile | null> {
+  if (!bottle.brand.trim() || !bottle.product.trim()) return null;
+  const result = await call({ action: 'profile', brand: bottle.brand, product: bottle.product, category: bottle.category });
+  if (!result.found || !result.product || typeof result.product !== 'object') return null;
+  return {
+    product: result.product as BottleIntelligenceProfile['product'],
+    packages: Array.isArray(result.packages) ? result.packages : [],
+    attributes: Array.isArray(result.attributes) ? result.attributes : [],
+    evidence: Array.isArray(result.evidence) ? result.evidence : [],
+  };
+}
+
 /** One camera frame (JPEG, base64) in; every readable bottle label and any menu in view out. Nothing is stored. */
 export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fine_print' = 'standard'): Promise<LiveRead> {
   const result = await call({ action: 'frame', image: jpegBase64, focus });
