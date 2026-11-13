@@ -166,3 +166,51 @@ export function detectLiquidBoundaryCandidate(
     method: 'multi_column_lab_transition',
   };
 }
+
+
+/**
+ * Creates a dedicated browser worker for pixel analysis. The worker source is
+ * assembled from the same detector functions used by unit tests, so the
+ * background implementation cannot silently drift from the tested baseline.
+ * Returns null when workers are unavailable; callers must then abstain rather
+ * than running this CPU work on the camera/UI thread.
+ */
+export function createLiquidLevelWorker(): Worker | null {
+  if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
+    return null;
+  }
+  const source = [
+    `const COLUMN_FRACTIONS = ${JSON.stringify(COLUMN_FRACTIONS)};`,
+    `const WINDOW_RADIUS = ${WINDOW_RADIUS};`,
+    `const MIN_DELTA_E = ${MIN_DELTA_E};`,
+    `const MIN_COLUMN_SUPPORT = ${MIN_COLUMN_SUPPORT};`,
+    srgbToLinear.toString(),
+    rgbToLab.toString(),
+    meanLab.toString(),
+    deltaE.toString(),
+    isOccluded.toString(),
+    detectLiquidBoundaryCandidate.toString(),
+    `self.onmessage = (event) => {
+      const job = event.data;
+      try {
+        const frame = { width: job.width, height: job.height, data: new Uint8ClampedArray(job.buffer) };
+        const results = job.tracks.map((track) => ({
+          trackId: track.trackId,
+          result: detectLiquidBoundaryCandidate(frame, track.bounds),
+        }));
+        self.postMessage({ id: job.id, timestamp: job.timestamp, results });
+      } catch (error) {
+        self.postMessage({ id: job.id, timestamp: job.timestamp, error: error instanceof Error ? error.message : 'liquid_worker_failed' });
+      }
+    };`,
+  ].join('\\n');
+  const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  try {
+    const worker = new Worker(url);
+    worker.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
+    return worker;
+  } catch {
+    URL.revokeObjectURL(url);
+    return null;
+  }
+}
