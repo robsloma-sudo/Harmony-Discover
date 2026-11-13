@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
-import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
+import { WorldBottleAnchorOverlay, type WorldBottleCandidate } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
@@ -92,6 +92,28 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     const trackedBottle = liveCandidates.find(candidate => candidate.trackId === selectedTrackId)?.bottle;
     if (trackedBottle) setSelectedBottle(trackedBottle);
   }, [liveCandidates, selectedTrackId]);
+  const openBottleProfile = (candidate: WorldBottleCandidate) => {
+    const bottle = candidate.bottle;
+    const profileBottle: BottleRead = bottle || {
+      box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
+      words: [],
+      brand: '',
+      product: 'Bottle detected · label reading pending',
+      category: 'other',
+      proof: '',
+      size: '',
+      origin: '',
+      confidence: 0,
+      detectionConfidence: candidate.confidence,
+      fieldConfidence: {},
+      researchSources: [],
+      details: {},
+      match: null,
+      state: 'unsure',
+    };
+    setSelectedBottle(profileBottle);
+    setSelectedTrackId(candidate.trackId);
+  };
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
@@ -288,27 +310,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={bottle ? `Open bottle profile for ${name}` : 'Open detected bottle profile'}
-                  onPress={() => {
-                    const profileBottle: BottleRead = bottle || {
-                      box: { x0: tracked.x, y0: tracked.y, x1: tracked.x + tracked.width, y1: tracked.y + tracked.height },
-                      words: [],
-                      brand: '',
-                      product: 'Bottle detected · label reading pending',
-                      category: 'other',
-                      proof: '',
-                      size: '',
-                      origin: '',
-                      confidence: 0,
-                      detectionConfidence: tracked.confidence,
-                      fieldConfidence: {},
-                      researchSources: [],
-                      details: {},
-                      match: null,
-                      state: 'unsure',
-                    };
-                    setSelectedBottle(profileBottle);
-                    setSelectedTrackId(tracked.trackId);
-                  }}
+                  onPress={() => openBottleProfile(tracked)}
                   style={[s.liveDetectionBox, boxStyle]}
                 >
                   <View style={s.liveDetectionLabel}>
@@ -321,7 +323,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           })}
         </View>
       )}
-      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} />}
+      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
       {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
         <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
         <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
