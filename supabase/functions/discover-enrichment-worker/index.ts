@@ -80,8 +80,8 @@ Deno.serve(async (req: Request) => {
         db.from("bottle_sightings").select("id,consumer_id,discover_product_id,product_index_id,read_brand,read_product,read_category,read_proof,read_size,read_vintage,read_confidence,label_details")
           .eq("id", sightingId).maybeSingle(),
       ]);
-      if (productError) throw new Error("discover_product_not_found");
-      if (sightingError) throw new Error("sighting_product_link_mismatch");
+      if (productError || !product) throw new Error("discover_product_not_found");
+      if (sightingError || !sighting) throw new Error("sighting_product_link_mismatch");
       const validated = validateIdentityJobReferences(job, product, sighting);
       let output: Record<string, unknown>;
 
