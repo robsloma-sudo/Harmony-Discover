@@ -155,7 +155,7 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
   })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
 }
 
-export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; productsLinked: number; productsCreated: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
+export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; productsLinked: number; productsCreated: number; researchEvidenceSaved: number; researchAttributesAdded: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
   const result = await call({
     action: 'save', scan_session_id: scanSessionId, venue_name: venueName,
     bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details, fieldConfidence: b.fieldConfidence, research_sources: b.researchSources })),
@@ -167,7 +167,7 @@ export async function saveBottleSightings(scanSessionId: string, venueName: stri
     fieldConfidence: (b.field_confidence && typeof b.field_confidence === 'object' ? b.field_confidence : {}) as Record<string,number>,
     researchSources: Array.isArray(b.research_sources) ? b.research_sources : [],
   })) : [];
-  return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0, productsLinked: Number(result.products_linked) || 0, productsCreated: Number(result.products_created) || 0, enriched };
+  return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0, productsLinked: Number(result.products_linked) || 0, productsCreated: Number(result.products_created) || 0, researchEvidenceSaved: Number(result.research_evidence_saved) || 0, researchAttributesAdded: Number(result.research_attributes_added) || 0, enriched };
 }
 
 export function bottleErrorMessage(error: unknown): string {
