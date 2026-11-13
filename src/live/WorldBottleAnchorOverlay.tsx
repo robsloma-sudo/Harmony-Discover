@@ -126,7 +126,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
       >
         <View pointerEvents="none" style={styles.label}>
           <Text numberOfLines={1} style={styles.name}>{anchor.name.toUpperCase()}</Text>
-          <Text style={styles.meta}>{anchor.verified ? "IDENTITY LOCKED" : "IDENTITY PENDING"} · {anchor.state === "occluded" ? "BACKGROUND · REACQUIRABLE" : "FOREGROUND · TRACKED"} · {Math.round(anchor.confidence * 100)}%</Text>
+          <Text style={styles.meta}>{anchor.verified ? "IDENTITY LOCKED" : "IDENTITY PENDING"} · {anchor.state === "occluded" ? "BACKGROUND · REACQUIRABLE" : anchor.state === "confirmed" ? "WORLD ANCHORED" : "PROVISIONAL · DEPTH ESTIMATE"} · {Math.round(anchor.confidence * 100)}%</Text>
         </View>
       </Pressable>
     ))}
