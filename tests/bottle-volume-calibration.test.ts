@@ -22,6 +22,12 @@ describe('bottle volume calibration', () => {
     expect(result.status).toBe('created');
     if (result.status === 'created') expect(result.profile.points[1].volumeFraction).toBeCloseTo(0.48, 4);
   });
+  it('requires at least one measured partial fill point', () => {
+    expect(createBottleVolumeProfile('endpoints-only', 750, [
+      { heightFraction: 0, measuredMilliliters: 0 },
+      { heightFraction: 0.82, measuredMilliliters: 750 },
+    ]).status).toBe('invalid');
+  });
   it('requires real empty and full calibration endpoints', () => {
     expect(createBottleVolumeProfile('incomplete', 750, [
       { heightFraction: 0.2, measuredMilliliters: 100 },
