@@ -647,6 +647,7 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
+      const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/g, " ").trim();
       const fieldConfidence = (b.field_confidence && typeof b.field_confidence === "object" ? b.field_confidence : {}) as Record<string, unknown>;
       const brandReadIsStrong = !!b.brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
       const productReadIsStrong = !!b.product && Number(fieldConfidence.product ?? 0) >= 0.90;
