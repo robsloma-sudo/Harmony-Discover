@@ -164,7 +164,7 @@ export function detectLiquidBoundaryCandidate(
   // a real curved meniscus survive when its center and edges sit at different
   // heights, while rejecting highly irregular transitions.
   const searchRadius = Math.max(4, Math.round(height * 0.12));
-  const columnHeights: number[] = [];
+  const columnSamples: Array<{ x: number; y: number }> = [];
   for (const x of columns) {
     let strongest = { y: -1, contrast: 0 };
     const from = Math.max(firstY, best.y - searchRadius);
@@ -177,17 +177,18 @@ export function detectLiquidBoundaryCandidate(
       const contrast = deltaE(above, below);
       if (contrast > strongest.contrast) strongest = { y, contrast };
     }
-    if (strongest.y >= 0 && strongest.contrast >= minContrast) columnHeights.push(strongest.y);
+    if (strongest.y >= 0 && strongest.contrast >= minContrast) columnSamples.push({ x, y: strongest.y });
   }
-  const sortedHeights = [...columnHeights].sort((a, b) => a - b);
+  const sortedHeights = columnSamples.map(sample => sample.y).sort((a, b) => a - b);
+  const spatialSamples = [...columnSamples].sort((a, b) => a.x - b.x);
   const medianY = sortedHeights.length
     ? sortedHeights[Math.floor(sortedHeights.length / 2)]
     : best.y;
   const shapeSpread = sortedHeights.length >= 4
     ? (sortedHeights[sortedHeights.length - 1] - sortedHeights[0]) / height
     : 0;
-  const centerValues = sortedHeights.length >= 5 ? sortedHeights.slice(2, -2) : sortedHeights;
-  const edgeValues = sortedHeights.length >= 5 ? [sortedHeights[0], sortedHeights[1], sortedHeights[sortedHeights.length - 2], sortedHeights[sortedHeights.length - 1]] : sortedHeights;
+  const centerValues = spatialSamples.length >= 5 ? spatialSamples.slice(2, -2).map(sample => sample.y) : sortedHeights;
+  const edgeValues = spatialSamples.length >= 5 ? [spatialSamples[0].y, spatialSamples[1].y, spatialSamples[spatialSamples.length - 2].y, spatialSamples[spatialSamples.length - 1].y] : sortedHeights;
   const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
   const curvature = (average(centerValues) - average(edgeValues)) / height;
   const boundaryShape: 'flat' | 'curved' | 'irregular' =
