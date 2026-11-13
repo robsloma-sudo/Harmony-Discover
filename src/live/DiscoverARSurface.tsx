@@ -401,7 +401,7 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
-    recognitionSchedulerRef.current = () => scheduleRecognition(0);
+    recognitionSchedulerRef.current = () => { scheduleRecognition(0); startLocalDetectionLoop(); };
     void start();
 
     return () => {
