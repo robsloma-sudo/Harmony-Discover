@@ -8,7 +8,7 @@ export type BottleCalibrationPoint = {
 export type BottleVolumeProfile = {
   id: string;
   capacityMl: number;
-  /** Ordered calibration points must include both (0,0) and (1,1). */
+  /** Points run from empty (0,0) to the measured full-fill line (heightFraction,1). */
   points: BottleCalibrationPoint[];
 };
 
@@ -22,7 +22,8 @@ export function validateBottleVolumeProfile(profile: BottleVolumeProfile): boole
       !Array.isArray(profile.points) || profile.points.length < 2) return false;
   const points = profile.points;
   if (points[0].heightFraction !== 0 || points[0].volumeFraction !== 0 ||
-      points[points.length - 1].heightFraction !== 1 || points[points.length - 1].volumeFraction !== 1) return false;
+      points[points.length - 1].heightFraction <= 0 || points[points.length - 1].heightFraction > 1 ||
+      points[points.length - 1].volumeFraction !== 1) return false;
   for (let index = 0; index < points.length; index += 1) {
     const point = points[index];
     if (!Number.isFinite(point.heightFraction) || !Number.isFinite(point.volumeFraction) ||
@@ -34,7 +35,8 @@ export function validateBottleVolumeProfile(profile: BottleVolumeProfile): boole
 
 /**
  * Converts a measured body-height fraction to volume only when a validated,
- * bottle-specific calibration profile is supplied. No generic cylinder
+ * bottle-specific calibration profile is supplied. The full point is the
+ * measured full-fill line, which may sit below the top of the bottle. No generic cylinder
  * assumption is made for shoulders, punt, taper, or nonuniform bottle bodies.
  */
 export function estimateCalibratedBottleVolume(
@@ -48,6 +50,9 @@ export function estimateCalibratedBottleVolume(
     return { status: 'unavailable', reason: 'missing_or_invalid_bottle_calibration' };
   }
   const points = profile.points;
+  if (heightFraction > points[points.length - 1].heightFraction) {
+    return { status: 'unavailable', reason: 'height_above_calibrated_full_fill_line' };
+  }
   let lower = points[0];
   let upper = points[points.length - 1];
   for (let index = 1; index < points.length; index += 1) {
@@ -96,7 +101,8 @@ export function createBottleVolumeProfile(
     return { status: 'invalid', reason: 'sample_outside_physical_range' };
   }
   if (ordered[0].heightFraction !== 0 || ordered[0].measuredMilliliters !== 0 ||
-      ordered[ordered.length - 1].heightFraction !== 1 || ordered[ordered.length - 1].measuredMilliliters !== capacityMl) {
+      ordered[ordered.length - 1].heightFraction <= 0 || ordered[ordered.length - 1].heightFraction > 1 ||
+      ordered[ordered.length - 1].measuredMilliliters !== capacityMl) {
     return { status: 'invalid', reason: 'calibration_requires_empty_and_full_endpoints' };
   }
   const points: BottleCalibrationPoint[] = [];
