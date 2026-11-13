@@ -66,9 +66,9 @@ jobs:
         run: |
           workspace="ios/HarmonyDiscover.xcworkspace"
           test -d "$workspace"
-          schemes="$(xcodebuild -list -json -workspace "$workspace" | /usr/bin/python3 -c 'import json,sys; print("\\n".join(json.load(sys.stdin)["workspace"]["schemes"]))')"
-          printf '%s\\n' "$schemes"
-          printf '%s\\n' "$schemes" | grep -Fxq "HarmonyDiscover"
+          schemes="$(xcodebuild -list -json -workspace "$workspace" | /usr/bin/python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["workspace"]["schemes"]))')"
+          printf '%s\n' "$schemes"
+          printf '%s\n' "$schemes" | grep -Fxq "HarmonyDiscover"
           xcodebuild \
             -workspace "$workspace" \
             -scheme HarmonyDiscover \
