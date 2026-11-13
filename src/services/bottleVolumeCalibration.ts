@@ -110,7 +110,7 @@ export function createBottleVolumeProfile(
     const sample = ordered[index];
     if (index > 0 && (sample.heightFraction <= ordered[index - 1].heightFraction ||
         sample.measuredMilliliters <= ordered[index - 1].measuredMilliliters)) {
-      return { status: 'invalid', reason: 'samples_must_be_strictly_ordered_by_height_and_monotonic_by_volume' };
+      return { status: 'invalid', reason: 'samples_must_have_strictly_increasing_height_and_volume' };
     }
     points.push({
       heightFraction: sample.heightFraction,
