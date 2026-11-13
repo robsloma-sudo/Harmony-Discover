@@ -1,12 +1,12 @@
 #import "DfineOrtSessionProbe.h"
 #import <onnxruntime.h>
 
-@implementation DfineOrtSessionProbe
-
 static dispatch_queue_t DfineSessionQueue;
 static ORTEnv *DfineEnvironment;
 static ORTSession *DfineSession;
 static NSString *DfineLoadedModelPath;
+
+@implementation DfineOrtSessionProbe
 
 + (void)initialize {
   if (self == [DfineOrtSessionProbe class]) {
@@ -79,7 +79,7 @@ static NSString *DfineLoadedModelPath;
       }
 
       NSSet<NSString *> *expectedOutputs = [NSSet setWithArray:@[@"labels", @"boxes", @"scores", @"masks"]];
-      if (![inputNames isEqualToArray:@[@"input"]] || ![NSSet setWithArray:outputNames].isEqualToSet:expectedOutputs) {
+      if (![inputNames isEqualToArray:@[@"input"]] || ![[NSSet setWithArray:outputNames] isEqualToSet:expectedOutputs]) {
         operationError = [NSError errorWithDomain:@"DfineOrtSessionProbe" code:4 userInfo:@{
           NSLocalizedDescriptionKey: @"D-FINE input/output names do not match the pinned graph contract.",
           @"inputNames": inputNames ?: @[],
