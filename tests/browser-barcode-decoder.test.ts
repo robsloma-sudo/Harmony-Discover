@@ -6,7 +6,12 @@ const G: Record<string,string> = { '0100111':'0','0110011':'1','0011011':'2','01
 const PARITY = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
 function ean13(value:string):string {
   const first=Number(value[0]), left=value.slice(1,7), right=value.slice(7);
-  return '101'+[...left].map((digit,i)=>(PARITY[first][i]==='L'?L:G)[Object.keys((PARITY[first][i]==='L'?L:G)).find(k=>(PARITY[first][i]==='L'?L:G)[k]===digit)!]).join('')+'01010'+[...right].map(digit=>Object.keys(L).find(k=>L[k]===digit)!.replace(/[01]/g,b=>b==='0'?'1':'0')).join('')+'101';
+  const leftBits=[...left].map((digit,i)=>{
+    const encoding=PARITY[first][i]==='L'?L:G;
+    return Object.keys(encoding).find(key=>encoding[key]===digit)!;
+  }).join('');
+  const rightBits=[...right].map(digit=>Object.keys(L).find(key=>L[key]===digit)!.replace(/[01]/g,bit=>bit==='0'?'1':'0')).join('');
+  return '101'+leftBits+'01010'+rightBits+'101';
 }
 function ean8(value:string):string {
   return '101'+[...value.slice(0,4)].map(digit=>Object.keys(L).find(k=>L[k]===digit)!).join('')+'01010'+[...value.slice(4)].map(digit=>Object.keys(L).find(k=>L[k]===digit)!.replace(/[01]/g,b=>b==='0'?'1':'0')).join('')+'101';
