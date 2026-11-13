@@ -326,7 +326,9 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   // Accessed only on visionQueue; capped to four source frames.
   private var retainedTrackingFrames: [TimeInterval: RetainedTrackingFrame] = [:]
   private var activeTrackingRequests: [Int: VNTrackObjectRequest] = [:]
-  private var localTrackingSequenceHandler = VNSequenceRequestHandler()
+  // Each physical bottle has its own Vision sequence so a late seed for a new
+  // bottle cannot rewind the sequence already tracking another bottle.
+  private var trackingSequenceHandlers: [Int: VNSequenceRequestHandler] = [:]
   private var trackingMisses: [Int: Int] = [:]
   private var lastLocalTrackingFrameTime: TimeInterval = 0
   private let rectangleOverlay = CAShapeLayer()
@@ -735,7 +737,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     }
     retainedTrackingFrames.removeAll()
     activeTrackingRequests.removeAll()
-    localTrackingSequenceHandler = VNSequenceRequestHandler()
+    trackingSequenceHandlers.removeAll()
     trackingMisses.removeAll()
   }
 
@@ -765,17 +767,18 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
         let observation = VNDetectedObjectObservation(boundingBox: visionRect)
         let request = VNTrackObjectRequest(detectedObjectObservation: observation)
         request.trackingLevel = .accurate
+        let sequence = VNSequenceRequestHandler()
         do {
-          try self.localTrackingSequenceHandler.perform(
-            [request], on: source.pixelBuffer.value, orientation: source.orientation
-          )
+          try sequence.perform([request], on: source.pixelBuffer.value, orientation: source.orientation)
           if let seeded = request.results?.first as? VNDetectedObjectObservation {
             request.inputObservation = seeded
             self.activeTrackingRequests[trackID] = request
+            self.trackingSequenceHandlers[trackID] = sequence
             self.trackingMisses[trackID] = 0
           }
         } catch {
           self.activeTrackingRequests.removeValue(forKey: trackID)
+          self.trackingSequenceHandlers.removeValue(forKey: trackID)
           self.trackingMisses.removeValue(forKey: trackID)
         }
       }
@@ -806,16 +809,20 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
             !self.activeTrackingRequests.isEmpty else { return }
       var output: [[String: Double]] = []
       for (trackID, request) in Array(self.activeTrackingRequests) {
+        guard let sequence = self.trackingSequenceHandlers[trackID] else {
+          self.activeTrackingRequests.removeValue(forKey: trackID)
+          self.trackingMisses.removeValue(forKey: trackID)
+          continue
+        }
         do {
-          try self.localTrackingSequenceHandler.perform(
-            [request], on: pixelBufferBox.value, orientation: orientation
-          )
+          try sequence.perform([request], on: pixelBufferBox.value, orientation: orientation)
           guard let observation = request.results?.first as? VNDetectedObjectObservation,
                 observation.confidence >= 0.25 else {
             let misses = (self.trackingMisses[trackID] ?? 0) + 1
             self.trackingMisses[trackID] = misses
             if misses >= 6 {
               self.activeTrackingRequests.removeValue(forKey: trackID)
+              self.trackingSequenceHandlers.removeValue(forKey: trackID)
               self.trackingMisses.removeValue(forKey: trackID)
             }
             continue
@@ -834,6 +841,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
           self.trackingMisses[trackID] = misses
           if misses >= 6 {
             self.activeTrackingRequests.removeValue(forKey: trackID)
+            self.trackingSequenceHandlers.removeValue(forKey: trackID)
             self.trackingMisses.removeValue(forKey: trackID)
           }
         }
