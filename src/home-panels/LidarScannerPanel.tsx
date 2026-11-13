@@ -16,7 +16,7 @@ type Props = {
   tracking: ARTrackingUpdate;
   depthStatus: string;
   depthFrame: ARKitDepthFrame | null;
-  candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }> }>;
+  candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; depthFrame?: ARKitDepthFrame; contour?: Array<{ x: number; y: number }> }>;
   bottles: BottleRead[];
 };
 
@@ -52,7 +52,8 @@ function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, c
   // Associate bottle reads with their exact timestamped camera detections.
   // A depth frame from another moment is rejected by the bridge, never silently reused.
   const usedCandidateTrackIds = new Set<number>();
-  const spatialPoints = metricDepth && depthFrame && orientation && intrinsics
+  const spatialDepthFrame = candidates.find(candidate => candidate.depthFrame && candidate.timestamp === candidate.depthFrame.timestamp)?.depthFrame ?? null;
+  const spatialPoints = spatialDepthFrame && spatialDepthFrame.unit === 'meters'
     ? [...bottles].sort((a, b) => b.confidence - a.confidence).flatMap((bottle, index) => {
         const box = { x: bottle.box.x0, y: bottle.box.y0, width: bottle.box.x1 - bottle.box.x0, height: bottle.box.y1 - bottle.box.y0 };
         let best: { candidate: Props['candidates'][number]; score: number } | null = null;
@@ -79,7 +80,7 @@ function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, c
           timestamp: best.candidate.timestamp!,
           contour: best.candidate.contour,
           bottle: { brand: bottle.match?.brand || bottle.brand, product: bottle.product, category: bottle.category },
-        }], depthFrame);
+        }], spatialDepthFrame);
         const observation = bridged.observations[0];
         if (!observation) return [];
         return [{
