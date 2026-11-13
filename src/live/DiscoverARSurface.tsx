@@ -14,6 +14,8 @@ import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { isConfirmedWebBottleTrack } from './webTrackPolicy';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
+import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
+import { getBottleCalibrationKey, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -35,7 +37,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus' } }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
@@ -167,9 +169,11 @@ function WebLiveCamera(props: NativeProps) {
     // attached between recognition passes instead of resetting by array index.
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
-    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus' } }> = [];
+    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> = [];
     // Liquid evidence is kept per local bottle track and never blocks cloud label recognition.
     const liquidHistoryByTrack = new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>();
+    let bottleVolumeProfiles: Record<string, import('../services/bottleVolumeCalibration').BottleVolumeProfile> = {};
+    void loadBottleVolumeProfiles().then(registry => { if (!disposed) bottleVolumeProfiles = registry.profiles; });
     let nextWebTrackId = 1;
     const intersectionOverUnion = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
@@ -276,10 +280,21 @@ function WebLiveCamera(props: NativeProps) {
         liquidHistoryByTrack.set(item.trackId, { observations, updatedAt: timestamp });
         const consensus = assessLiquidInterface(observations);
         if (consensus.status === 'visible') {
+          const labelRead = labelReadsByTrack.get(item.trackId);
+          const identityKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure');
+          const profile = identityKey ? bottleVolumeProfiles[identityKey] : undefined;
+          const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
             heightPercent: Math.round(consensus.normalizedHeight * 100),
             confidence: consensus.confidence,
             method: 'temporal_consensus',
+            ...(calibrated.status === 'calibrated' ? {
+              calibratedVolume: {
+                milliliters: calibrated.milliliters,
+                fluidOunces: calibrated.fluidOunces,
+                profileId: calibrated.profileId,
+              },
+            } : {}),
           };
           changed = true;
         }
