@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const store = new Map<string,string>();
+const store = vi.hoisted(() => new Map<string,string>());
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: vi.fn(async (key: string) => store.get(key) ?? null),
@@ -8,7 +8,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 
-import { getBottleCalibrationKey, loadBottleVolumeProfiles, parseBottleCalibrationSamples, saveBottleVolumeProfileForIdentity } from '../src/services/bottleVolumeProfileStore';
+import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles, parseBottleCalibrationSamples, saveBottleVolumeProfileForIdentity } from '../src/services/bottleVolumeProfileStore';
 
 beforeEach(() => store.clear());
 
@@ -39,9 +39,11 @@ describe('bottle volume profile store', () => {
         {heightFraction:0.82,volumeFraction:1},
       ],
     };
-    await saveBottleVolumeProfileForIdentity('sku-1',profile);
+    const identityKey = getBottleCalibrationKey({id:'sku-1',score:0.95},'matched','750 ml')!;
+    await saveBottleVolumeProfileForIdentity(identityKey,profile);
     const registry = await loadBottleVolumeProfiles();
-    expect(registry.profiles['sku-1']).toEqual(profile);
+    expect(registry.profiles[identityKey]).toEqual(profile);
+    expect(getCachedBottleVolumeProfile(identityKey)).toEqual(profile);
     expect(registry.profiles['other']).toBeUndefined();
   });
 });
