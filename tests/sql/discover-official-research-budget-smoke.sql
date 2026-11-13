@@ -9,7 +9,7 @@ insert into auth.users(id) values
   ('52000000-0000-0000-0000-000000000003')
 on conflict (id) do nothing;
 
-\i supabase/migrations/20261113150000_discover_official_research_budget.sql
+\i supabase/migrations/20261113163000_discover_official_research_budget.sql
 
 do $research_budget$
 declare
