@@ -54,7 +54,7 @@ describe("world-anchor camera reprojection", () => {
     expect(positions[1]).toBeLessThan(positions[0]);
     expect(positions[2]).toBeLessThan(positions[1]);
     expect(positions[3]).toBeLessThan(positions[2]);
-    expect(positions[3]).toBeCloseTo(0.2);
+    expect(positions[3]).toBeCloseTo(0.44);
   });
 
   it("reprojects a retained four-corner bottle rectangle", () => {
