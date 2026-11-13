@@ -7,7 +7,7 @@
  */
 export type BeverageFamily =
   | "armagnac" | "cognac" | "other_brandy" | "pisco"
-  | "rye_whiskey" | "bourbon" | "single_malt_scotch" | "other_whiskey"
+  | "rye_whiskey" | "bourbon" | "single_malt_scotch" | "single_malt_whiskey" | "other_whiskey"
   | "wine_red" | "wine_white" | "wine_rose" | "wine_unknown" | "sparkling_wine"
   | "tequila" | "mezcal" | "rum" | "gin" | "vodka" | "liqueur" | "other";
 
@@ -170,6 +170,27 @@ const FAMILY: Record<BeverageFamily, IntelligenceSection[]> = {
       field("cask_finish","Cask finish","Finish type and duration"),
       field("age_statement","Age statement","Age statement or no-age-statement release"),
       field("warehouse","Warehouse","Dunnage, racked or palletized warehouse"),
+      field("bottling_strength","Bottling strength","Cask strength, natural colour or chill filtration"),
+    ]},
+  ],
+  single_malt_whiskey: [
+    { id:"agriculture",title:"Barley & malt",description:"The agricultural and malting choices behind this single malt.",fields:[
+      field("barley_origin","Barley origin","Barley variety, farm, region and sourcing"),
+      field("malting","Malting","Floor malted or commercial malt; maltster"),
+      field("peat_level","Peat level","Peat specification and where measured"),
+    ]},
+    { id:"production",title:"Distillery & production",description:"Single-malt distillery, fermentation and distillation practice.",fields:[
+      field("jurisdiction","Legal jurisdiction","Country and applicable single-malt whiskey standard"),
+      field("distillery","Distillery","Producing distillery and site history"),
+      field("fermentation","Fermentation","Washback type, yeast and fermentation duration"),
+      field("still_type","Still type","Pot still shape, size and configuration"),
+      field("distillation_method","Distillation","Distillation approach and cut points when disclosed"),
+    ]},
+    { id:"maturation",title:"Cask maturation",description:"Oak, warehouse and finishing choices.",fields:[
+      field("cask_type","Cask type","Ex-bourbon, sherry, wine, virgin oak or other cask"),
+      field("cask_finish","Cask finish","Finish type and duration"),
+      field("age_statement","Age statement","Declared age or no-age-statement release"),
+      field("warehouse","Warehouse","Warehouse location and maturation conditions"),
       field("bottling_strength","Bottling strength","Cask strength, natural colour or chill filtration"),
     ]},
   ],
@@ -348,27 +369,38 @@ const FAMILY: Record<BeverageFamily, IntelligenceSection[]> = {
 };
 
 export function resolveBeverageFamily(category: string, details: Record<string, unknown> = {}): BeverageFamily {
+  const normalize = (value: unknown) => String(value ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[’']/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\\s+/g, " ")
+    .trim();
+  const categoryKey = normalize(category);
   const hint = [category, details.subcategory, details.classification, details.style, details.appellation]
-    .filter(Boolean).join(" ").toLowerCase().replace(/[’']/g, "");
+    .map(normalize).filter(Boolean).join(" ");
+
   if (/armagnac/.test(hint)) return "armagnac";
   if (/cognac/.test(hint)) return "cognac";
   if (/pisco/.test(hint)) return "pisco";
-  if (/rye/.test(hint)) return "rye_whiskey";
+  if (/\\brye\\b/.test(hint)) return "rye_whiskey";
   if (/bourbon/.test(hint)) return "bourbon";
-  if (/single malt|scotch|islay|speyside|highland/.test(hint)) return "single_malt_scotch";
-  if (/brandy|calvados|eau[- ]de[- ]vie/.test(hint) || category === "brandy") return "other_brandy";
-  if (/sparkling|champagne|cr[eé]mant|prosecco|cava/.test(hint) || category === "sparkling") return "sparkling_wine";
-  if (/ros[eé]/.test(hint)) return "wine_rose";
-  if (/white wine/.test(hint)) return "wine_white";
-  if (/red wine/.test(hint)) return "wine_red";
-  if (category === "wine") return "wine_unknown"; // Never assume red, white or rosé without evidence.
-  if (category === "whiskey") return "other_whiskey";
-  if (category === "tequila") return "tequila";
-  if (category === "mezcal") return "mezcal";
-  if (category === "rum") return "rum";
-  if (category === "gin") return "gin";
-  if (category === "vodka") return "vodka";
-  if (category === "liqueur" || category === "amaro_aperitivo" || category === "vermouth") return "liqueur";
+  if (/scotch|islay|speyside|highlands?|lowlands?|campbeltown|islands/.test(hint)) return "single_malt_scotch";
+  if (/single malt/.test(hint)) return "single_malt_whiskey";
+  if (/brandy|calvados|eau de vie/.test(hint) || categoryKey === "brandy") return "other_brandy";
+  if (/sparkling|champagne|cremant|prosecco|cava/.test(hint) || categoryKey === "sparkling") return "sparkling_wine";
+  if (/\\brose\\b/.test(hint)) return "wine_rose";
+  if (categoryKey === "wine" && /\\bwhite\\b/.test(hint)) return "wine_white";
+  if (categoryKey === "wine" && /\\bred\\b/.test(hint)) return "wine_red";
+  if (categoryKey === "wine") return "wine_unknown"; // Never assume red, white or rosé without evidence.
+  if (categoryKey === "whiskey" || categoryKey === "whisky") return "other_whiskey";
+  if (categoryKey === "tequila") return "tequila";
+  if (categoryKey === "mezcal") return "mezcal";
+  if (categoryKey === "rum") return "rum";
+  if (categoryKey === "gin") return "gin";
+  if (categoryKey === "vodka") return "vodka";
+  if (categoryKey === "liqueur" || categoryKey === "amaro aperitivo" || categoryKey === "vermouth") return "liqueur";
   return "other";
 }
 
