@@ -3,6 +3,7 @@ import { validateBottleVolumeProfile, type BottleVolumeProfile } from './bottleV
 
 const STORAGE_KEY = 'harmony-discover:bottle-volume-profiles:v1';
 let cachedProfiles: Record<string, BottleVolumeProfile> = {};
+let profileCacheVersion = 0;
 let profileWriteQueue: Promise<void> = Promise.resolve();
 
 export function getCachedBottleVolumeProfile(identityKey: string): BottleVolumeProfile | undefined {
@@ -19,19 +20,20 @@ export function getBottleCalibrationKey(match: { id: string; score: number } | n
 }
 
 export async function loadBottleVolumeProfiles(): Promise<ProfileRegistry> {
+  const cacheVersionAtStart = profileCacheVersion;
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) { cachedProfiles = {}; return { version: 1, profiles: {} }; }
+    if (!raw) { if (profileCacheVersion === cacheVersionAtStart) cachedProfiles = {}; return { version: 1, profiles: {} }; }
     const parsed = JSON.parse(raw) as Partial<ProfileRegistry>;
-    if (parsed.version !== 1 || !parsed.profiles || typeof parsed.profiles !== 'object') { cachedProfiles = {}; return { version: 1, profiles: {} }; }
+    if (parsed.version !== 1 || !parsed.profiles || typeof parsed.profiles !== 'object') { if (profileCacheVersion === cacheVersionAtStart) cachedProfiles = {}; return { version: 1, profiles: {} }; }
     const profiles: Record<string, BottleVolumeProfile> = {};
     for (const [key, profile] of Object.entries(parsed.profiles)) {
       if (key && profile && validateBottleVolumeProfile(profile)) profiles[key] = profile;
     }
-    cachedProfiles = profiles;
+    if (profileCacheVersion === cacheVersionAtStart) cachedProfiles = profiles;
     return { version: 1, profiles };
   } catch {
-    cachedProfiles = {};
+    if (profileCacheVersion === cacheVersionAtStart) cachedProfiles = {};
     return { version: 1, profiles: {} };
   }
 }
@@ -43,8 +45,9 @@ export function saveBottleVolumeProfileForIdentity(identityKey: string, profile:
   const task = profileWriteQueue.then(async () => {
     const registry = await loadBottleVolumeProfiles();
     registry.profiles[identityKey] = profile;
-    cachedProfiles[identityKey] = profile;
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(registry));
+    cachedProfiles[identityKey] = profile;
+    profileCacheVersion += 1;
   });
   profileWriteQueue = task.catch(() => undefined);
   return task;
