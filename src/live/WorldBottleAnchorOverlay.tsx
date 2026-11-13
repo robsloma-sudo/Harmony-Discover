@@ -10,7 +10,7 @@ import { WorldAnchorObservationGate } from "./worldAnchorObservationGate";
 
 type Candidate = {
   trackId: number; x: number; y: number; width: number; height: number;
-  confidence: number; timestamp?: number; contour?: Array<{x:number;y:number}>;
+  confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{x:number;y:number}>;
   bottle?: BottleRead;
   depthFrame?: ARKitDepthFrame;
 };
@@ -52,7 +52,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     const isNewObservationFrame = observationFrame.timestamp > lastProcessedFrameTimestampRef.current;
     if (isNewObservationFrame) lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
     const paired = candidates.flatMap(candidate => {
-      if (candidate.timestamp === undefined || !Number.isFinite(candidate.timestamp)
+      if (candidate.source === "local" || candidate.timestamp === undefined || !Number.isFinite(candidate.timestamp)
         || Math.abs(candidate.timestamp - observationFrame.timestamp) > 0.12) return [];
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
