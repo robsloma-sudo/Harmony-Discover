@@ -23,6 +23,11 @@ describe('independent label batch scheduling', () => {
     expect(selected.map(item => item.trackId)).toEqual([3]);
   });
 
+  it('accepts negative local spatial-track IDs as valid bottle identities', () => {
+    const selected = selectLabelBatchCandidates([candidate(-1, 0.88)], new Map(), 20_000);
+    expect(selected.map(item => item.trackId)).toEqual([-1]);
+  });
+
   it('rejects malformed geometry and invalid track identifiers', () => {
     const selected = selectLabelBatchCandidates([
       candidate(0), candidate(Number.NaN), { ...candidate(4), width: 0 },
