@@ -76,10 +76,10 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, visibl
   return <View pointerEvents="none" style={StyleSheet.absoluteFill}>
     {anchors.map(anchor => (
       <View key={anchor.id} style={[styles.box, {
-        left: (anchor.rect.x * 100) + "%",
-        top: (anchor.rect.y * 100) + "%",
-        width: (anchor.rect.width * 100) + "%",
-        height: (anchor.rect.height * 100) + "%",
+        left: ((anchor.rect.x * 100) + "%") as `${number}%`,
+        top: ((anchor.rect.y * 100) + "%") as `${number}%`,
+        width: ((anchor.rect.width * 100) + "%") as `${number}%`,
+        height: ((anchor.rect.height * 100) + "%") as `${number}%`,
       }]}>
         <View style={styles.label}>
           <Text numberOfLines={1} style={styles.name}>{anchor.name.toUpperCase()}</Text>
