@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
@@ -33,6 +33,7 @@ export type ARKitCameraPose = { width: number; height: number; cameraIntrinsics:
 type NativeProps = ViewProps & {
   active?: boolean;
   recognitionEnabled?: boolean;
+  trackingSeeds?: Array<{ trackId: number; sourceTimestamp: number; x: number; y: number; width: number; height: number; confidence: number }>;
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number; depthEstimate?: ARKitDepthFrame } }) => void;
@@ -813,6 +814,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 }
 
 export function DiscoverARSurface(props: NativeProps) {
+  const [nativeTrackingSeeds, setNativeTrackingSeeds] = useState<Array<{ trackId: number; sourceTimestamp: number; x: number; y: number; width: number; height: number; confidence: number }>>([]);
   const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
   const nativeFrameReadBusy = useRef(false);
   const nativeLiquidBusy = useRef(false);
@@ -835,6 +837,7 @@ export function DiscoverARSurface(props: NativeProps) {
     latestNativeFrameTimestamp.current = 0;
     nativeRecognitionTracks = [];
     nextNativeRecognitionTrackId = 1;
+    setNativeTrackingSeeds([]);
     nativeVisionSignals.current = null;
     nativeLiquidHistory.current.clear();
   };
@@ -846,6 +849,7 @@ export function DiscoverARSurface(props: NativeProps) {
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
   const { onLiquidMetrics, ...nativeViewProps } = props;
   return <NativeARView {...nativeViewProps}
+    trackingSeeds={nativeTrackingSeeds}
     onARReady={event => {
       if (event.nativeEvent.state === 'starting') resetNativeSession();
       props.onARReady?.(event);
@@ -885,6 +889,11 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
+        setNativeTrackingSeeds(tracked.map(track => ({
+          trackId: track.trackId, sourceTimestamp: frame.timestamp,
+          x: track.x, y: track.y, width: track.width, height: track.height,
+          confidence: track.confidence,
+        })));
         const candidates = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle } as {
           trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
           liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
