@@ -82,23 +82,24 @@ Deno.serve(async (req: Request) => {
       ]);
       if (productError || !product) throw new Error("discover_product_not_found");
       if (sightingError || !sighting) throw new Error("sighting_product_link_mismatch");
-      const validated = validateIdentityJobReferences(job, product, sighting);
+      const sightingRow = sighting as NonNullable<typeof sighting>;
+      const validated = validateIdentityJobReferences(job, product, sightingRow);
       let output: Record<string, unknown>;
 
       if (job.job_type === "official_source_lookup") {
-        const labelDetails = sighting.label_details && typeof sighting.label_details === "object"
-          ? sighting.label_details as Record<string, unknown> : {};
+        const labelDetails = sightingRow.label_details && typeof sightingRow.label_details === "object"
+          ? sightingRow.label_details as Record<string, unknown> : {};
         const fieldConfidence = labelDetails._field_confidence && typeof labelDetails._field_confidence === "object"
           ? labelDetails._field_confidence as Record<string, unknown> : {};
-        const brandIsStrong = !!sighting.read_brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
-        const productIsStrong = !!sighting.read_product && Number(fieldConfidence.product ?? 0) >= 0.90;
+        const brandIsStrong = !!sightingRow.read_brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
+        const productIsStrong = !!sightingRow.read_product && Number(fieldConfidence.product ?? 0) >= 0.90;
         if (!brandIsStrong || !productIsStrong) {
           output = { result: "abstained_low_identity_confidence", ...validated, evidence_saved: 0, attributes_added: 0 };
         } else {
           const knownDetails: Record<string, unknown> = {
             ...labelDetails,
-            vintage: labelDetails.vintage ?? sighting.read_vintage ?? undefined,
-            package_size: labelDetails.package_size ?? sighting.read_size ?? undefined,
+            vintage: labelDetails.vintage ?? sightingRow.read_vintage ?? undefined,
+            package_size: labelDetails.package_size ?? sightingRow.read_size ?? undefined,
           };
           const missing = RESEARCH_DETAIL_FIELDS.filter(field =>
             !String(knownDetails[field] ?? "").replace(/\s+/g, " ").trim()
@@ -107,13 +108,13 @@ Deno.serve(async (req: Request) => {
             output = { result: "no_missing_research_fields", ...validated, evidence_saved: 0, attributes_added: 0 };
           } else {
             const identity = {
-              brand: sighting.read_brand, product: sighting.read_product,
-              category: sighting.read_category, proof: sighting.read_proof,
-              size: sighting.read_size, details: knownDetails,
+              brand: sightingRow.read_brand, product: sightingRow.read_product,
+              category: sightingRow.read_category, proof: sightingRow.read_proof,
+              size: sightingRow.read_size, details: knownDetails,
             };
-            const profile = buildProfilePrompt(String(sighting.read_category ?? "other"), identity, missing);
+            const profile = buildProfilePrompt(String(sightingRow.read_category ?? "other"), identity, missing);
             const { data: budgetOk, error: budgetError } = await db.rpc("discover_reserve_bottle_research_budget", {
-              p_consumer: sighting.consumer_id, p_jobs: 1, p_search_units: profile.searchUses,
+              p_consumer: sightingRow.consumer_id, p_jobs: 1, p_search_units: profile.searchUses,
               p_user_jobs_max: 5, p_project_jobs_max: 100, p_user_search_max: 10, p_project_search_max: 200,
             });
             if (budgetError) throw new Error("research_budget_unavailable");
