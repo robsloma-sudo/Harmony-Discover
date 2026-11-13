@@ -330,8 +330,14 @@ function WebLiveCamera(props: NativeProps) {
       const localCandidates = latestLocalCandidates
         .filter(candidate => !cloudCandidates.some(cloud => isSameBottleBox(cloud, candidate)))
         .map(candidate => {
+        // Geometry can switch to a newer local segmentation box while the
+        // bottle identity still belongs to its confirmed cloud track. Preserve
+        // that identity so a box does not regress to an anonymous placeholder.
+        const matchingCloud = webTracks.find(track =>
+          isConfirmedWebBottleTrack(track) && isSameBottleBox(track, candidate)
+        );
         const read = labelReadsByTrack.get(candidate.trackId);
-        if (!read) return candidate;
+        if (!read) return matchingCloud?.bottle ? { ...candidate, bottle: matchingCloud.bottle } : candidate;
         const bottle: BottleRead = {
           box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
           label_box: null, edgePaths: [], words: read.words,
