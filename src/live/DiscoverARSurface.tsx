@@ -2,11 +2,12 @@ import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeViewManager } from 'expo-modules-core';
-import { readLiveFrame, type BottleRead } from '../services/discoverLiveApi';
+import { readLiveFrame, readLiveLabelBatch, type BottleRead, type LabelBatchRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
+import { calculateLabelCrop } from './labelCrop';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 
 export type ARTrackingUpdate = {
@@ -103,6 +104,10 @@ function WebLiveCamera(props: NativeProps) {
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
+    let labelBatchBusy = false;
+    let nextLabelBatchAt = Date.now() + 2200;
+    const labelReadsByTrack = new Map<number, LabelBatchRead>();
+    const lastLabelReadAt = new Map<number, number>();
     let segmentationRunner: SegmentationRunner | null = null;
     let segmentationLoading: Promise<void> | null = null;
     let segmentationLoadFailed = false;
@@ -147,7 +152,7 @@ function WebLiveCamera(props: NativeProps) {
     let lastRecognitionStartedAt = 0;
     // Run close to the DEV endpoint's 30-frame/minute ceiling without exceeding it.
     // 2200ms permits ~27 starts/minute; one in-flight request still prevents overlap.
-    const recognitionIntervalMs = 2200;
+    const recognitionIntervalMs = 4400;
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
@@ -212,6 +217,102 @@ function WebLiveCamera(props: NativeProps) {
 
     // Local D-FINE detection has its own cadence. It must not wait for the
     // paid/cloud label reader (4.5s) to finish before updating spatial boxes.
+
+    const publishVisibleCandidates = () => {
+      const cloudCandidates = webTracks
+        .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
+      const localCandidates = latestLocalCandidates.map(candidate => {
+        const read = labelReadsByTrack.get(candidate.trackId);
+        if (!read) return candidate;
+        const bottle: BottleRead = {
+          box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
+          label_box: null, edgePaths: [], words: read.words,
+          brand: read.brand, product: read.product, category: read.category,
+          proof: read.proof, size: read.size, origin: read.origin,
+          confidence: read.confidence, detectionConfidence: candidate.confidence,
+          fieldConfidence: read.fieldConfidence, researchSources: [], details: read.details,
+          match: read.match, state: read.state,
+        };
+        return { ...candidate, bottle };
+      });
+      const visibleCandidates = [...cloudCandidates, ...localCandidates];
+      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, source: 'local', candidates: visibleCandidates } });
+    };
+
+    const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
+      if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
+      const now = Date.now();
+      const candidates = [
+        ...webTracks.filter(track => track.misses === 0).map(track => ({
+          trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
+          bottle: track.bottle,
+        })),
+        ...latestLocalCandidates.map(candidate => ({ ...candidate, bottle: undefined as BottleRead | undefined })),
+      ];
+      const eligible = candidates
+        .filter(candidate => now - (lastLabelReadAt.get(candidate.trackId) ?? 0) >= 15000)
+        .sort((a, b) => (lastLabelReadAt.get(a.trackId) ?? 0) - (lastLabelReadAt.get(b.trackId) ?? 0));
+      const crops: Array<{ trackId: number; image: string }> = [];
+      for (const candidate of eligible) {
+        if (crops.length >= 8) break;
+        const labelBox = candidate.bottle?.label_box || {
+          x0: candidate.x + candidate.width * 0.12,
+          y0: candidate.y + candidate.height * 0.30,
+          x1: candidate.x + candidate.width * 0.88,
+          y1: candidate.y + candidate.height * 0.74,
+        };
+        const crop = calculateLabelCrop(labelBox, frameCanvas.width, frameCanvas.height, { maxLongEdge: 1024, maxUpscale: 1.5 });
+        if (!crop) continue;
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = crop.outputWidth;
+        cropCanvas.height = crop.outputHeight;
+        const cropContext = cropCanvas.getContext('2d');
+        if (!cropContext) continue;
+        cropContext.drawImage(frameCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.outputWidth, crop.outputHeight);
+        const image = cropCanvas.toDataURL('image/jpeg', 0.78);
+        if (image.length > 100000) continue;
+        crops.push({ trackId: candidate.trackId, image });
+      }
+      nextLabelBatchAt = now + 4400;
+      if (!crops.length) return;
+      labelBatchBusy = true;
+      recognitionBusy = true;
+      crops.forEach(crop => lastLabelReadAt.set(crop.trackId, now));
+      try {
+        const reads = await readLiveLabelBatch(crops);
+        if (disposed) return;
+        for (const read of reads) {
+          labelReadsByTrack.set(read.trackId, read);
+          const cloudTrack = webTracks.find(track => track.id === read.trackId);
+          if (cloudTrack) {
+            const previous = cloudTrack.bottle;
+            cloudTrack.bottle = {
+              ...previous,
+              brand: read.brand || previous.brand,
+              product: read.product || previous.product,
+              category: read.category || previous.category,
+              proof: read.proof || previous.proof,
+              size: read.size || previous.size,
+              origin: read.origin || previous.origin,
+              words: read.words.length ? read.words : previous.words,
+              confidence: Math.max(previous.confidence, read.confidence),
+              fieldConfidence: { ...previous.fieldConfidence, ...read.fieldConfidence },
+              details: { ...previous.details, ...read.details },
+              match: read.match || previous.match,
+              state: read.state === 'matched' ? 'matched' : read.brand ? read.state : previous.state,
+            };
+          }
+        }
+        publishVisibleCandidates();
+      } catch (error) {
+        if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'label_batch_failed: ' + error.message : 'label_batch_failed' } });
+      } finally {
+        labelBatchBusy = false;
+        recognitionBusy = false;
+      }
+    };
+
     const runLocalDetection = async () => {
       if (disposed || !pageVisible || localDetectionBusy || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
       const video = videoRef.current;
@@ -253,8 +354,8 @@ function WebLiveCamera(props: NativeProps) {
         const cloudCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, source: 'local', candidates: visibleCandidates } });
+        publishVisibleCandidates();
+        void readCandidateLabels(canvas);
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'local_segmentation_frame_failed: ' + error.message : 'local_segmentation_frame_failed' } });
       } finally {
@@ -277,7 +378,8 @@ function WebLiveCamera(props: NativeProps) {
       if (!disposed && pageVisible && callbacksRef.current.recognitionEnabled) { void ensureSegmentationRunner(); recognitionTimer = window.setTimeout(() => { void recognizeFrame(); }, delay); }
     };
     const recognizeFrame = async () => {
-      if (disposed || !pageVisible || recognitionBusy || !callbacksRef.current.recognitionEnabled) return;
+      if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled) return;
+      if (recognitionBusy) { scheduleRecognition(500); return; }
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
