@@ -1,0 +1,203 @@
+name: Inspect D-FINE ONNX graph for native iOS feasibility
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/dfine-onnx-graph-inspection.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ONNX inspection tooling
+        run: python -m pip install --disable-pip-version-check onnx
+
+      - name: Download pinned D-FINE model
+        run: |
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx" \
+            --output /tmp/dfine_seg_n_coco.onnx
+          sha256sum /tmp/dfine_seg_n_coco.onnx
+          test "$(stat -c%s /tmp/dfine_seg_n_coco.onnx)" -gt 1000000
+
+      - name: Validate and report graph contract
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          import json
+          import onnx
+          from onnx import shape_inference
+
+          path = "/tmp/dfine_seg_n_coco.onnx"
+          model = onnx.load(path, load_external_data=True)
+          onnx.checker.check_model(model)
+          inferred = shape_inference.infer_shapes(model)
+
+          def dims(value_info):
+              tensor = value_info.type.tensor_type
+              result = []
+              for dim in tensor.shape.dim:
+                  result.append(dim.dim_value if dim.HasField("dim_value") else dim.dim_param or "?")
+              return result
+
+          graph = inferred.graph
+          counts = Counter(f"{node.domain or 'ai.onnx'}::{node.op_type}" for node in graph.node)
+          initializers = [{"name": item.name, "dims": list(item.dims), "data_type": item.data_type} for item in graph.initializer]
+          report = {
+              "ir_version": model.ir_version,
+              "opsets": [{"domain": item.domain or "ai.onnx", "version": item.version} for item in model.opset_import],
+              "inputs": [{"name": item.name, "dims": dims(item)} for item in graph.input if item.name not in {x.name for x in graph.initializer}],
+              "outputs": [{"name": item.name, "dims": dims(item)} for item in graph.output],
+              "node_count": len(graph.node),
+              "operator_counts": dict(sorted(counts.items())),
+              "custom_domains": sorted({node.domain for node in graph.node if node.domain and node.domain != "ai.onnx"}),
+              "initializer_count": len(initializers),
+              "largest_initializers": sorted(initializers, key=lambda item: __import__("math").prod(item["dims"]), reverse=True)[:15],
+              "metadata": {item.key: item.value for item in model.metadata_props},
+          }
+          print(json.dumps(report, indent=2))
+          PY
+
+  probe-coreml:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ONNX Runtime
+        run: python -m pip install --disable-pip-version-check onnxruntime numpy
+
+      - name: Download pinned D-FINE model
+        run: |
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx" \
+            --output /tmp/dfine_seg_n_coco.onnx
+          echo "999b6ae8970461b9a2b4a50f6cf07df3f355b131698a3e5b56cd420fbea5de30  /tmp/dfine_seg_n_coco.onnx" | shasum -a 256 --check
+
+      - name: Compare CPU and CoreML inference
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import numpy as np
+          import onnxruntime as ort
+
+          model = "/tmp/dfine_seg_n_coco.onnx"
+          available = ort.get_available_providers()
+          print("Available providers:", available)
+          if "CoreMLExecutionProvider" not in available:
+              raise SystemExit("CoreMLExecutionProvider is not present in this ONNX Runtime build")
+
+          sample = np.random.default_rng(20261113).random((1, 3, 640, 640), dtype=np.float32)
+          input_name = "input"
+
+          def percentile(values, fraction):
+              ordered = sorted(values)
+              index = min(len(ordered) - 1, int((len(ordered) - 1) * fraction))
+              return ordered[index]
+
+          def benchmark(label, providers, verbose=False):
+              options = ort.SessionOptions()
+              options.log_severity_level = 0 if verbose else 2
+              options.log_verbosity_level = 1 if verbose else 0
+              options.enable_profiling = True
+              started = time.perf_counter()
+              session = ort.InferenceSession(model, sess_options=options, providers=providers)
+              load_ms = (time.perf_counter() - started) * 1000
+              actual_input = session.get_inputs()[0].name
+              started = time.perf_counter()
+              first_outputs = session.run(None, {actual_input: sample})
+              first_ms = (time.perf_counter() - started) * 1000
+              for _ in range(5):
+                  session.run(None, {actual_input: sample})
+              timings = []
+              outputs = first_outputs
+              for _ in range(25):
+                  started = time.perf_counter()
+                  outputs = session.run(None, {actual_input: sample})
+                  timings.append((time.perf_counter() - started) * 1000)
+              profile_path = session.end_profiling()
+              with open(profile_path, encoding="utf-8") as profile_file:
+                  events = json.load(profile_file)
+              node_events = [event for event in events if event.get("cat") == "Node" and event.get("ph") == "X"]
+              counts = {}
+              for event in node_events:
+                  provider = event.get("args", {}).get("provider", "unknown")
+                  counts[provider] = counts.get(provider, 0) + 1
+              return {
+                  "session_load_ms": round(load_ms, 2),
+                  "first_inference_ms": round(first_ms, 2),
+                  "warm_p50_ms": round(percentile(timings, 0.50), 2),
+                  "warm_p95_ms": round(percentile(timings, 0.95), 2),
+                  "warm_min_ms": round(min(timings), 2),
+                  "warm_max_ms": round(max(timings), 2),
+                  "warm_samples": len(timings),
+                  "providers": session.get_providers(),
+                  "node_events_by_provider": counts,
+                  "output_shapes": [list(value.shape) for value in outputs],
+                  "profile_path": profile_path,
+              }, outputs
+
+          cpu, cpu_outputs = benchmark("CPU", ["CPUExecutionProvider"])
+          coreml, coreml_outputs = benchmark(
+              "CoreML",
+              [
+                  ("CoreMLExecutionProvider", {
+                      "ModelFormat": "MLProgram",
+                      "MLComputeUnits": "ALL",
+                      "RequireStaticInputShapes": "1",
+                  }),
+                  "CPUExecutionProvider",
+              ],
+              verbose=True,
+          )
+
+          numeric_deltas = {}
+          for index, (cpu_value, coreml_value) in enumerate(zip(cpu_outputs, coreml_outputs)):
+              if np.issubdtype(cpu_value.dtype, np.number):
+                  cpu64 = cpu_value.astype(np.float64)
+                  coreml64 = coreml_value.astype(np.float64)
+                  absolute_delta = np.abs(cpu64 - coreml64)
+                  numeric_deltas[str(index)] = {
+                      "max_abs_delta": float(np.max(absolute_delta)),
+                      "mean_abs_delta": float(np.mean(absolute_delta)),
+                      "p99_abs_delta": float(np.percentile(absolute_delta, 99)),
+                      "shape": list(cpu_value.shape),
+                  }
+                  if cpu_value.ndim == 4 and cpu_value.shape[-2:] == (160, 160):
+                      numeric_deltas[str(index)]["positive_logit_agreement"] = float(
+                          np.mean((cpu64 > 0) == (coreml64 > 0))
+                      )
+          print(json.dumps({
+              "runtime_version": ort.__version__,
+              "input": {"name": input_name, "shape": list(sample.shape), "dtype": str(sample.dtype)},
+              "cpu_only": cpu,
+              "coreml_with_cpu_fallback": coreml,
+              "cpu_vs_coreml_output_deltas": numeric_deltas,
+              "warm_p50_speedup_ratio_cpu_over_coreml": round(
+                  cpu["warm_p50_ms"] / coreml["warm_p50_ms"], 3
+              ),
+              "note": "Apple Silicon macOS benchmark only; not an iPhone or sustained thermal benchmark. Segmentation positive-logit agreement is diagnostic, not a quality certification.",
+          }, indent=2))
+          PY
