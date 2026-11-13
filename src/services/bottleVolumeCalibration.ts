@@ -28,7 +28,7 @@ export function validateBottleVolumeProfile(profile: BottleVolumeProfile): boole
     const point = points[index];
     if (!Number.isFinite(point.heightFraction) || !Number.isFinite(point.volumeFraction) ||
         point.heightFraction < 0 || point.heightFraction > 1 || point.volumeFraction < 0 || point.volumeFraction > 1) return false;
-    if (index > 0 && (point.heightFraction <= points[index - 1].heightFraction || point.volumeFraction < points[index - 1].volumeFraction)) return false;
+    if (index > 0 && (point.heightFraction <= points[index - 1].heightFraction || point.volumeFraction <= points[index - 1].volumeFraction)) return false;
   }
   return true;
 }
@@ -109,7 +109,7 @@ export function createBottleVolumeProfile(
   for (let index = 0; index < ordered.length; index += 1) {
     const sample = ordered[index];
     if (index > 0 && (sample.heightFraction <= ordered[index - 1].heightFraction ||
-        sample.measuredMilliliters < ordered[index - 1].measuredMilliliters)) {
+        sample.measuredMilliliters <= ordered[index - 1].measuredMilliliters)) {
       return { status: 'invalid', reason: 'samples_must_be_strictly_ordered_by_height_and_monotonic_by_volume' };
     }
     points.push({
