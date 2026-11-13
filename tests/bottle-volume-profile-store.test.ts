@@ -51,7 +51,8 @@ describe('bottle volume profile store', () => {
     await staleLoad;
     expect(getCachedBottleVolumeProfile(identityKey)).toEqual(profile);
   });
-\n  it('persists and reloads a profile only under its verified identity key', async () => {
+
+  it('persists and reloads a profile only under its verified identity key', async () => {
     const profile = {
       id:'sku-1',
       capacityMl:750,
