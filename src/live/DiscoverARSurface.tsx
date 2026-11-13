@@ -480,8 +480,7 @@ function FallbackNativeCamera(props: NativeProps) {
               barcodes: [], classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
               frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics, barcodeStatus: 'unsupported',
             } });
-            if (generation !== nativeSessionGeneration.current) return;
-        const tracked = trackNativeBottleReads(result.bottles);
+            const tracked = trackNativeBottleReads(result.bottles);
             props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
           }
         }
@@ -580,6 +579,7 @@ export function DiscoverARSurface(props: NativeProps) {
       // The attached metric depth and image share this exact ARFrame timestamp.
       if (frame.depthEstimate) props.onDepthEstimate?.({ nativeEvent: frame.depthEstimate });
       void readLiveFrame(`data:image/jpeg;base64,${frame.imageBase64}`).then(result => {
+        if (generation !== nativeSessionGeneration.current) return;
         const signals = nativeVisionSignals.current;
         const signalsAreFresh = !!signals && Date.now() - signals.timestamp < 3500;
         const cloudText = result.bottles.flatMap(bottle => [bottle.brand, bottle.product, ...bottle.words]).filter(Boolean);
