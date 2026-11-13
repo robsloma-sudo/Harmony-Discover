@@ -7,9 +7,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
-import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
+import { WorldBottleAnchorOverlay, type WorldBottleCandidate } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
-import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
+import type { BottleRead, MenuGlimpse, BottleIntelligenceProfile } from '../src/services/discoverLiveApi';
+import { loadBottleIntelligenceProfile } from '../src/services/discoverLiveApi';
+import { attachBottleReadsToCandidates } from '../src/services/bottleCandidateAssociation';
+import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
@@ -50,6 +53,59 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     return () => clearTimeout(expiry);
   }, [liveCandidates]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
+  const [selectedBottle, setSelectedBottle] = useState<BottleRead | null>(null);
+  const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
+  const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
+  const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
+  useEffect(() => {
+    if (selectedTrackId === null) return;
+    const trackedBottle = liveCandidates.find(candidate => candidate.trackId === selectedTrackId)?.bottle;
+    if (trackedBottle) setSelectedBottle(trackedBottle);
+  }, [liveCandidates, selectedTrackId]);
+  const selectedBottleBrand = selectedBottle?.match?.brand || selectedBottle?.brand || '';
+  const selectedBottleProduct = selectedBottle?.match?.product || selectedBottle?.product || '';
+  const selectedBottleCategory = selectedBottle?.category || 'other';
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedBottleBrand.trim() || !selectedBottleProduct.trim()) {
+      setSelectedBottleIntelligence(null);
+      setSelectedBottleIntelligenceLoading(false);
+      return () => { cancelled = true; };
+    }
+    setSelectedBottleIntelligence(null);
+    setSelectedBottleIntelligenceLoading(true);
+    void loadBottleIntelligenceProfile({
+      brand: selectedBottleBrand,
+      product: selectedBottleProduct,
+      category: selectedBottleCategory,
+    })
+      .then(profile => { if (!cancelled) setSelectedBottleIntelligence(profile); })
+      .catch(() => { if (!cancelled) setSelectedBottleIntelligence(null); })
+      .finally(() => { if (!cancelled) setSelectedBottleIntelligenceLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedBottleBrand, selectedBottleProduct, selectedBottleCategory]);
+  const openBottleProfile = (candidate: WorldBottleCandidate) => {
+    const bottle = candidate.bottle;
+    const profileBottle: BottleRead = bottle || {
+      box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
+      words: [],
+      brand: '',
+      product: 'Bottle detected · label reading pending',
+      category: 'other',
+      proof: '',
+      size: '',
+      origin: '',
+      confidence: 0,
+      detectionConfidence: candidate.confidence,
+      fieldConfidence: {},
+      researchSources: [],
+      details: {},
+      match: null,
+      state: 'unsure',
+    };
+    setSelectedBottle(profileBottle);
+    setSelectedTrackId(candidate.trackId);
+  };
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
@@ -182,7 +238,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           onCapturedImage={handleCapturedImage}
-          onTrackingUpdate={event => setLiveTracking(event.nativeEvent)}
+          onTrackingUpdate={event => {
+            const tracking = event.nativeEvent;
+            setLiveTracking(tracking);
+            if (tracking.state === 'paused' || tracking.state === 'interrupted' || tracking.state === 'not_available') {
+              // Keep the open profile as a snapshot, but don't let a reused
+              // track ID from a new camera session overwrite its identity.
+              setSelectedTrackId(null);
+            }
+          }}
           onARReady={event => {
             if (event.nativeEvent.state === 'starting') {
               setAnchorSessionKey(value => value + 1);
@@ -195,10 +259,17 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onLiquidMetrics={event => setLiveLiquidMetrics(event.nativeEvent)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
           onCameraPose={event => setLiveCameraPose(event.nativeEvent)}
-          onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates.map(candidate => ({ ...candidate, depthFrame: event.nativeEvent.depthFrame })))}
+          onVisualCandidates={event => setLiveCandidates(attachBottleReadsToCandidates(event.nativeEvent.candidates, liveBottles).map(candidate => ({
+            ...candidate,
+            depthFrame: event.nativeEvent.depthFrame,
+          })))}
           onRecognitionUpdate={event => {
             const value = event.nativeEvent;
-            if (value.bottles) { setLiveBottles(value.bottles); setLiveReadAt(value.frameTimestamp); }
+            if (value.bottles) {
+              setLiveBottles(value.bottles);
+              setLiveReadAt(value.frameTimestamp);
+              setLiveCandidates(previous => attachBottleReadsToCandidates(previous, value.bottles || []));
+            }
             if (value.barcodes?.length) setLiveBarcodes(previous => { const merged = [...previous]; value.barcodes!.forEach(barcode => { if (!merged.some(item => item.value === barcode.value)) merged.push(barcode); }); return merged.slice(-12); });
             if (value.text?.length) setLiveLabelText(previous => Array.from(new Set([...previous, ...value.text!])).slice(-24));
             if (value.menu) setLiveMenu(value.menu);
@@ -217,7 +288,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
-        <View pointerEvents="none" style={s.liveDetectionLayer}>
+        <View pointerEvents="box-none" style={s.liveDetectionLayer}>
           {liveCandidates.filter(track => track.confidence >= 0.45).map(tracked => {
             const bottle = tracked.bottle;
             const left = Math.max(0, Math.min(1, tracked.x));
@@ -225,20 +296,31 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
             const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.product].filter(Boolean).join(' ').trim() : 'BOTTLE DETECTED';
+            const boxStyle = {
+              left: ((left * 100) + '%') as `${number}%`,
+              top: ((top * 100) + '%') as `${number}%`,
+              width: ((trackedWidth * 100) + '%') as `${number}%`,
+              height: ((trackedHeight * 100) + '%') as `${number}%`,
+            };
             return (
-              <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <View style={[s.liveDetectionBox, { left: ((left * 100) + '%') as `${number}%`, top: ((top * 100) + '%') as `${number}%`, width: ((trackedWidth * 100) + '%') as `${number}%`, height: ((trackedHeight * 100) + '%') as `${number}%` }]}>
+              <View key={tracked.trackId} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={bottle ? `Open bottle profile for ${name}` : 'Open detected bottle profile'}
+                  onPress={() => openBottleProfile(tracked)}
+                  style={[s.liveDetectionBox, boxStyle]}
+                >
                   <View style={s.liveDetectionLabel}>
                     <Text numberOfLines={1} style={s.liveDetectionName}>{name || (bottle ? bottle.category.replace(/_/g, ' ').toUpperCase() : 'BOTTLE DETECTED')}</Text>
-                    <Text style={s.liveDetectionConfidence}>{bottle ? `DETECTED · ID ${Math.round(bottle.confidence * 100)}%` : `LOCAL DETECTION · ${Math.round(tracked.confidence * 100)}%`}</Text>
+                    <Text style={s.liveDetectionConfidence}>{bottle ? `TAP FOR PROFILE · ${Math.round(bottle.confidence * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
                   </View>
-                </View>
+                </Pressable>
               </View>
             );
           })}
         </View>
       )}
-      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} />}
+      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
       {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
         <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
         <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
@@ -294,6 +376,37 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           </>}
         </View>
       </>}
+      {selectedBottle && (
+        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+          <View
+            pointerEvents="box-none"
+            style={{
+              position:'absolute',
+              zIndex:69,
+              left:8,
+              right:8,
+              bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,
+              height:Math.min(screenHeight*0.62,620),
+              borderRadius:18,
+              overflow:'hidden',
+              borderWidth:1,
+              borderColor:'rgba(198,163,106,0.58)',
+              backgroundColor:'#0A0D12',
+            }}
+          >
+            <BottleProfilePanel
+              bottle={selectedBottle}
+              intelligence={selectedBottleIntelligence}
+              intelligenceLoading={selectedBottleIntelligenceLoading}
+              onClose={() => {
+                setSelectedBottle(null);
+                setSelectedTrackId(null);
+                setSelectedBottleIntelligence(null);
+              }}
+            />
+          </View>
+        </View>
+      )}
       {activeJourney && <JourneyPlayerOverlay item={activeJourney} onClose={()=>setActiveJourney(null)}/>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
