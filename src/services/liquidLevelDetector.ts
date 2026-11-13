@@ -51,7 +51,7 @@ type Lab = { l: number; a: number; b: number };
 const COLUMN_FRACTIONS = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82];
 const WINDOW_RADIUS = 3;
 const MIN_DELTA_E = 7;
-const MIN_COLUMN_SUPPORT = 0.42;
+const MIN_COLUMN_SUPPORT = 0.7;
 
 function srgbToLinear(value: number): number {
   const channel = value / 255;
@@ -271,7 +271,7 @@ function liquidLevelWorkerMain() {
   const COLUMN_FRACTIONS = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82];
   const WINDOW_RADIUS = 3;
   const MIN_DELTA_E = 7;
-  const MIN_COLUMN_SUPPORT = 0.42;
+  const MIN_COLUMN_SUPPORT = 0.7;
 
   function srgbToLinear(value: number): number {
     const channel = value / 255;
