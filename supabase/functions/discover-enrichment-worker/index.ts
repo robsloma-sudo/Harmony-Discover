@@ -53,9 +53,12 @@ Deno.serve(async (req: Request) => {
 
   const researchApiKey = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
   const claimJobTypes = SUPPORTED_JOB_TYPES.filter(type => type !== "official_source_lookup" || !!researchApiKey);
+  // Each source lookup can take up to 35 seconds. Two research jobs keep a
+  // cron invocation comfortably inside its 120-second HTTP timeout.
+  const claimLimit = claimJobTypes.includes("official_source_lookup") ? Math.min(requestedLimit, 2) : requestedLimit;
   const { data: claimed, error: claimError } = await db.rpc("discover_claim_enrichment_jobs", {
     p_worker: worker,
-    p_limit: requestedLimit,
+    p_limit: claimLimit,
     p_stale_after_seconds: 600,
     p_job_types: [...claimJobTypes],
   });
