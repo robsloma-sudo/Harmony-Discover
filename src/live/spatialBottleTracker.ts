@@ -36,10 +36,7 @@ export type SpatialTrackerOptions = {
 const distance = (a: WorldPoint, b: WorldPoint) =>
   Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
-/**
- * Associates detections to physical objects in metric world space.
- * IDs represent physical instances, never product/catalog SKUs.
- */
+/** Associates detections to physical objects in metric world space. IDs represent physical instances, not SKUs. */
 export class SpatialBottleTracker {
   private tracks: SpatialTrack[] = [];
   private nextId = 1;
@@ -61,38 +58,49 @@ export class SpatialBottleTracker {
       return { tracks: this.tracks.map(track => ({ ...track })), observed: observations.map(() => null) };
     }
     this.lastUpdateAt = now;
-    const used = new Set<string>();
-    const observed: Array<SpatialTrack | null> = [];
+    const observed: Array<SpatialTrack | null> = observations.map(() => null);
+    const usedTracks = new Set<string>();
+    const valid = observations.map((observation, index) => ({ observation, index }))
+      .filter(({ observation }) => !!observation.worldPoint
+        && [observation.worldPoint!.x, observation.worldPoint!.y, observation.worldPoint!.z, observation.confidence].every(Number.isFinite));
 
-    for (const observation of observations) {
-      const point = observation.worldPoint;
-      if (!point || ![point.x, point.y, point.z, observation.confidence].every(Number.isFinite)) {
-        observed.push(null);
-        continue;
-      }
-      let match: SpatialTrack | undefined;
-      let bestDistance = this.options.maxAssociationDistanceMeters;
-      if (observation.worldPoint) {
-        for (const candidate of this.tracks) {
-          if (used.has(candidate.physicalObjectId) || !candidate.worldPoint || candidate.state === 'lost' || now - candidate.lastSeenAt > this.options.lostRetentionMs) continue;
-          if (candidate.visualKey && observation.visualKey && candidate.visualKey !== observation.visualKey) continue;
-          const d = distance(candidate.worldPoint, observation.worldPoint);
-          if (d < bestDistance) { bestDistance = d; match = candidate; }
+    // Build all plausible one-to-one matches first. Greedy assignment by the
+    // globally shortest distances avoids input-order-dependent ID swaps when
+    // two neighboring bottles are detected in the same frame.
+    const edges: Array<{ observationIndex: number; trackId: string; distance: number }> = [];
+    for (const { observation, index } of valid) {
+      for (const track of this.tracks) {
+        if (!track.worldPoint || track.state === 'lost' || now - track.lastSeenAt > this.options.lostRetentionMs) continue;
+        if (track.visualKey && observation.visualKey && track.visualKey !== observation.visualKey) continue;
+        const d = distance(track.worldPoint, observation.worldPoint!);
+        if (d <= this.options.maxAssociationDistanceMeters) {
+          edges.push({ observationIndex: index, trackId: track.physicalObjectId, distance: d });
         }
       }
+    }
+    edges.sort((a, b) => a.distance - b.distance);
+    const matchByObservation = new Map<number, SpatialTrack>();
+    for (const edge of edges) {
+      if (matchByObservation.has(edge.observationIndex) || usedTracks.has(edge.trackId)) continue;
+      const track = this.tracks.find(item => item.physicalObjectId === edge.trackId);
+      if (!track) continue;
+      matchByObservation.set(edge.observationIndex, track);
+      usedTracks.add(edge.trackId);
+    }
 
-      const sufficientlyStrong = !!observation.worldPoint &&
-        observation.confidence >= this.options.minimumConfidence;
+    observations.forEach((observation, index) => {
+      const point = observation.worldPoint;
+      if (!point || ![point.x, point.y, point.z, observation.confidence].every(Number.isFinite)) return;
+      const sufficientlyStrong = observation.confidence >= this.options.minimumConfidence;
       const reason = observation.reason ??
-        (!observation.worldPoint ? 'insufficient_depth' :
-          !observation.geometryComplete ? 'incomplete_geometry' :
-            !sufficientlyStrong ? 'low_confidence' : undefined);
-
-      if (!match) {
-        match = {
+        (!observation.geometryComplete ? 'incomplete_geometry' :
+          !sufficientlyStrong ? 'low_confidence' : undefined);
+      let track = matchByObservation.get(index);
+      if (!track) {
+        track = {
           physicalObjectId: `physical-${this.nextId++}`,
           state: 'potential',
-          worldPoint: observation.worldPoint ?? null,
+          worldPoint: { ...point },
           confidence: observation.confidence,
           consecutiveHits: sufficientlyStrong && observation.geometryComplete ? 1 : 0,
           lastSeenAt: now,
@@ -100,26 +108,24 @@ export class SpatialBottleTracker {
           reason,
           visualKey: observation.visualKey,
         };
-        this.tracks.push(match);
+        this.tracks.push(track);
+        usedTracks.add(track.physicalObjectId);
       } else {
-        used.add(match.physicalObjectId);
-        match.worldPoint = observation.worldPoint ?? match.worldPoint;
-        match.confidence = observation.confidence;
-        match.lastSeenAt = now;
-        match.missedFrames = 0;
-        match.visualKey = observation.visualKey ?? match.visualKey;
-        match.consecutiveHits = sufficientlyStrong && observation.geometryComplete
-          ? match.consecutiveHits + 1 : 0;
-        match.reason = reason;
-        match.state = match.consecutiveHits >= this.options.confirmationHits
-          ? 'confirmed' : 'potential';
+        track.worldPoint = { ...point };
+        track.confidence = observation.confidence;
+        track.lastSeenAt = now;
+        track.missedFrames = 0;
+        track.visualKey = observation.visualKey ?? track.visualKey;
+        track.consecutiveHits = sufficientlyStrong && observation.geometryComplete
+          ? track.consecutiveHits + 1 : 0;
+        track.reason = reason;
+        track.state = track.consecutiveHits >= this.options.confirmationHits ? 'confirmed' : 'potential';
       }
-      used.add(match.physicalObjectId);
-      observed.push({ ...match });
-    }
+      observed[index] = { ...track };
+    });
 
     this.tracks = this.tracks.flatMap(track => {
-      if (used.has(track.physicalObjectId)) return [track];
+      if (usedTracks.has(track.physicalObjectId)) return [track];
       const age = now - track.lastSeenAt;
       track.missedFrames += 1;
       if (age <= this.options.occlusionGraceMs) {
