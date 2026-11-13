@@ -174,11 +174,35 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
+    // Treat a small box fully contained in the upper part of a larger bottle
+    // as a cork/neck fragment of the same physical bottle, not a second bottle.
+    const isSameBottleBox = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
+      if (intersectionOverUnion(a, b) > 0.25) return true;
+      const intersectionWidth = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+      const intersectionHeight = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+      const intersection = intersectionWidth * intersectionHeight;
+      const areaA = a.width * a.height, areaB = b.width * b.height;
+      const smallerArea = Math.min(areaA, areaB), largerArea = Math.max(areaA, areaB);
+      if (!smallerArea || !largerArea || smallerArea / largerArea > 0.42) return false;
+      const coverage = intersection / smallerArea;
+      const parent = areaA >= areaB ? a : b;
+      const child = areaA >= areaB ? b : a;
+      const centered = Math.abs((child.x + child.width / 2) - (parent.x + parent.width / 2)) <= parent.width * 0.32;
+      const upperBottle = child.y + child.height <= parent.y + parent.height * 0.55;
+      return coverage >= 0.72 && centered && upperBottle;
+    };
     const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead }>) => {
       const now = Date.now();
       const used = new Set<number>();
       const next: WebTrack[] = [];
-      const output = detections.map(detection => {
+      // Collapse duplicate cloud proposals within this recognition frame before
+      // assigning IDs. Otherwise the first proposal consumes the old track and
+      // the second proposal for the same bottle is forced to create a new ID.
+      const rankedDetections = detections.slice().sort((a, b) => b.confidence - a.confidence);
+      const uniqueDetections = rankedDetections.filter((candidate, index) =>
+        !rankedDetections.slice(0, index).some(kept => isSameBottleBox(kept, candidate)),
+      );
+      const output = uniqueDetections.map(detection => {
         let bestIndex = -1, bestScore = 0;
         webTracks.forEach((track, index) => {
           if (used.has(index)) return;
@@ -186,9 +210,22 @@ function WebLiveCamera(props: NativeProps) {
           const dx = (track.x + track.width / 2) - (detection.x + detection.width / 2);
           const dy = (track.y + track.height / 2) - (detection.y + detection.height / 2);
           const distance = Math.hypot(dx, dy);
-          const score = overlap >= 0.08 ? overlap : (distance <= 0.16 ? 0.08 * (1 - distance / 0.16) : 0);
+          const score = overlap >= 0.08 ? overlap : (distance <= 0.20 ? 0.08 * (1 - distance / 0.20) : 0);
           if (score > bestScore) { bestScore = score; bestIndex = index; }
         });
+        // If the camera was turned away and returns at a different framing,
+        // reconnect a uniquely identified product to its retained track ID.
+        const identityOf = (bottle: BottleRead) => [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product]
+          .map(value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter(Boolean).join(' ');
+        if (bestIndex < 0) {
+          const identity = identityOf(detection.bottle);
+          if (identity) {
+            const matchingPrior = webTracks.map((track, index) => ({ track, index }))
+              .filter(item => !used.has(item.index) && identityOf(item.track.bottle) === identity);
+            const matchingCurrent = detections.filter(item => identityOf(item.bottle) === identity).length;
+            if (matchingPrior.length === 1 && matchingCurrent === 1) bestIndex = matchingPrior[0]!.index;
+          }
+        }
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
         if (bestIndex >= 0) used.add(bestIndex);
         const blend = previous ? 0.38 : 1;
@@ -213,7 +250,7 @@ function WebLiveCamera(props: NativeProps) {
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour };
       });
       webTracks.forEach((track, index) => {
-        if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
+        if (!used.has(index) && now - track.lastSeenAt < 30000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
       // Do not expose one-frame guesses as visible bottle tracks. A track must
@@ -230,7 +267,7 @@ function WebLiveCamera(props: NativeProps) {
         .filter(isConfirmedWebBottleTrack)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
       const localCandidates = latestLocalCandidates
-        .filter(candidate => !cloudCandidates.some(cloud => intersectionOverUnion(cloud, candidate) > 0.25))
+        .filter(candidate => !cloudCandidates.some(cloud => isSameBottleBox(cloud, candidate)))
         .map(candidate => {
         const read = labelReadsByTrack.get(candidate.trackId);
         if (!read) return candidate;
@@ -265,7 +302,7 @@ function WebLiveCamera(props: NativeProps) {
           bottle: track.bottle,
         })),
         ...latestLocalCandidates
-          .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
+          .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
           .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
           .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
@@ -364,7 +401,9 @@ function WebLiveCamera(props: NativeProps) {
           return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
         }), frameTimestamp);
         const candidates = localTracks
-          .filter(local => !webTracks.some(cloud => intersectionOverUnion(cloud, local.bounds) > 0.25))
+          // Local proposals are also deduplicated by the tracker; this second
+          // cross-source gate prevents a local box from shadowing a cloud track.
+          .filter(local => !webTracks.some(cloud => isSameBottleBox(cloud, local.bounds)))
           .map(local => ({
             trackId: -Math.abs(local.trackId), x: local.bounds.x, y: local.bounds.y,
             width: local.bounds.width, height: local.bounds.height,
@@ -473,7 +512,7 @@ function WebLiveCamera(props: NativeProps) {
         const cloudCandidates = webTracks
           .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates];
+        const visibleCandidates = [...cloudCandidates, ...latestLocalCandidates.filter(local => !cloudCandidates.some(cloud => isSameBottleBox(cloud, local)))];
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
 
       } catch (error) {
@@ -676,7 +715,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
     nativeRecognitionTracks,
     Date.now(),
     nextNativeRecognitionTrackId,
-    7000,
+    30000,
   );
   nativeRecognitionTracks = result.tracks;
   nextNativeRecognitionTrackId = result.nextId;
