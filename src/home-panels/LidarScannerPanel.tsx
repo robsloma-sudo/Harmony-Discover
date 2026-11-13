@@ -102,10 +102,8 @@ function NativeLidarScannerPanel({ onClose, tracking, depthStatus, depthFrame, c
     if (point.trackId !== null) spatialPointMetadataRef.current.set(point.trackId, point);
   }
   React.useEffect(() => {
-    if (tracking.state !== 'normal') {
-      worldTracksRef.current = [];
-      return;
-    }
+    // Preserve world-space tracks during temporary limited/relocalizing states.
+    // They age out through updateWorldSpatialTracks instead of being erased on a brief interruption.
     const updates = spatialPoints
       .filter(point => point.trackId !== null)
       .map(point => ({ trackId: point.trackId as number, point: point.world, confidence: 1 }));
