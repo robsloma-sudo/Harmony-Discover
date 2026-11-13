@@ -49,7 +49,7 @@ function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
     <Text style={s.calibrationHint}>Verified product match · calibration is stored on this device and applies only to this product.</Text>
     <TextInput value={capacity} onChangeText={setCapacity} keyboardType="decimal-pad" placeholder="Rated capacity (ml), e.g. 750" placeholderTextColor="#78818C" style={s.calibrationInput}/>
     <TextInput value={samples} onChangeText={setSamples} placeholder="height:ml pairs - 0:0, 0.5:350, 0.82:750" placeholderTextColor="#78818C" style={s.calibrationInput}/>
-    <Text style={s.calibrationHint}>For each known measured volume, enter the live FILL HEIGHT as a fraction (52% = 0.52). Include empty 0:0 and the actual full-capacity fill line, which may be below 1. Do not guess samples.</Text>
+    <Text style={s.calibrationHint}>For each known measured volume, enter the live FILL HEIGHT as a fraction (52% = 0.52). Include empty 0:0, at least one measured partial fill, and the actual full-capacity fill line, which may be below 1. More measured points improve the shape curve. Do not guess samples.</Text>
     <Pressable disabled={saving} onPress={save} style={s.calibrationButton}><Text style={s.calibrationButtonText}>{saving?'SAVING...':'SAVE BOTTLE CALIBRATION'}</Text></Pressable>
     {!!status && <Text style={s.calibrationStatus}>{status}</Text>}
   </View>;
