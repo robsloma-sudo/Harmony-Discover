@@ -28,7 +28,7 @@ const ENRICHMENT_TOOL = {
   description: "Return only missing beverage-product facts explicitly supported by the web search results for this exact product expression.",
   input_schema: {
     type: "object",
-    required: ["fields","sources"],
+    required: ["fields","field_confidence","sources"],
     properties: {
       fields: { type: "object", additionalProperties: { type: "string" } },
       field_confidence: { type: "object", additionalProperties: { type: "number" } },
