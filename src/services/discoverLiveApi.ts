@@ -57,6 +57,46 @@ export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fin
 }
 
 /** Saves the bottles the person kept as sightings. */
+
+export type LabelBatchRead = {
+  trackId: number;
+  brand: string;
+  product: string;
+  category: string;
+  proof: string;
+  size: string;
+  origin: string;
+  words: string[];
+  details: Record<string, string | string[]>;
+  fieldConfidence: Record<string, number>;
+  confidence: number;
+  match: { id: string; brand: string | null; product: string | null; score: number } | null;
+  state: BottleState;
+};
+
+export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: string }>): Promise<LabelBatchRead[]> {
+  if (!crops.length) return [];
+  const result = await call({
+    action: 'label_batch',
+    crops: crops.slice(0, 8).map(crop => ({ track_id: String(crop.trackId), image: crop.image })),
+  });
+  return (Array.isArray(result.reads) ? result.reads : []).map((read: Record<string, unknown>) => ({
+    trackId: Number(read.track_id),
+    brand: String(read.brand || ''),
+    product: String(read.product || ''),
+    category: String(read.category || 'other'),
+    proof: String(read.proof || ''),
+    size: String(read.size || ''),
+    origin: String(read.origin || ''),
+    words: Array.isArray(read.words) ? read.words.map(String) : [],
+    details: (read.details && typeof read.details === 'object' ? read.details : {}) as Record<string, string | string[]>,
+    fieldConfidence: (read.fieldConfidence && typeof read.fieldConfidence === 'object' ? read.fieldConfidence : {}) as Record<string, number>,
+    confidence: Number(read.confidence) || 0,
+    match: read.match && typeof read.match === 'object' ? read.match as LabelBatchRead['match'] : null,
+    state: read.state === 'matched' || read.state === 'reported' ? read.state : 'unsure',
+  })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
+}
+
 export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
   const result = await call({
     action: 'save', scan_session_id: scanSessionId, venue_name: venueName,
