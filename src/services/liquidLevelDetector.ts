@@ -416,7 +416,7 @@ function liquidLevelWorkerMain() {
     const startedAt = performance.now();
     try {
       const frame = {width:job.width,height:job.height,data:new Uint8ClampedArray(job.buffer)};
-      const results = job.tracks.map(track => {
+      const results = job.tracks.map((track: { trackId: number; bounds: PixelBounds }) => {
         const bands = occlusionBands(frame,track.bounds);
         return {trackId:track.trackId,optical:assessOptics(frame,track.bounds),occlusionBands:bands,result:detect(frame,track.bounds,bands)};
       });
