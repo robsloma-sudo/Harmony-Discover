@@ -4,7 +4,8 @@ import { isEligibleWorldAnchorCandidate } from "../src/live/worldAnchorFramePoli
 describe("world-anchor source frame policy", () => {
   it("accepts a cloud candidate paired to its exact ARFrame depth", () => {
     expect(isEligibleWorldAnchorCandidate("cloud", 10, 10)).toBe(true);
-    expect(isEligibleWorldAnchorCandidate(undefined, 10, 10.0005)).toBe(true);
+    expect(isEligibleWorldAnchorCandidate("cloud", 10, 10.0005)).toBe(true);
+    expect(isEligibleWorldAnchorCandidate(undefined, 10, 10)).toBe(false);
   });
 
   it("never counts local Vision propagation as a physical observation", () => {
