@@ -31,6 +31,15 @@ Smoke test:
 python scripts/liquid-benchmark/benchmark.py --limit-images 3
 ```
 
+Neural comparator (separate optional CI job):
+
+```bash
+python -m pip install ultralytics==8.3.130
+python scripts/liquid-benchmark/benchmark_yolo.py
+```
+
+This evaluates the LiquidMonitorAI YOLOv11-nano segmentation checkpoint on the same ground-truth crops. It reports mask coverage as well as MAE on detected masks; a low MAE with poor coverage is not a good result. The checkpoint's independent commercial rights are not established, and Ultralytics carries AGPL licensing implications. This comparator is research-only and must not be integrated into production without a separate license review.
+
 Outputs:
 - `benchmark-results/summary.md`
 - `benchmark-results/summary.json`
