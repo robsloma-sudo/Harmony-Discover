@@ -35,6 +35,9 @@ export type LiquidBoundaryCandidate =
       confidence: number;
       contrast: number;
       columnSupport: number;
+      boundaryShape: 'flat' | 'curved' | 'irregular';
+      shapeSpread: number;
+      curvature: number;
       method: 'multi_column_lab_transition';
     }
   | {
@@ -157,13 +160,49 @@ export function detectLiquidBoundaryCandidate(
     return { status: 'insufficient_evidence', reason: 'No stable horizontal transition was supported across enough bottle columns.', method: 'multi_column_lab_transition' };
   }
 
+  // Refine the interface independently in each interior column. This lets
+  // a real curved meniscus survive when its center and edges sit at different
+  // heights, while rejecting highly irregular transitions.
+  const searchRadius = Math.max(4, Math.round(height * 0.12));
+  const columnHeights: number[] = [];
+  for (const x of columns) {
+    let strongest = { y: -1, contrast: 0 };
+    const from = Math.max(firstY, best.y - searchRadius);
+    const to = Math.min(lastY, best.y + searchRadius);
+    for (let y = from; y <= to; y += 1) {
+      if (isOccluded((y - top) / height, occlusions)) continue;
+      const above = meanLab(frame, x, y - WINDOW_RADIUS, y - 1);
+      const below = meanLab(frame, x, y + 1, y + WINDOW_RADIUS);
+      if (!above || !below) continue;
+      const contrast = deltaE(above, below);
+      if (contrast > strongest.contrast) strongest = { y, contrast };
+    }
+    if (strongest.y >= 0 && strongest.contrast >= minContrast) columnHeights.push(strongest.y);
+  }
+  const sortedHeights = [...columnHeights].sort((a, b) => a - b);
+  const medianY = sortedHeights.length
+    ? sortedHeights[Math.floor(sortedHeights.length / 2)]
+    : best.y;
+  const shapeSpread = sortedHeights.length >= 4
+    ? (sortedHeights[sortedHeights.length - 1] - sortedHeights[0]) / height
+    : 0;
+  const centerValues = sortedHeights.length >= 5 ? sortedHeights.slice(2, -2) : sortedHeights;
+  const edgeValues = sortedHeights.length >= 5 ? [sortedHeights[0], sortedHeights[1], sortedHeights[sortedHeights.length - 2], sortedHeights[sortedHeights.length - 1]] : sortedHeights;
+  const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+  const curvature = (average(centerValues) - average(edgeValues)) / height;
+  const boundaryShape: 'flat' | 'curved' | 'irregular' =
+    shapeSpread <= 0.025 ? 'flat' :
+    shapeSpread <= 0.14 && Math.abs(curvature) >= 0.008 ? 'curved' : 'irregular';
   const confidence = Math.max(0, Math.min(1, (best.contrast / 28) * best.support));
   return {
     status: 'candidate',
-    normalizedHeight: Math.max(0, Math.min(1, (bottom - best.y) / height)),
+    normalizedHeight: Math.max(0, Math.min(1, (bottom - medianY) / height)),
     confidence,
     contrast: best.contrast,
     columnSupport: best.support,
+    boundaryShape,
+    shapeSpread,
+    curvature,
     method: 'multi_column_lab_transition',
   };
 }
