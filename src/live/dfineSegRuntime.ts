@@ -45,6 +45,7 @@ function loadRuntime(): Promise<DfineOrtRuntime> {
     script.addEventListener("error", onError, { once: true });
     if (!existing) {
       script.src = LOADER_URL;
+      script.type = "module";
       script.async = true;
       script.dataset.discoverOrt = "true";
       document.head.appendChild(script);
