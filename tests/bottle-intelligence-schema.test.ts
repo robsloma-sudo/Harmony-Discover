@@ -20,6 +20,7 @@ describe("category-aware bottle intelligence families", () => {
   it("separates single malt whiskey from Scotch single malt", () => {
     expect(resolveBeverageFamily("whiskey", { style: "single_malt" })).toBe("single_malt_whiskey");
     expect(resolveBeverageFamily("whisky", { style: "Single Malt Scotch" })).toBe("single_malt_scotch");
+    expect(resolveBeverageFamily("whisky", { style: "Blended Scotch" })).toBe("other_whiskey");
     expect(getBottleFamilyLabel("whiskey", { style: "single malt" })).toBe("Single malt whiskey");
   });
 
