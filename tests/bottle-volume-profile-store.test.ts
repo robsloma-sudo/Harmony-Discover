@@ -8,6 +8,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles, parseBottleCalibrationSamples, saveBottleVolumeProfileForIdentity } from '../src/services/bottleVolumeProfileStore';
 
 beforeEach(() => store.clear());
@@ -29,7 +30,28 @@ describe('bottle volume profile store', () => {
     expect(() => parseBottleCalibrationSamples('half:350')).toThrow();
   });
 
-  it('persists and reloads a profile only under its verified identity key', async () => {
+
+  it('does not let a stale async profile read overwrite a newer calibration save', async () => {
+    const identityKey = 'sku-race::750 ml';
+    const profile = {
+      id: identityKey, capacityMl: 750,
+      points: [
+        { heightFraction: 0, volumeFraction: 0 },
+        { heightFraction: 0.5, volumeFraction: 0.45 },
+        { heightFraction: 0.82, volumeFraction: 1 },
+      ],
+    };
+    let resolveStaleRead!: (value: string | null) => void;
+    vi.mocked(AsyncStorage.getItem).mockImplementationOnce(() =>
+      new Promise<string | null>(resolve => { resolveStaleRead = resolve; }),
+    );
+    const staleLoad = loadBottleVolumeProfiles();
+    await saveBottleVolumeProfileForIdentity(identityKey, profile);
+    resolveStaleRead(null);
+    await staleLoad;
+    expect(getCachedBottleVolumeProfile(identityKey)).toEqual(profile);
+  });
+\n  it('persists and reloads a profile only under its verified identity key', async () => {
     const profile = {
       id:'sku-1',
       capacityMl:750,
