@@ -44,6 +44,13 @@ public class DiscoverARKitModule: Module {
       ]
     }
 
+    // Research-only entry point. Not called by the production scanner.
+    // Model loading runs away from ARSession's camera callback queue and the
+    // Objective-C probe retains one CoreML-first session for reuse.
+    AsyncFunction("initializeDfineNativeRuntime") { (modelPath: String, cacheDirectory: String) -> [String: Any] in
+      try DfineNativeRuntime.shared.initialize(modelPath: modelPath, cacheDirectory: cacheDirectory)
+    }
+
     AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]], promise: Promise) in
       DispatchQueue.global(qos: .utility).async {
         promise.resolve(Self.analyzeLiquidLevels(imageBase64, boxes: boxes))
