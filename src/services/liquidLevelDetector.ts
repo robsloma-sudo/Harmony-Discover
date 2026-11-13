@@ -320,15 +320,15 @@ function liquidLevelWorkerMain() {
       count += 1; if (Math.min(r, g, b) >= 248) clipped += 1; if (lum <= 12) dark += 1;
       min = Math.min(min, lum); max = Math.max(max, lum); sum += lum; sumSquares += lum * lum;
     }
-    if (count < 40) return { ...empty, sampledPixels: count, reason: 'insufficient_valid_pixels' };
+    if (count < 40) return { status: 'unobservable', score: 0, sampledPixels: count, clippedHighlightFraction: 0, deepShadowFraction: 0, luminanceRange: 0, reason: 'insufficient_valid_pixels' };
     const clipFraction = clipped / count, darkFraction = dark / count, range = max - min;
     const avg = sum / count, variance = Math.max(0, sumSquares / count - avg * avg);
     const metrics = { sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range };
-    if (clipFraction >= 0.42) return { ...metrics, status: 'unobservable', score: 0.1, reason: 'severe_specular_glare' };
-    if (darkFraction >= 0.82 || avg <= 9) return { ...metrics, status: 'unobservable', score: 0.1, reason: 'underexposed_or_opaque_crop' };
-    if (range < 5 || Math.sqrt(variance) < 2.5) return { ...metrics, status: 'limited', score: 0.35, reason: 'insufficient_local_optical_variation' };
+    if (clipFraction >= 0.42) return { status: 'unobservable', score: 0.1, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: 'severe_specular_glare' };
+    if (darkFraction >= 0.82 || avg <= 9) return { status: 'unobservable', score: 0.1, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: 'underexposed_or_opaque_crop' };
+    if (range < 5 || Math.sqrt(variance) < 2.5) return { status: 'limited', score: 0.35, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: 'insufficient_local_optical_variation' };
     const score = Math.max(0, Math.min(1, (1 - clipFraction * 1.8) * (1 - darkFraction * 0.8) * (0.55 + Math.min(1, range / 55) * 0.45)));
-    return { ...metrics, status: score >= 0.55 ? 'observable' : 'limited', score, reason: score >= 0.55 ? 'usable_optical_signal' : 'mixed_glare_shadow_or_low_contrast' };
+    return { status: score >= 0.55 ? 'observable' : 'limited', score, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: score >= 0.55 ? 'usable_optical_signal' : 'mixed_glare_shadow_or_low_contrast' };
   }
   function occlusionBands(frame: any, bounds: any) {
     const left = Math.max(0, Math.floor(bounds.x)), right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width));
