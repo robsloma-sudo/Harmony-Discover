@@ -18,6 +18,7 @@ begin
   if public.discover_bottle_save_allow(user_one, 0, 21) then
     raise exception 'invalid user limit must be rejected';
   end if;
+  -- Explicit NULLs must fail closed (NULL comparisons in PL/pgSQL are not TRUE).
   if public.discover_bottle_save_allow(user_one, null, 21) then
     raise exception 'null user limit must fail closed';
   end if;
