@@ -44,6 +44,10 @@ public class DiscoverARKitModule: Module {
       ]
     }
 
+    AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]]) -> [[String: Any]] in
+      Self.analyzeLiquidLevels(imageBase64, boxes: boxes)
+    }
+
     View(DiscoverARView.self) {
       Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame")
       Prop("active") { (view: DiscoverARView, active: Bool) in
@@ -60,9 +64,6 @@ public class DiscoverARKitModule: Module {
       }
       AsyncFunction("resume") { (view: DiscoverARView) in
         view.setActive(true)
-      }
-      AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]]) -> [[String: Any]] in
-        Self.analyzeLiquidLevels(imageBase64, boxes: boxes)
       }
     }
   }
