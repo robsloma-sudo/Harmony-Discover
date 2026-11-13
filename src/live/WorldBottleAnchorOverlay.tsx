@@ -6,18 +6,20 @@ import { buildBottleWorldObservations } from "./bottleWorldAnchorBridge";
 import { SpatialBottleTracker, type SpatialTrack } from "./spatialBottleTracker";
 import { projectWorldRectangle } from "./worldAnchorProjection";
 import { PhysicalBottleIdentityRegistry } from "./physicalBottleIdentity";
+import { WorldAnchorObservationGate } from "./worldAnchorObservationGate";
+import { isEligibleWorldAnchorCandidate } from "./worldAnchorFramePolicy";
 
 type Candidate = {
   trackId: number; x: number; y: number; width: number; height: number;
-  confidence: number; timestamp?: number; contour?: Array<{x:number;y:number}>;
+  confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{x:number;y:number}>;
   bottle?: BottleRead;
   depthFrame?: ARKitDepthFrame;
 };
 type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean; candidate: Candidate };
 export type WorldBottleCandidate = Candidate;
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; observationFrame?: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, currentCameraPose, sessionKey = 0, visible = true, onSelectBottle }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observationFrame, currentCameraPose, sessionKey = 0, visible = true, onSelectBottle }: Props) {
   // One registry owns the physical bottle ID through visible, occluded and
   // reacquired states. It is deliberately reset when ARKit changes world space.
   const trackerRef = useRef<SpatialBottleTracker | null>(null);
@@ -31,6 +33,8 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
   const metadataRef = useRef(new Map<string, AnchorMetadata>());
   const identityRegistryRef = useRef(new PhysicalBottleIdentityRegistry(0.85, 0.9));
   const tracksRef = useRef<SpatialTrack[]>([]);
+  const observationGateRef = useRef(new WorldAnchorObservationGate(512));
+  const lastProcessedFrameTimestampRef = useRef(Number.NEGATIVE_INFINITY);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -38,37 +42,40 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     metadataRef.current.clear();
     identityRegistryRef.current.clear();
     tracksRef.current = [];
+    observationGateRef.current.reset();
+    lastProcessedFrameTimestampRef.current = Number.NEGATIVE_INFINITY;
     setRevision(value => value + 1);
   }, [sessionKey]);
 
   useEffect(() => {
+    if (!observationFrame || observationFrame.unit !== "meters"
+      || !Number.isFinite(observationFrame.timestamp)) return;
+    const isNewObservationFrame = observationFrame.timestamp > lastProcessedFrameTimestampRef.current;
+    if (isNewObservationFrame) lastProcessedFrameTimestampRef.current = observationFrame.timestamp;
     const paired = candidates.flatMap(candidate => {
-      const frame = candidate.depthFrame;
-      if (!frame || candidate.timestamp === undefined) return [];
+      if (!isEligibleWorldAnchorCandidate(candidate.source, candidate.timestamp, observationFrame.timestamp)) return [];
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
-        confidence: candidate.confidence, timestamp: candidate.timestamp,
+        confidence: candidate.confidence, timestamp: candidate.timestamp!,
         contour: candidate.contour,
         bottle: candidate.bottle,
-      }], frame);
-      return result.observations.map(observation => ({ observation, candidate }));
+      }], observationFrame);
+      return result.observations.map(observation => ({
+        observation,
+        candidate,
+        key: observationGateRef.current.key(candidate.trackId, candidate.timestamp!)!,
+      }));
     });
-    const now = Date.now();
-    const update = trackerRef.current!.update(paired.map(({ observation }) => ({
-      worldPoint: observation.worldPoint,
-      confidence: observation.confidence,
-      geometryComplete: observation.geometryComplete,
-      visualKey: observation.visualKey,
-    })), now);
-
-    tracksRef.current = update.tracks;
-    paired.forEach(({ observation, candidate }, index) => {
-      const physical = update.observed[index];
-      if (!physical) return;
+    const now = observationFrame.timestamp * 1000;
+    const upsertMetadata = (
+      physicalObjectId: string,
+      observation: (typeof paired)[number]["observation"],
+      candidate: Candidate,
+    ) => {
       const bottle = candidate.bottle;
       if (bottle?.state === "matched" && bottle.match?.id && bottle.brand && bottle.product) {
-        identityRegistryRef.current.lock(physical.physicalObjectId, {
+        identityRegistryRef.current.lock(physicalObjectId, {
           catalogId: bottle.match.id,
           brand: bottle.match.brand || bottle.brand,
           product: bottle.match.product || bottle.product,
@@ -77,26 +84,62 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
           matched: true,
         }, now);
       }
-      const lockedIdentity = identityRegistryRef.current.get(physical.physicalObjectId);
+      const lockedIdentity = identityRegistryRef.current.get(physicalObjectId);
       const observedName = [bottle?.brand, bottle?.product].filter(Boolean).join(" ").trim()
         || bottle?.category?.replace(/_/g, " ");
       const name = lockedIdentity
         ? [lockedIdentity.brand, lockedIdentity.product].filter(Boolean).join(" ")
         : observedName || "BOTTLE";
-      const previousMetadata = metadataRef.current.get(physical.physicalObjectId);
-      metadataRef.current.set(physical.physicalObjectId, {
+      const previousMetadata = metadataRef.current.get(physicalObjectId);
+      metadataRef.current.set(physicalObjectId, {
         worldCorners: observation.worldCorners,
         name: lockedIdentity?.brand && lockedIdentity.product ? name : (observedName || previousMetadata?.name || "BOTTLE"),
         confidence: Math.max(observation.confidence, lockedIdentity?.confidence ?? 0),
         verified: !!lockedIdentity,
         candidate,
       });
-    });
+    };
 
-    const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
-    for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
+    // A depth-frame state update can re-render this component many times while
+    // the same cloud detection is still in memory. Count each source-frame
+    // observation exactly once or a single read can falsely satisfy the
+    // tracker's two-frame confirmation threshold.
+    const fresh = isNewObservationFrame
+      ? paired.filter(item => observationGateRef.current.claim(item.key))
+      : [];
+    for (const item of paired) {
+      if (!fresh.includes(item)) {
+        const physicalId = observationGateRef.current.getPhysicalId(item.key);
+        if (physicalId) upsertMetadata(physicalId, item.observation, item.candidate);
+      }
+    }
+
+    if (fresh.length || (isNewObservationFrame && paired.length === 0)) {
+      // A unique cloud frame with no usable detections is a real miss and ages
+      // tracks once. Duplicate callbacks may refresh metadata, but never count
+      // another hit or miss toward the physical track.
+      const update = trackerRef.current!.update(fresh.map(({ observation }) => ({
+        worldPoint: observation.worldPoint,
+        confidence: observation.confidence,
+        geometryComplete: observation.geometryComplete,
+        visualKey: observation.visualKey,
+      })), now);
+
+      tracksRef.current = update.tracks;
+      fresh.forEach(({ observation, candidate, key }, index) => {
+        const physical = update.observed[index];
+        if (!physical) return;
+        observationGateRef.current.bind(key, physical.physicalObjectId);
+        upsertMetadata(physical.physicalObjectId, observation, candidate);
+      });
+
+      const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
+      for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
+      observationGateRef.current.retainActive(active);
+    }
+
     setRevision(value => value + 1);
-  }, [candidates, currentDepthFrame?.timestamp]);
+  }, [candidates, observationFrame?.timestamp, sessionKey]);
 
   const projectionFrame = currentCameraPose ?? currentDepthFrame;
   if (!visible || !projectionFrame || (!currentCameraPose && currentDepthFrame?.unit !== "meters")) return null;
