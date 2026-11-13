@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import type { BottleRead } from "../services/discoverLiveApi";
 import type { ARKitDepthFrame, ARKitCameraPose } from "./DiscoverARSurface";
 import { buildBottleWorldObservations } from "./bottleWorldAnchorBridge";
 import { SpatialBottleTracker, type SpatialTrack } from "./spatialBottleTracker";
@@ -9,13 +10,14 @@ import { PhysicalBottleIdentityRegistry } from "./physicalBottleIdentity";
 type Candidate = {
   trackId: number; x: number; y: number; width: number; height: number;
   confidence: number; timestamp?: number; contour?: Array<{x:number;y:number}>;
-  bottle?: { brand?: string; product?: string; category?: string; confidence?: number; state?: string; match?: { id: string; brand: string | null; product: string | null; score: number } | null };
+  bottle?: BottleRead;
   depthFrame?: ARKitDepthFrame;
 };
-type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean };
-type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean };
+type AnchorMetadata = { worldCorners: Array<{x:number;y:number;z:number}>; name: string; confidence: number; verified: boolean; candidate: Candidate };
+export type WorldBottleCandidate = Candidate;
+type Props = { candidates: Candidate[]; currentDepthFrame: ARKitDepthFrame | null; currentCameraPose?: ARKitCameraPose | null; sessionKey?: number; visible?: boolean; onSelectBottle?: (candidate: WorldBottleCandidate) => void };
 
-export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, currentCameraPose, sessionKey = 0, visible = true }: Props) {
+export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, currentCameraPose, sessionKey = 0, visible = true, onSelectBottle }: Props) {
   // One registry owns the physical bottle ID through visible, occluded and
   // reacquired states. It is deliberately reset when ARKit changes world space.
   const trackerRef = useRef<SpatialBottleTracker | null>(null);
@@ -87,6 +89,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
         name: lockedIdentity?.brand && lockedIdentity.product ? name : (observedName || previousMetadata?.name || "BOTTLE"),
         confidence: Math.max(observation.confidence, lockedIdentity?.confidence ?? 0),
         verified: !!lockedIdentity,
+        candidate,
       });
     });
 
@@ -106,20 +109,26 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     return rect ? [{ id: track.physicalObjectId, rect, ...metadata, state: track.state }] : [];
   });
 
-  return <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+  return <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
     {anchors.map(anchor => (
-      <View key={anchor.id} style={[styles.box, {
-        left: ((anchor.rect.x * 100) + "%") as `${number}%`,
-        top: ((anchor.rect.y * 100) + "%") as `${number}%`,
-        width: ((anchor.rect.width * 100) + "%") as `${number}%`,
-        height: ((anchor.rect.height * 100) + "%") as `${number}%`,
-        opacity: anchor.state === "occluded" ? 0.45 : 1,
-      }]}>
-        <View style={styles.label}>
+      <Pressable
+        key={anchor.id}
+        accessibilityRole="button"
+        accessibilityLabel={`Open tracked bottle profile for ${anchor.name}`}
+        onPress={() => onSelectBottle?.(anchor.candidate)}
+        style={[styles.box, {
+          left: ((anchor.rect.x * 100) + "%") as `${number}%`,
+          top: ((anchor.rect.y * 100) + "%") as `${number}%`,
+          width: ((anchor.rect.width * 100) + "%") as `${number}%`,
+          height: ((anchor.rect.height * 100) + "%") as `${number}%`,
+          opacity: anchor.state === "occluded" ? 0.45 : 1,
+        }]}
+      >
+        <View pointerEvents="none" style={styles.label}>
           <Text numberOfLines={1} style={styles.name}>{anchor.name.toUpperCase()}</Text>
           <Text style={styles.meta}>{anchor.verified ? "IDENTITY LOCKED" : "IDENTITY PENDING"} · {anchor.state === "occluded" ? "BACKGROUND · REACQUIRABLE" : "FOREGROUND · TRACKED"} · {Math.round(anchor.confidence * 100)}%</Text>
         </View>
-      </View>
+      </Pressable>
     ))}
   </View>;
 }
