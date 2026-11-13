@@ -174,6 +174,23 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
+    // Treat a small box fully contained in the upper part of a larger bottle
+    // as a cork/neck fragment of the same physical bottle, not a second bottle.
+    const isSameBottleBox = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
+      if (intersectionOverUnion(a, b) > 0.25) return true;
+      const intersectionWidth = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+      const intersectionHeight = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+      const intersection = intersectionWidth * intersectionHeight;
+      const areaA = a.width * a.height, areaB = b.width * b.height;
+      const smallerArea = Math.min(areaA, areaB), largerArea = Math.max(areaA, areaB);
+      if (!smallerArea || !largerArea || smallerArea / largerArea > 0.42) return false;
+      const coverage = intersection / smallerArea;
+      const parent = areaA >= areaB ? a : b;
+      const child = areaA >= areaB ? b : a;
+      const centered = Math.abs((child.x + child.width / 2) - (parent.x + parent.width / 2)) <= parent.width * 0.32;
+      const upperBottle = child.y + child.height <= parent.y + parent.height * 0.55;
+      return coverage >= 0.72 && centered && upperBottle;
+    };
     const updateWebTracks = (detections: Array<{ x: number; y: number; width: number; height: number; confidence: number; bottle: BottleRead }>) => {
       const now = Date.now();
       const used = new Set<number>();
@@ -186,7 +203,7 @@ function WebLiveCamera(props: NativeProps) {
           const dx = (track.x + track.width / 2) - (detection.x + detection.width / 2);
           const dy = (track.y + track.height / 2) - (detection.y + detection.height / 2);
           const distance = Math.hypot(dx, dy);
-          const score = overlap >= 0.08 ? overlap : (distance <= 0.16 ? 0.08 * (1 - distance / 0.16) : 0);
+          const score = overlap >= 0.08 ? overlap : (distance <= 0.20 ? 0.08 * (1 - distance / 0.20) : 0);
           if (score > bestScore) { bestScore = score; bestIndex = index; }
         });
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
@@ -213,7 +230,7 @@ function WebLiveCamera(props: NativeProps) {
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour };
       });
       webTracks.forEach((track, index) => {
-        if (!used.has(index) && now - track.lastSeenAt < 7000) next.push({ ...track, misses: track.misses + 1 });
+        if (!used.has(index) && now - track.lastSeenAt < 30000) next.push({ ...track, misses: track.misses + 1 });
       });
       webTracks = next;
       // Do not expose one-frame guesses as visible bottle tracks. A track must
@@ -230,7 +247,7 @@ function WebLiveCamera(props: NativeProps) {
         .filter(isConfirmedWebBottleTrack)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
       const localCandidates = latestLocalCandidates
-        .filter(candidate => !cloudCandidates.some(cloud => intersectionOverUnion(cloud, candidate) > 0.25))
+        .filter(candidate => !cloudCandidates.some(cloud => isSameBottleBox(cloud, candidate)))
         .map(candidate => {
         const read = labelReadsByTrack.get(candidate.trackId);
         if (!read) return candidate;
@@ -265,7 +282,7 @@ function WebLiveCamera(props: NativeProps) {
           bottle: track.bottle,
         })),
         ...latestLocalCandidates
-          .filter(local => !activeCloudTracks.some(cloud => intersectionOverUnion(cloud, local) > 0.25))
+          .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
           .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
           .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
@@ -676,7 +693,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
     nativeRecognitionTracks,
     Date.now(),
     nextNativeRecognitionTrackId,
-    7000,
+    30000,
   );
   nativeRecognitionTracks = result.tracks;
   nextNativeRecognitionTrackId = result.nextId;
