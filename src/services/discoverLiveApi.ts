@@ -45,6 +45,64 @@ export type MenuGlimpse = { visible: boolean; title: string; box?: { x0: number;
 export type LabelRead = { words: string[]; brand: string; product: string; category: string; proof: string; size: string; origin: string; details: Record<string, string | string[]>; fieldConfidence: Record<string, number> };
 export type LiveRead = { bottles: BottleRead[]; labelRead: LabelRead | null; menu: MenuGlimpse; diagnostics: { version: string; model: string; providerMs: number; bottlesReturned: number; bottlesConfident: number; bottlesMatched: number } };
 
+export type BottleIntelligenceAttribute = {
+  attribute_code: string;
+  value_text: string | null;
+  value_numeric: number | null;
+  value_json: unknown;
+  unit: string | null;
+  state: 'queued' | 'found' | 'not_disclosed' | 'not_applicable' | 'conflicting' | 'needs_review';
+  confidence: number | null;
+  evidence_id: string | null;
+  updated_at: string;
+};
+export type BottleIntelligenceEvidence = {
+  attribute_code: string | null;
+  source_type: string;
+  source_name: string | null;
+  source_url: string | null;
+  observed_value: unknown;
+  confidence: number | null;
+  verification_state: 'unreviewed' | 'corroborated' | 'verified' | 'rejected' | 'conflicting';
+  captured_at: string;
+  expires_at: string | null;
+};
+export type BottleIntelligenceProfile = {
+  product: {
+    id: string;
+    brand: string;
+    product: string;
+    category: string;
+    expression: string | null;
+    upc_gtin: string | null;
+    ean: string | null;
+    status: string;
+    match_confidence: number | null;
+    identity: Record<string, unknown>;
+  };
+  packages: Array<Record<string, unknown>>;
+  attributes: BottleIntelligenceAttribute[];
+  evidence: BottleIntelligenceEvidence[];
+  sightings: { total: number; confirmed: number };
+};
+
+/** Loads shared product intelligence only after a user opens a bottle profile. */
+export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'brand' | 'product' | 'category'>): Promise<BottleIntelligenceProfile | null> {
+  if (!bottle.brand.trim() || !bottle.product.trim()) return null;
+  const result = await call({ action: 'profile', brand: bottle.brand, product: bottle.product, category: bottle.category });
+  if (!result.found || !result.product || typeof result.product !== 'object') return null;
+  return {
+    product: result.product as BottleIntelligenceProfile['product'],
+    packages: Array.isArray(result.packages) ? result.packages : [],
+    attributes: Array.isArray(result.attributes) ? result.attributes : [],
+    evidence: Array.isArray(result.evidence) ? result.evidence : [],
+    sightings: {
+      total: Number(result.sightings?.total) || 0,
+      confirmed: Number(result.sightings?.confirmed) || 0,
+    },
+  };
+}
+
 /** One camera frame (JPEG, base64) in; every readable bottle label and any menu in view out. Nothing is stored. */
 export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fine_print' = 'standard'): Promise<LiveRead> {
   const result = await call({ action: 'frame', image: jpegBase64, focus });
@@ -97,7 +155,7 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
   })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
 }
 
-export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
+export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; productsLinked: number; productsCreated: number; researchEvidenceSaved: number; researchAttributesAdded: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
   const result = await call({
     action: 'save', scan_session_id: scanSessionId, venue_name: venueName,
     bottles: bottles.map(b => ({ brand: b.match?.brand || b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, words: b.words, confidence: b.confidence, details: b.details, fieldConfidence: b.fieldConfidence, research_sources: b.researchSources })),
@@ -109,7 +167,7 @@ export async function saveBottleSightings(scanSessionId: string, venueName: stri
     fieldConfidence: (b.field_confidence && typeof b.field_confidence === 'object' ? b.field_confidence : {}) as Record<string,number>,
     researchSources: Array.isArray(b.research_sources) ? b.research_sources : [],
   })) : [];
-  return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0, enriched };
+  return { saved: Number(result.saved) || 0, matched: Number(result.matched) || 0, productsLinked: Number(result.products_linked) || 0, productsCreated: Number(result.products_created) || 0, researchEvidenceSaved: Number(result.research_evidence_saved) || 0, researchAttributesAdded: Number(result.research_attributes_added) || 0, enriched };
 }
 
 export function bottleErrorMessage(error: unknown): string {
