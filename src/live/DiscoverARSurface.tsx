@@ -265,7 +265,7 @@ function WebLiveCamera(props: NativeProps) {
           liquidHistoryByTrack.delete(item.trackId);
           continue;
         }
-        if (item.result.status !== 'candidate' || item.result.confidence < 0.7) continue;
+        if (item.result.status !== 'candidate' || item.result.confidence < 0.7 || item.result.boundaryShape === 'irregular') continue;
         const previous = liquidHistoryByTrack.get(item.trackId);
         const history = previous && timestamp - previous.updatedAt <= 2200 ? previous.observations : [];
         const observations = [...history, {
