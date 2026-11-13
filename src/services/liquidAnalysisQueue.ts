@@ -42,9 +42,12 @@ export class LiquidAnalysisQueue {
   private disposed = false;
   private readonly onResults: (timestamp: number, results: LiquidWorkerResult[]) => void;
 
-  constructor(onResults: (timestamp: number, results: LiquidWorkerResult[]) => void) {
+  constructor(
+    onResults: (timestamp: number, results: LiquidWorkerResult[]) => void,
+    workerFactory: () => Worker | null = createLiquidLevelWorker,
+  ) {
     this.onResults = onResults;
-    this.worker = createLiquidLevelWorker();
+    this.worker = workerFactory();
     if (this.worker) {
       this.worker.onmessage = (event: MessageEvent<LiquidWorkerMessage>) => {
         const message = event.data;
