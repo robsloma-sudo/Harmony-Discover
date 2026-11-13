@@ -39,6 +39,8 @@ describe('LiquidAnalysisQueue', () => {
     worker.onmessage?.({ data: { id: 1, timestamp: 10_000, results: [] } } as MessageEvent);
     expect(worker.posted).toHaveLength(2);
     expect(worker.posted[1].message.tracks[0].trackId).toBe(3);
+    expect(queue.metrics.jobsDispatched).toBe(2);
+    expect(queue.metrics.framesSkipped).toBe(1);
     queue.dispose();
     expect(worker.terminated).toBe(true);
   });
