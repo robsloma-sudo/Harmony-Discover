@@ -91,6 +91,15 @@ function headers(origin: string | null): Headers {
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
+function hasUnmodeledSkuDifferentiator(b: Record<string, unknown>): boolean {
+  const details = (b.details && typeof b.details === "object" ? b.details : b) as Record<string, unknown>;
+  const keys = ["vintage", "package_size", "sku", "barcode", "upc_ean", "batch", "lot_code",
+    "age_statement", "cask_finish", "cask_type", "barrel_number", "flavor", "style",
+    "appellation", "appellation_level", "classification", "dosage", "residual_sugar"];
+  return [...keys.map((key) => details[key]), b.size, b.proof]
+    .some((value) => value !== null && value !== undefined && clean(value, 80).length > 0);
+}
+
 
 type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
 function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
@@ -529,7 +538,7 @@ Deno.serve(async (req: Request) => {
           }
           for (const key of ["brand", "product", "category", "proof", "size", "origin", ...DETAIL_KEYS]) {
             const value = key === "brand" ? b.brand : key === "product" ? b.product : key === "category" ? b.category : key === "proof" ? b.proof : key === "size" ? b.size : key === "origin" ? b.origin : (pickDetails(b)[key]);
-            if (value && out[key] === undefined) out[key] = unit(b.confidence);
+            if (value && out[key] === undefined && key !== "brand" && key !== "product") out[key] = unit(b.confidence);
           }
           return out;
         })(),
@@ -537,17 +546,22 @@ Deno.serve(async (req: Request) => {
     }).filter((b) => b.box.x1 > b.box.x0 && b.box.y1 > b.box.y0);
     const queries = list.map((b) => clean(`${b.brand} ${b.product}`, 120) || b.words.slice(0, 3).join(" "));
     const found = queries.length ? await match(queries) : [];
-    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/g, " ").trim();
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      // A fuzzy result is not an identity proof. Require the returned catalogue brand
-      // to agree with the printed brand and require a real product/SKU row.
-      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
+      const fieldConfidence = b.fieldConfidence as Record<string, number>;
+      const brandReadIsStrong = !!b.brand && (fieldConfidence.brand ?? 0) >= 0.90;
+      const productReadIsStrong = !!b.product && (fieldConfidence.product ?? 0) >= 0.90;
+      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
+      const sameExpression = !!m?.product && normalizeIdentity(m.product) === normalizeIdentity(b.product);
+      // Keep variant-specific sightings unresolved until the catalogue can verify their SKU facts.
+      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
+      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong &&
+        sameBrand && sameExpression && !!m?.id && !!m.category && (m.score ?? 0) >= 0.90
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
-      const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
-      return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
+      const state = !brandReadIsStrong || !productReadIsStrong ? "unsure" : hit ? "matched" : "reported";
+      return { ...b, match: hit, state, research: null };
     });
     const labelRead = focus === "fine_print" && input ? (() => {
       const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
@@ -633,8 +647,14 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
+      const fieldConfidence = (b.field_confidence && typeof b.field_confidence === "object" ? b.field_confidence : {}) as Record<string, unknown>;
+      const brandReadIsStrong = !!b.brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
+      const productReadIsStrong = !!b.product && Number(fieldConfidence.product ?? 0) >= 0.90;
+      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
+      const sameExpression = !!m?.product && normalizeIdentity(m.product) === normalizeIdentity(b.product);
+      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
+      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong &&
+        sameBrand && sameExpression && !!m?.id && !!m.category && (m.score ?? 0) >= 0.90;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
