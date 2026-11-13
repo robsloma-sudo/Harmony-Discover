@@ -587,7 +587,7 @@ function WebLiveCamera(props: NativeProps) {
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
             callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
-            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(); startLocalDetectionLoop(); }
+            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(250); startLocalDetectionLoop(); }
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
