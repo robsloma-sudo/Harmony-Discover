@@ -38,6 +38,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveDepthStatus, setLiveDepthStatus] = useState('waiting_for_depth_provider');
   const [liveDepthFrame, setLiveDepthFrame] = useState<ARKitDepthFrame | null>(null);
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;contour?:Array<{x:number;y:number}>;bottle?:BottleRead}>>([]);
+  // Viewfinder boxes are image-space observations, not world-anchored AR
+  // anchors. Expire them quickly so a slow recognition request cannot leave
+  // detections pinned to screen coordinates after the camera has moved.
+  useEffect(() => {
+    if (!liveCandidates.length) return;
+    const expiry = setTimeout(() => setLiveCandidates([]), 2500);
+    return () => clearTimeout(expiry);
+  }, [liveCandidates]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
