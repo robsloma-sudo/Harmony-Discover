@@ -39,7 +39,7 @@ export function validateResearchEvidence(proposedSources: ProposedResearchSource
     if (!supports.length) continue;
     seen.add(url);
     for (const field of supports) supportedFields.add(field);
-    sources.push({ url: String(source.url).slice(0, 500), title: searchResults.get(url) || String(source.title ?? "").slice(0, 180), supports,
+    sources.push({ url, title: searchResults.get(url) || String(source.title ?? "").slice(0, 180), supports,
       source_type: ["manufacturer","distillery","winery","brand_owner","regulator","gs1","retailer","reference"].includes(String(source.source_type)) ? String(source.source_type) : "reference" });
   }
   return { sources, supportedFields };
