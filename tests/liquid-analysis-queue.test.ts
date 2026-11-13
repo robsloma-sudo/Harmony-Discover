@@ -17,7 +17,7 @@ function track(trackId: number) {
   return { trackId, bounds: { x: 0.1, y: 0.1, width: 0.4, height: 0.7 } };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('LiquidAnalysisQueue', () => {
   it('keeps one job in flight and replaces queued work with the newest frame', () => {
