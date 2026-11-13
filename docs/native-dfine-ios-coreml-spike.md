@@ -11,7 +11,7 @@ This branch is an isolated proof of native runtime linkage and model-session ini
 - Swift verifies the pinned D-FINE model SHA-256 before handing the file path to the shim.
 - The shim creates one ORT environment and one ORT session, registers CoreML before CPU fallback, validates the input/output names, and retains the session for reuse.
 - CoreML is configured with MLProgram, all compute units, static input shapes, and a persistent `ModelCacheDirectory`.
-- The explicit Expo methods `downloadAndInitializeDfineNativeRuntime()` and `runDfineNativeSmokeTest()` are not called by the existing scanner. They are only for a deliberate device test.
+- The explicit Expo methods `downloadAndInitializeDfineNativeRuntime()` and `runDfineNativeSmokeTest()` are not called by the existing scanner. They are available from the `/arkit-live-test` diagnostics route on iOS for a deliberate device test.
 
 ## Why cache and reuse matter
 
