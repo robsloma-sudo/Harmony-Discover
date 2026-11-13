@@ -26,6 +26,13 @@ describe("ARKit bottle world-anchor bridge", () => {
     expect(result.observations[0].visualKey).toBe("maker reserve");
   });
 
+  it("keeps metric anchors provisional when depth has no high-confidence samples", () => {
+    const result = buildBottleWorldObservations([candidate()], frame({ confidence: Array(16).fill(1) }));
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0].geometryComplete).toBe(false);
+    expect(result.observations[0].sampleCount).toBeGreaterThanOrEqual(4);
+  });
+
   it("rejects depth from a different camera moment", () => {
     const result = buildBottleWorldObservations([candidate({ timestamp: 10.5 })], frame());
     expect(result.observations).toHaveLength(0);
