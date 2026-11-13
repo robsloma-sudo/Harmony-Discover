@@ -63,6 +63,19 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, visibl
     setRevision(value => value + 1);
   }, [candidates]);
 
+  useEffect(() => {
+    // Age out anchors even when the detector stops returning candidates.
+    tracksRef.current = updateWorldSpatialTracks(
+      tracksRef.current,
+      [],
+      Date.now(),
+      { maxAgeMs: 12000 },
+    );
+    const active = new Set(tracksRef.current.map(track => track.trackId));
+    for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
+    setRevision(value => value + 1);
+  }, [currentDepthFrame?.timestamp]);
+
   if (!visible || !currentDepthFrame || currentDepthFrame.unit !== "meters") return null;
   // revision makes the ref-backed anchor state observable without recreating it.
   void revision;
