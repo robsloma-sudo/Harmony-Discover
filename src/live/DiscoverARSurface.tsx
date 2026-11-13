@@ -308,6 +308,7 @@ function WebLiveCamera(props: NativeProps) {
         }
         publishVisibleCandidates();
       } catch (error) {
+        crops.forEach(crop => lastLabelReadAt.delete(crop.trackId));
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'label_batch_failed: ' + error.message : 'label_batch_failed' } });
       } finally {
         labelBatchBusy = false;
