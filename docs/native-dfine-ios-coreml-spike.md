@@ -8,7 +8,7 @@ This branch is an isolated proof of native runtime linkage and model-session ini
 
 - Local Expo module podspec pins the published `onnxruntime-objc` CocoaPod to 1.24.3. (The separate macOS benchmark uses the Python runtime 1.32.0.)
 - A module-local Objective-C++ shim owns ONNX Runtime types and exposes a small API to the Swift Expo module.
-- Swift verifies the pinned D-FINE model SHA-256 before handing the file path to the shim.
+- Swift verifies the pinned D-FINE model SHA-256 before handing the file path to the shim. If an existing cached model fails the checksum, the app removes that invalid cache file and downloads the pinned asset again.
 - The shim creates one ORT environment and one ORT session, registers CoreML before CPU fallback, validates the input/output names, and retains the session for reuse.
 - CoreML is configured with MLProgram, all compute units, static input shapes, and a persistent `ModelCacheDirectory`.
 - A local Expo config plugin patches the generated Podfile so the `onnxruntime-objc` target sets `CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO`. The plugin fails fast if the target or Podfile hook is missing, and the iOS CI job verifies the generated setting.
