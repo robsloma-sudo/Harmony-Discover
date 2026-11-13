@@ -195,9 +195,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
-      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.58) && (
+      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45) && (
         <View pointerEvents="none" style={s.liveDetectionLayer}>
-          {liveCandidates.filter(track => track.confidence >= 0.58).map(tracked => {
+          {liveCandidates.filter(track => track.confidence >= 0.45).map(tracked => {
             const bottle = tracked.bottle;
             const left = Math.max(0, Math.min(1, tracked.x));
             const top = Math.max(0, Math.min(1, tracked.y));
