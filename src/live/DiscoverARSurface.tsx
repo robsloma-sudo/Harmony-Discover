@@ -765,6 +765,7 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 export function DiscoverARSurface(props: NativeProps) {
   const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
   const nativeFrameReadBusy = useRef(false);
+  const nativeLiquidBusy = useRef(false);
   const nativeSessionGeneration = useRef(0);
   const nativeLiquidHistory = useRef(new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>());
   const nativeVolumeProfiles = useRef<Record<string, BottleVolumeProfile>>({});
@@ -777,6 +778,7 @@ export function DiscoverARSurface(props: NativeProps) {
   const resetNativeSession = () => {
     nativeSessionGeneration.current += 1;
     nativeFrameReadBusy.current = false;
+    nativeLiquidBusy.current = false;
     nativeRecognitionTracks = [];
     nextNativeRecognitionTrackId = 1;
     nativeVisionSignals.current = null;
@@ -827,20 +829,21 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
-        let candidates = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle } as {
+        const candidates = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle } as {
           trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
           liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
         }));
-        let nativeProcessingMs = 0;
-        let analysesCompleted = 0;
-        if (NativeLiquidAnalyzer && tracked.length) {
-          try {
-            const analyses = await NativeLiquidAnalyzer.analyzeLiquidLevels(frame.imageBase64, tracked.map(track => ({
-              trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height,
-            })));
+        // Publish bottle boxes immediately. Liquid analysis is fire-and-forget
+        // and can only enrich these candidates after its background result.
+        props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
+        if (NativeLiquidAnalyzer && tracked.length && !nativeLiquidBusy.current) {
+          nativeLiquidBusy.current = true;
+          void NativeLiquidAnalyzer.analyzeLiquidLevels(frame.imageBase64, tracked.map(track => ({
+            trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height,
+          }))).then(analyses => {
             if (generation !== nativeSessionGeneration.current) return;
-            analysesCompleted = analyses.length > 0 ? 1 : 0;
-            nativeProcessingMs = analyses.reduce((max, item) => Math.max(max, Number(item.processingMs) || 0), 0);
+            const nativeProcessingMs = analyses.reduce((max, item) => Math.max(max, Number(item.processingMs) || 0), 0);
+            let changed = false;
             for (const item of analyses) {
               const current = candidates.find(candidate => candidate.trackId === item.trackId);
               if (!current || item.opticalScore < 0.55 || item.confidence < 0.7 || item.boundaryShape === 'irregular') {
@@ -868,26 +871,31 @@ export function DiscoverARSurface(props: NativeProps) {
                     milliliters: calibrated.milliliters, fluidOunces: calibrated.fluidOunces, profileId: calibrated.profileId,
                   } } : {}),
                 };
+                changed = true;
               }
             }
             for (const [trackId, history] of nativeLiquidHistory.current) {
               if (frame.timestamp - history.updatedAt > 7) nativeLiquidHistory.current.delete(trackId);
             }
-          } catch {
-            // Bottle recognition remains independent if local liquid analysis fails.
-          }
+            onLiquidMetrics?.({ nativeEvent: {
+              jobsDispatched: 1, jobsCompleted: analyses.length > 0 ? 1 : 0, framesSkipped: 0,
+              workerErrors: 0, lastWorkerMs: nativeProcessingMs, maxWorkerMs: nativeProcessingMs,
+              segmentationMs: 0, workerAvailable: true,
+            } });
+            if (changed) props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
+          }).catch(() => {
+            onLiquidMetrics?.({ nativeEvent: {
+              jobsDispatched: 1, jobsCompleted: 0, framesSkipped: 0, workerErrors: 1,
+              lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, workerAvailable: true,
+            } });
+          }).finally(() => { nativeLiquidBusy.current = false; });
+        } else {
+          onLiquidMetrics?.({ nativeEvent: {
+            jobsDispatched: 0, jobsCompleted: 0, framesSkipped: tracked.length ? 1 : 0,
+            workerErrors: 0, lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0,
+            workerAvailable: !!NativeLiquidAnalyzer,
+          } });
         }
-        onLiquidMetrics?.({ nativeEvent: {
-          jobsDispatched: NativeLiquidAnalyzer && tracked.length ? 1 : 0,
-          jobsCompleted: analysesCompleted,
-          framesSkipped: NativeLiquidAnalyzer ? 0 : 1,
-          workerErrors: 0,
-          lastWorkerMs: nativeProcessingMs,
-          maxWorkerMs: nativeProcessingMs,
-          segmentationMs: 0,
-          workerAvailable: !!NativeLiquidAnalyzer,
-        } });
-        props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
       }).catch(error => {
         if (generation === nativeSessionGeneration.current) {
           props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
