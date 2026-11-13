@@ -351,7 +351,7 @@ Deno.serve(async (req: Request) => {
     let totalImageChars = 0;
     for (const crop of incoming) {
       const trackId = clean(crop.track_id, 48);
-      const image = String(crop.image || "").replace(/^data:image\\/jpeg;base64,/, "");
+      const image = String(crop.image || "").replace(/^data:image\/jpeg;base64,/, "");
       if (!trackId || image.length < 1200 || image.length > 100000 || !/^[A-Za-z0-9+/=]+$/.test(image) || !image.startsWith("/9j/")) {
         return reply({ error: "invalid_label_crop" }, 400, origin);
       }
