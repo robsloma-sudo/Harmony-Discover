@@ -145,8 +145,9 @@ function WebLiveCamera(props: NativeProps) {
     let barcodeDetector: BarcodeDetectorLike | null = null;
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     let lastRecognitionStartedAt = 0;
-    // ~13 requests/minute maximum while live view is open; one request at a time.
-    const recognitionIntervalMs = 4500;
+    // Run close to the DEV endpoint's 30-frame/minute ceiling without exceeding it.
+    // 2200ms permits ~27 starts/minute; one in-flight request still prevents overlap.
+    const recognitionIntervalMs = 2200;
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
