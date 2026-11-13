@@ -16,8 +16,8 @@ describe('self-contained liquid worker source', () => {
   it('builds a worker entrypoint with no imports or main-thread fallback', async () => {
     let captured: Blob | null = null;
     vi.stubGlobal('Worker', FakeWorker);
-    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob) => {
-      captured = blob;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+      captured = blob as Blob;
       return 'blob:liquid-worker-test';
     });
     const worker = createLiquidLevelWorker();
