@@ -14,10 +14,10 @@ beforeEach(() => store.clear());
 
 describe('bottle volume profile store', () => {
   it('requires a high-confidence catalog-matched identity', () => {
-    expect(getBottleCalibrationKey({id:'sku-1',score:0.95},'matched')).toBe('sku-1');
-    expect(getBottleCalibrationKey({id:'sku-1',score:0.89},'matched')).toBeNull();
-    expect(getBottleCalibrationKey({id:'sku-1',score:0.99},'reported')).toBeNull();
-    expect(getBottleCalibrationKey(null,'unsure')).toBeNull();
+    expect(getBottleCalibrationKey({id:'sku-1',score:0.95},'matched','750 ml')).toBe('sku-1::750 ml');
+    expect(getBottleCalibrationKey({id:'sku-1',score:0.89},'matched','750 ml')).toBeNull();
+    expect(getBottleCalibrationKey({id:'sku-1',score:0.99},'reported','750 ml')).toBeNull();
+    expect(getBottleCalibrationKey(null,'unsure','750 ml')).toBeNull();
   });
 
   it('parses measured height-to-volume pairs', () => {
