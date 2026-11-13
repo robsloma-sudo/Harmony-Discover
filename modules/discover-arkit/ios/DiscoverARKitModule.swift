@@ -188,13 +188,13 @@ public class DiscoverARKitModule: Module {
         let supported = deltas.filter { $0 >= 18 }.count
         let support = Double(supported) / Double(columns.count)
         let contrast = median(deltas)
-        if support >= 0.57 && contrast * support > bestContrast * bestSupport {
+        if support >= 0.71 && contrast * support > bestContrast * bestSupport {
           bestY = y
           bestContrast = contrast
           bestSupport = support
         }
       }
-      guard bestY >= 0, bestContrast >= 18, bestSupport >= 0.57 else { continue }
+      guard bestY >= 0, bestContrast >= 18, bestSupport >= 0.71 else { continue }
 
       let radius = max(4, Int(Double(cropHeight) * 0.12))
       var columnSamples: [(x: Int, y: Int)] = []
