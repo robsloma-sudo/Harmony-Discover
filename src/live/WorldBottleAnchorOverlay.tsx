@@ -51,7 +51,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
         box: item.box,
       })),
       now,
-      { maxAgeMs: 12000, reassociationMeters: 0.22, maxJumpMeters: 0.45 },
+      { maxAgeMs: 30000, reassociationMeters: 0.22, maxJumpMeters: 0.45 },
     );
     for (const observation of observations) {
       const track = tracksRef.current.find(item => item.sourceTrackId === observation.trackId || item.trackId === observation.trackId);
@@ -80,7 +80,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, sessio
       tracksRef.current,
       [],
       Date.now(),
-      { maxAgeMs: 12000 },
+      { maxAgeMs: 30000 },
     );
     const active = new Set(tracksRef.current.map(track => track.trackId));
     for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
