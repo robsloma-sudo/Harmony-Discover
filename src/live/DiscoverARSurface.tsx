@@ -832,6 +832,7 @@ export function DiscoverARSurface(props: NativeProps) {
     nativeSessionGeneration.current += 1;
     nativeFrameReadBusy.current = false;
     nativeLiquidBusy.current = false;
+    latestNativeFrameTimestamp.current = 0;
     nativeRecognitionTracks = [];
     nextNativeRecognitionTrackId = 1;
     nativeVisionSignals.current = null;
