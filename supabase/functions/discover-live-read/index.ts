@@ -652,10 +652,92 @@ Deno.serve(async (req: Request) => {
         created_new: link?.created_new === true,
       };
     }));
+
+    const allowedResearchSources = new Set([
+      "official_producer", "ttb_cola", "government_registry", "barcode_registry",
+      "retailer", "web_search", "other",
+    ]);
+    const persistedResearch = await Promise.all(productLinks.map(async (link, index) => {
+      if (!link.linked || !link.product_id) return { product_id: link.product_id, evidence: 0, attributes: 0 };
+      const researchedBottle = enriched[index] as Record<string, unknown>;
+      const researchDetails = researchedBottle.research_details && typeof researchedBottle.research_details === "object"
+        ? researchedBottle.research_details as Record<string, unknown> : {};
+      const researchScores = researchedBottle.research_field_confidence && typeof researchedBottle.research_field_confidence === "object"
+        ? researchedBottle.research_field_confidence as Record<string, unknown> : {};
+      const researchSources = Array.isArray(researchedBottle.research_sources)
+        ? researchedBottle.research_sources as Array<Record<string, unknown>> : [];
+      const evidenceRows: Array<Record<string, unknown>> = [];
+      for (const [attributeCode, rawValue] of Object.entries(researchDetails)) {
+        const value = clean(rawValue, 240);
+        const confidence = unit(researchScores[attributeCode]);
+        if (!value || confidence < 0.78) continue;
+        const supportingSources = researchSources.filter(source =>
+          Array.isArray(source.supports)
+          && (source.supports as unknown[]).map(item => clean(item, 80)).includes(attributeCode)
+          && /^https:\/\//.test(clean(source.url, 500))
+        ).slice(0, 2);
+        for (const source of supportingSources) {
+          const rawType = clean(source.source_type, 40);
+          evidenceRows.push({
+            discover_product_id: link.product_id,
+            attribute_code: attributeCode,
+            source_type: allowedResearchSources.has(rawType) ? rawType : "web_search",
+            source_name: clean(source.title, 180) || "Product research source",
+            source_url: clean(source.url, 500),
+            observed_value: { value, attribute_code: attributeCode },
+            confidence,
+            verification_state: "unreviewed",
+            metadata: { sighting_id: link.sighting_id, supports: [attributeCode] },
+          });
+        }
+      }
+      if (!evidenceRows.length) return { product_id: link.product_id, evidence: 0, attributes: 0 };
+
+      const { data: insertedEvidence, error: evidenceError } = await db
+        .from("discover_product_evidence")
+        .insert(evidenceRows)
+        .select("id,attribute_code");
+      if (evidenceError || !Array.isArray(insertedEvidence)) {
+        console.log(JSON.stringify({ evt: "bottle_research_evidence_error", product_id: link.product_id, msg: clean(evidenceError?.message || "evidence_insert_failed", 160) }));
+        return { product_id: link.product_id, evidence: 0, attributes: 0 };
+      }
+
+      const evidenceByAttribute = new Map<string, string>();
+      for (const item of insertedEvidence) {
+        if (item.attribute_code && !evidenceByAttribute.has(item.attribute_code)) evidenceByAttribute.set(item.attribute_code, item.id);
+      }
+      const attributeRows = [...evidenceByAttribute.entries()].flatMap(([attributeCode, evidenceId]) => {
+        const value = clean(researchDetails[attributeCode], 240);
+        const confidence = unit(researchScores[attributeCode]);
+        return value ? [{
+          discover_product_id: link.product_id,
+          attribute_code: attributeCode,
+          value_text: value,
+          state: "found",
+          confidence,
+          evidence_id: evidenceId,
+        }] : [];
+      });
+      if (!attributeRows.length) return { product_id: link.product_id, evidence: insertedEvidence.length, attributes: 0 };
+
+      // Never overwrite an existing attribute value automatically. New evidence
+      // remains available for review; verified or previously curated values win.
+      const { error: attributeError } = await db
+        .from("discover_product_attributes")
+        .upsert(attributeRows, { onConflict: "discover_product_id,attribute_code", ignoreDuplicates: true });
+      if (attributeError) {
+        console.log(JSON.stringify({ evt: "bottle_research_attribute_error", product_id: link.product_id, msg: clean(attributeError.message, 160) }));
+        return { product_id: link.product_id, evidence: insertedEvidence.length, attributes: 0 };
+      }
+      return { product_id: link.product_id, evidence: insertedEvidence.length, attributes: attributeRows.length };
+    }));
+
     return reply({
       ok: true,
       saved: rows.length,
       matched: rows.filter((x) => x.product_index_id).length,
+      research_evidence_saved: persistedResearch.reduce((total, item) => total + item.evidence, 0),
+      research_attributes_added: persistedResearch.reduce((total, item) => total + item.attributes, 0),
       products_linked: productLinks.filter(link => link.linked).length,
       products_created: productLinks.filter(link => link.created_new).length,
       product_link_results: productLinks,
