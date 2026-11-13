@@ -323,7 +323,6 @@ function liquidLevelWorkerMain() {
     if (count < 40) return { status: 'unobservable', score: 0, sampledPixels: count, clippedHighlightFraction: 0, deepShadowFraction: 0, luminanceRange: 0, reason: 'insufficient_valid_pixels' };
     const clipFraction = clipped / count, darkFraction = dark / count, range = max - min;
     const avg = sum / count, variance = Math.max(0, sumSquares / count - avg * avg);
-    const metrics = { sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range };
     if (clipFraction >= 0.42) return { status: 'unobservable', score: 0.1, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: 'severe_specular_glare' };
     if (darkFraction >= 0.82 || avg <= 9) return { status: 'unobservable', score: 0.1, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: 'underexposed_or_opaque_crop' };
     if (range < 5 || Math.sqrt(variance) < 2.5) return { status: 'limited', score: 0.35, sampledPixels: count, clippedHighlightFraction: clipFraction, deepShadowFraction: darkFraction, luminanceRange: range, reason: 'insufficient_local_optical_variation' };
