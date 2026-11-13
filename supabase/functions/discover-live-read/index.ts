@@ -625,10 +625,38 @@ Deno.serve(async (req: Request) => {
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
         reader: "discover-live-read", reader_version: VERSION, read_model: MODEL };
     });
-    const { error } = await db.from("bottle_sightings").insert(rows);
-    if (error) { console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error.message, 160) })); return reply({ error: "save_failed" }, 503, origin); }
+    const { data: insertedRows, error } = await db.from("bottle_sightings").insert(rows).select("id");
+    if (error || !Array.isArray(insertedRows) || insertedRows.length !== rows.length) {
+      console.log(JSON.stringify({ evt: "bottle_save_error", msg: clean(error?.message || "insert_returned_incomplete_rows", 160) }));
+      return reply({ error: "save_failed" }, 503, origin);
+    }
+
+    // Link each saved physical sighting to the Discover product identity ledger
+    // and enqueue its backend-only enrichment jobs. This is save-time work,
+    // never part of the live camera-frame path.
+    const productLinks = await Promise.all(insertedRows.map(async (inserted) => {
+      const { data: linked, error: linkError } = await db.rpc("discover_attach_sighting_to_product", {
+        p_sighting_id: inserted.id,
+      });
+      if (linkError) {
+        console.log(JSON.stringify({ evt: "bottle_product_link_error", sighting_id: inserted.id, msg: clean(linkError.message, 160) }));
+        return { linked: false, sighting_id: inserted.id, product_id: null, created_new: false };
+      }
+      const link = Array.isArray(linked) ? linked[0] : linked;
+      return {
+        linked: !!link?.discover_product_id,
+        sighting_id: inserted.id,
+        product_id: link?.discover_product_id || null,
+        created_new: link?.created_new === true,
+      };
+    }));
     return reply({
-      ok: true, saved: rows.length, matched: rows.filter((x) => x.product_index_id).length,
+      ok: true,
+      saved: rows.length,
+      matched: rows.filter((x) => x.product_index_id).length,
+      products_linked: productLinks.filter(link => link.linked).length,
+      products_created: productLinks.filter(link => link.created_new).length,
+      product_link_results: productLinks,
       enriched_bottles: enriched.map((b) => ({
         brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size,
         details: b.details, field_confidence: b.field_confidence, research_sources: b.research_sources,
