@@ -167,8 +167,8 @@ function WebLiveCamera(props: NativeProps) {
       segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5 }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
         segmentationRunner = new SegmentationRunner(provider, {
-          minimumIntervalMs: 850,
-          maximumFrameAgeMs: 1400,
+          minimumIntervalMs: 500,
+          maximumFrameAgeMs: 900,
           maximumTracksPerFrame: 8,
         });
       }).catch(error => {
@@ -281,7 +281,8 @@ function WebLiveCamera(props: NativeProps) {
         }
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
         if (bestIndex >= 0) used.add(bestIndex);
-        const blend = previous ? 0.38 : 1;
+        // Weight the newest observation more heavily so boxes catch up during camera movement.
+        const blend = previous ? 0.58 : 1;
         const trackBounds = { x: previous ? previous.x * (1 - blend) + detection.x * blend : detection.x, y: previous ? previous.y * (1 - blend) + detection.y * blend : detection.y, width: previous ? previous.width * (1 - blend) + detection.width * blend : detection.width, height: previous ? previous.height * (1 - blend) + detection.height * blend : detection.height };
         const track: WebTrack = {
           id: previous?.id ?? nextWebTrackId++,
@@ -547,7 +548,7 @@ function WebLiveCamera(props: NativeProps) {
       void Promise.resolve(ensureSegmentationRunner()).then(() => {
         if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
         void runLocalDetection();
-        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 1000);
+        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 500);
       });
     };
 
@@ -698,7 +699,7 @@ function WebLiveCamera(props: NativeProps) {
           if (current && !current.paused && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && current.videoWidth > 0 && current.videoHeight > 0) {
             callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: 'browser_camera_ready_no_world_pose' } });
             callbacksRef.current.onARReady?.({ nativeEvent: { state: 'ready', reason: 'browser_video_frames_verified' } });
-            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(); startLocalDetectionLoop(); }
+            if (callbacksRef.current.recognitionEnabled) { scheduleRecognition(0); startLocalDetectionLoop(); }
             return;
           }
           frameCheck = window.requestAnimationFrame(verifyFrame);
