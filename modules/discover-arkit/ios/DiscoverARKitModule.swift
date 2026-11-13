@@ -162,7 +162,13 @@ public class DiscoverARKitModule: Module {
       ))
       guard opticalScore >= 0.55 else { continue }
 
-      let columns = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82].map { left + Int($0 * Double(cropWidth - 1)) }
+      let columnFractions: [Double] = [0.18, 0.29, 0.40, 0.50, 0.60, 0.71, 0.82]
+      var columns: [Int] = []
+      columns.reserveCapacity(columnFractions.count)
+      for fraction in columnFractions {
+        let offset = Int(fraction * Double(cropWidth - 1))
+        columns.append(left + offset)
+      }
       let firstY = top + max(4, Int(Double(cropHeight) * 0.08))
       let lastY = bottom - max(4, Int(Double(cropHeight) * 0.04))
       guard lastY > firstY else { continue }
@@ -184,8 +190,15 @@ public class DiscoverARKitModule: Module {
       var bestContrast = 0.0
       var bestSupport = 0.0
       for y in firstY...lastY where !occludedRows.contains(y) {
-        let deltas = columns.map { abs(mean($0, y - 3, y - 1) - mean($0, y + 1, y + 3)) }
-        let supported = deltas.filter { $0 >= 18 }.count
+        var deltas: [Double] = []
+        deltas.reserveCapacity(columns.count)
+        for column in columns {
+          let aboveMean = mean(column, y - 3, y - 1)
+          let belowMean = mean(column, y + 1, y + 3)
+          let delta = abs(aboveMean - belowMean)
+          deltas.append(delta)
+        }
+        let supported = deltas.reduce(0) { count, delta in count + (delta >= 18 ? 1 : 0) }
         let support = Double(supported) / Double(columns.count)
         let contrast = median(deltas)
         if support >= 0.71 && contrast * support > bestContrast * bestSupport {

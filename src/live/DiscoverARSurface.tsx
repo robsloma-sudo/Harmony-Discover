@@ -928,7 +928,7 @@ export function DiscoverARSurface(props: NativeProps) {
               if (frame.timestamp - history.updatedAt > 7) nativeLiquidHistory.current.delete(trackId);
             }
             onLiquidMetrics?.({ nativeEvent: {
-              jobsDispatched: 1, jobsCompleted: analyses.length > 0 ? 1 : 0, framesSkipped: 0,
+              jobsDispatched: 1, jobsCompleted: 1, framesSkipped: 0,
               workerErrors: 0, lastWorkerMs: nativeProcessingMs, maxWorkerMs: nativeProcessingMs,
               segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
             } });
@@ -938,7 +938,9 @@ export function DiscoverARSurface(props: NativeProps) {
               jobsDispatched: 1, jobsCompleted: 0, framesSkipped: 0, workerErrors: 1,
               lastWorkerMs: 0, maxWorkerMs: 0, segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
             } });
-          }).finally(() => { nativeLiquidBusy.current = false; });
+          }).finally(() => {
+            if (generation === nativeSessionGeneration.current) nativeLiquidBusy.current = false;
+          });
         } else {
           onLiquidMetrics?.({ nativeEvent: {
             jobsDispatched: 0, jobsCompleted: 0, framesSkipped: tracked.length ? 1 : 0,
