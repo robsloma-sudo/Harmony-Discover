@@ -6,6 +6,7 @@ import { buildBottleWorldObservations } from "./bottleWorldAnchorBridge";
 import { SpatialBottleTracker, type SpatialTrack } from "./spatialBottleTracker";
 import { projectWorldRectangle } from "./worldAnchorProjection";
 import { PhysicalBottleIdentityRegistry } from "./physicalBottleIdentity";
+import { WorldAnchorObservationGate } from "./worldAnchorObservationGate";
 
 type Candidate = {
   trackId: number; x: number; y: number; width: number; height: number;
@@ -31,8 +32,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
   const metadataRef = useRef(new Map<string, AnchorMetadata>());
   const identityRegistryRef = useRef(new PhysicalBottleIdentityRegistry(0.85, 0.9));
   const tracksRef = useRef<SpatialTrack[]>([]);
-  const processedCandidateKeysRef = useRef(new Set<string>());
-  const candidatePhysicalIdsRef = useRef(new Map<string, string>());
+  const observationGateRef = useRef(new WorldAnchorObservationGate(512));
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -40,8 +40,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     metadataRef.current.clear();
     identityRegistryRef.current.clear();
     tracksRef.current = [];
-    processedCandidateKeysRef.current.clear();
-    candidatePhysicalIdsRef.current.clear();
+    observationGateRef.current.reset();
     setRevision(value => value + 1);
   }, [sessionKey]);
 
@@ -59,7 +58,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
       return result.observations.map(observation => ({
         observation,
         candidate,
-        key: `${candidate.trackId}:${candidate.timestamp!.toFixed(6)}`,
+        key: observationGateRef.current.key(candidate.trackId, candidate.timestamp!)!,
       }));
     });
     if (!paired.length) return;
@@ -101,10 +100,10 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     // the same cloud detection is still in memory. Count each source-frame
     // observation exactly once or a single read can falsely satisfy the
     // tracker's two-frame confirmation threshold.
-    const fresh = paired.filter(item => !processedCandidateKeysRef.current.has(item.key));
+    const fresh = paired.filter(item => observationGateRef.current.claim(item.key));
     for (const item of paired) {
-      if (processedCandidateKeysRef.current.has(item.key)) {
-        const physicalId = candidatePhysicalIdsRef.current.get(item.key);
+      if (!fresh.includes(item)) {
+        const physicalId = observationGateRef.current.getPhysicalId(item.key);
         if (physicalId) upsertMetadata(physicalId, item.observation, item.candidate);
       }
     }
@@ -119,24 +118,15 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
 
       tracksRef.current = update.tracks;
       fresh.forEach(({ observation, candidate, key }, index) => {
-        processedCandidateKeysRef.current.add(key);
         const physical = update.observed[index];
         if (!physical) return;
-        candidatePhysicalIdsRef.current.set(key, physical.physicalObjectId);
+        observationGateRef.current.bind(key, physical.physicalObjectId);
         upsertMetadata(physical.physicalObjectId, observation, candidate);
       });
 
-      // Keep the source-frame dedupe cache bounded for long-running camera sessions.
-      while (processedCandidateKeysRef.current.size > 512) {
-        const oldest = processedCandidateKeysRef.current.values().next().value;
-        if (oldest === undefined) break;
-        processedCandidateKeysRef.current.delete(oldest);
-        candidatePhysicalIdsRef.current.delete(oldest);
-      }
-
       const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
       for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
-      for (const [key, id] of candidatePhysicalIdsRef.current) if (!active.has(id)) candidatePhysicalIdsRef.current.delete(key);
+      observationGateRef.current.retainActive(active);
     }
 
     setRevision(value => value + 1);
