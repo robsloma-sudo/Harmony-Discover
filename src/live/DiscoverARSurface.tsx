@@ -319,7 +319,7 @@ function WebLiveCamera(props: NativeProps) {
     const publishVisibleCandidates = () => {
       const cloudCandidates = webTracks
         .filter(isConfirmedWebBottleTrack)
-        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
+        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour, bottle: track.bottle }));
       const localCandidates = latestLocalCandidates
         .filter(candidate => !cloudCandidates.some(cloud => isSameBottleBox(cloud, candidate)))
         .map(candidate => {
