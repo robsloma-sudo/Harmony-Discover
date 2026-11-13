@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LocalBottleTracker } from '../src/live/localBottleTracker';
+import { LocalBottleTracker, removeNestedBottleProposals } from '../src/live/localBottleTracker';
 
 const proposal = (x = 0.2, confidence = 0.91) => ({
   bounds: { x, y: 0.1, width: 0.12, height: 0.55 },
@@ -61,6 +61,35 @@ describe('independent local bottle tracks', () => {
     tracker.reset();
     expect(tracker.update([], 3000)).toEqual([]);
     expect(tracker.update([proposal()], 4000)[0]?.trackId).toBe(1_000_000);
+  });
+
+  it('merges a small cork or neck proposal into the full bottle proposal', () => {
+    const fullBottle = proposal(0.2, 0.91);
+    const corkAndNeck = {
+      bounds: { x: 0.235, y: 0.105, width: 0.05, height: 0.12 },
+      confidence: 0.95,
+    };
+    expect(removeNestedBottleProposals([corkAndNeck, fullBottle])).toEqual([fullBottle]);
+    const tracker = new LocalBottleTracker();
+    const visible = tracker.update([corkAndNeck, fullBottle], 1000);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.bounds).toEqual(fullBottle.bounds);
+  });
+
+  it('keeps two adjacent full bottles as separate proposals', () => {
+    const left = proposal(0.1, 0.91);
+    const right = proposal(0.65, 0.91);
+    expect(removeNestedBottleProposals([left, right])).toHaveLength(2);
+  });
+
+  it('retains a bottle identity long enough to reconnect after the camera returns', () => {
+    const tracker = new LocalBottleTracker();
+    const first = tracker.update([proposal()], 1000)[0];
+    expect(first).toBeDefined();
+    tracker.update([], 5000);
+    tracker.update([], 12000);
+    const returned = tracker.update([proposal(0.21)], 18000)[0];
+    expect(returned?.trackId).toBe(first?.trackId);
   });
 
   it('keeps up to 24 spatially distinct bottles visible from one strong shelf observation', () => {
