@@ -175,9 +175,9 @@ function WebLiveCamera(props: NativeProps) {
       segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5, nmsIoUThreshold: 0.45 }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
         segmentationRunner = new SegmentationRunner(provider, {
-          // Keep local bottle geometry responsive on mobile; the runner is
-          // single-flight, so slower devices naturally run at their own pace.
-          minimumIntervalMs: 350,
+          // Target 10Hz local detection. The runner remains single-flight; if inference
+          // exceeds 100ms, the busy guard naturally caps throughput to device speed.
+          minimumIntervalMs: 100,
           maximumFrameAgeMs: 700,
           maximumTracksPerFrame: 8,
         });
@@ -380,7 +380,7 @@ function WebLiveCamera(props: NativeProps) {
 
     // Run sparse Lucas–Kanade flow between detector updates. D-FINE establishes
     // object identity/shape; optical flow carries those boxes across camera
-    // frames at ~15Hz so they remain attached while the camera moves.
+    // frames at display cadence (up to 60Hz) so boxes remain visually attached while the camera moves.
     const startOpticalFlow = () => {
       if (disposed || !pageVisible || opticalFlowFrame || !callbacksRef.current.recognitionEnabled) return;
       const tick = (time: number) => {
@@ -390,7 +390,7 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
         const video = videoRef.current;
-        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 16.67) {
           lastOpticalFlowAt = time;
           const displayWidth = video.clientWidth || video.videoWidth;
           const displayHeight = video.clientHeight || video.videoHeight;
@@ -678,10 +678,11 @@ function WebLiveCamera(props: NativeProps) {
       void Promise.resolve(ensureSegmentationRunner()).then(() => {
         if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
         void runLocalDetection();
-        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 350);
+        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 100);
       });
     };
 
+    // Cloud identity reads remain deliberately separate from the 10Hz local detector.
     // Keep a single request in flight and pace requests by start time, not by
     // adding a full delay after the provider response. This stays below the
     // server's 30/minute limit even when inference is fast.
