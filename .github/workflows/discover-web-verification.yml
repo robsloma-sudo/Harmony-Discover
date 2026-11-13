@@ -41,3 +41,60 @@ jobs:
 
       - name: Build browser application
         run: npm run build:web
+
+  inspect-dfine-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ONNX inspection tooling
+        run: python -m pip install --disable-pip-version-check onnx
+
+      - name: Download pinned D-FINE model
+        run: |
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx" \
+            --output /tmp/dfine_seg_n_coco.onnx
+          sha256sum /tmp/dfine_seg_n_coco.onnx
+          test "$(stat -c%s /tmp/dfine_seg_n_coco.onnx)" -gt 1000000
+
+      - name: Validate and report graph contract
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          import json
+          import math
+          import onnx
+          from onnx import shape_inference
+
+          model = onnx.load("/tmp/dfine_seg_n_coco.onnx", load_external_data=True)
+          onnx.checker.check_model(model)
+          graph = shape_inference.infer_shapes(model).graph
+
+          def dims(value_info):
+              tensor = value_info.type.tensor_type
+              return [dim.dim_value if dim.HasField("dim_value") else dim.dim_param or "?" for dim in tensor.shape.dim]
+
+          counts = Counter(f"{node.domain or 'ai.onnx'}::{node.op_type}" for node in graph.node)
+          initializers = [{"name": item.name, "dims": list(item.dims), "data_type": item.data_type} for item in graph.initializer]
+          report = {
+              "ir_version": model.ir_version,
+              "opsets": [{"domain": item.domain or "ai.onnx", "version": item.version} for item in model.opset_import],
+              "inputs": [{"name": item.name, "dims": dims(item)} for item in graph.input if item.name not in {x.name for x in graph.initializer}],
+              "outputs": [{"name": item.name, "dims": dims(item)} for item in graph.output],
+              "node_count": len(graph.node),
+              "operator_counts": dict(sorted(counts.items())),
+              "custom_domains": sorted({node.domain for node in graph.node if node.domain and node.domain != "ai.onnx"}),
+              "initializer_count": len(initializers),
+              "largest_initializers": sorted(initializers, key=lambda item: math.prod(item["dims"]), reverse=True)[:15],
+              "metadata": {item.key: item.value for item in model.metadata_props},
+          }
+          print(json.dumps(report, indent=2))
+          PY
