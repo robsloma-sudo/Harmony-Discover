@@ -26,14 +26,11 @@ export type ARTrackingUpdate = {
 
 export type ARViewEvent = { nativeEvent: { state?: string; reason?: string; message?: string } };
 
-export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraRayBasis?: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
-export type NativeSpatialAnchor = { physicalObjectId: string; x: number; y: number; z: number; state: 'confirmed' | 'potential' | 'occluded' };
+export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
 
 export type ARKitCameraPose = { width: number; height: number; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; imageOrientation: number };
 
 type NativeProps = ViewProps & {
-  spatialAnchors?: NativeSpatialAnchor[];
-  onSpatialAnchorStatus?: (event: { nativeEvent: { activeCount: number } }) => void;
   active?: boolean;
   recognitionEnabled?: boolean;
   trackingSeeds?: Array<{ trackId: number; sourceTimestamp: number; x: number; y: number; width: number; height: number; confidence: number }>;
