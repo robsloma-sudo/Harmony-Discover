@@ -4,7 +4,7 @@ import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import { readLiveFrame, readLiveLabelBatch, type BottleRead, type LabelBatchRead } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
-import { sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
+import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker } from './localBottleTracker';
@@ -134,7 +134,7 @@ function WebLiveCamera(props: NativeProps) {
     let lastSentFrameSignature: Uint8Array | null = null;
     let lastLiveReadAt = 0;
     let lastLiveBottleCount = 0;
-    const unchangedFrameHeartbeatMs = 15_000;
+    const unchangedFrameHeartbeatMs = 7_500;
     const emptyFrameRetryMs = 5_000;
     let nextLabelBatchAt = Date.now() + 2200;
     const labelReadsByTrack = new Map<number, LabelBatchRead>();
@@ -181,6 +181,32 @@ function WebLiveCamera(props: NativeProps) {
     const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
     let barcodeDetector: BarcodeDetectorLike | null = null;
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
+    const decodeBarcodeFrame = (sourceCanvas: HTMLCanvasElement, frameTimestamp: number) => {
+      const barcodeCanvas = document.createElement('canvas');
+      barcodeCanvas.width = sourceCanvas.width;
+      barcodeCanvas.height = sourceCanvas.height;
+      barcodeCanvas.getContext('2d')?.drawImage(sourceCanvas, 0, 0);
+      void (async () => {
+        let decodedBarcodes: Array<{ rawValue: string; format: string }> = [];
+        if (barcodeDetector) {
+          try { decodedBarcodes = await barcodeDetector.detect(barcodeCanvas); } catch { decodedBarcodes = []; }
+        }
+        return decodedBarcodes.length ? decodedBarcodes : decodeEanFromCanvas(barcodeCanvas);
+      })().then(decodedBarcodes => {
+        if (disposed || !decodedBarcodes.length) return;
+        callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: {
+          text: [],
+          barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })),
+          barcodeStatus: 'available',
+          classifications: [],
+          frameTimestamp,
+          imageWidth: barcodeCanvas.width,
+          imageHeight: barcodeCanvas.height,
+        } });
+      }).catch(() => {
+        // Barcode support is best-effort; decoder failures are non-fatal.
+      });
+    };
     let lastRecognitionStartedAt = 0;
     // Full-frame reads and label batches share the DEV endpoint's 30-request/minute quota.
     // Each path is paced at 4.4s and recognitionBusy serializes them under the shared ceiling.
@@ -538,6 +564,7 @@ function WebLiveCamera(props: NativeProps) {
       recognitionBusy = true;
       lastRecognitionStartedAt = Date.now();
       let labelFrameCanvas: HTMLCanvasElement | null = null;
+      let nextRecognitionDelay: number | null = null;
       try {
         const canvas = document.createElement('canvas');
         labelFrameCanvas = canvas;
@@ -569,47 +596,18 @@ function WebLiveCamera(props: NativeProps) {
           canvas.height,
         );
         const now = Date.now();
+        // Local barcode decoding remains active even when cloud recognition is gated.
+        decodeBarcodeFrame(canvas, frameTimestamp);
         const sceneChanged = shouldReadChangedFrame(lastSentFrameSignature, frameSignature);
         const heartbeatMs = lastLiveBottleCount > 0 ? unchangedFrameHeartbeatMs : emptyFrameRetryMs;
         if (!sceneChanged && now - lastLiveReadAt < heartbeatMs) {
-          // Keep local barcode decoding alive, but do not spend an Anthropic read
-          // on an unchanged shelf. Empty frames retry sooner so a missed first
-          // detection cannot leave a static camera view blind for long.
+          // Do not spend a cloud read on an unchanged shelf. Schedule the next
+          // attempt for the exact remaining heartbeat, not another full 4.4s.
+          nextRecognitionDelay = frameGateRetryDelay(now, lastLiveReadAt, heartbeatMs);
           labelFrameCanvas = null;
           return;
         }
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
-        // Barcode decoding is deliberately independent from bottle recognition.
-        // Keep this frame's canvas and timestamp so a late barcode result can be
-        // traced to the image that produced it without delaying the bottle boxes.
-        {
-          const barcodeCanvas = document.createElement('canvas');
-          barcodeCanvas.width = canvas.width;
-          barcodeCanvas.height = canvas.height;
-          barcodeCanvas.getContext('2d')?.drawImage(canvas, 0, 0);
-          // Prefer native decoding, then fall back to local EAN/UPC decoding
-          // for iOS Safari versions without BarcodeDetector support.
-          void (async () => {
-            let decodedBarcodes: Array<{ rawValue: string; format: string }> = [];
-            if (barcodeDetector) {
-              try { decodedBarcodes = await barcodeDetector.detect(barcodeCanvas); } catch { decodedBarcodes = []; }
-            }
-            return decodedBarcodes.length ? decodedBarcodes : decodeEanFromCanvas(barcodeCanvas);
-          })().then(decodedBarcodes => {
-            if (disposed || !decodedBarcodes.length) return;
-            callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: {
-              text: [],
-              barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })),
-              barcodeStatus: 'available',
-              classifications: [],
-              frameTimestamp,
-              imageWidth: barcodeCanvas.width,
-              imageHeight: barcodeCanvas.height,
-            } });
-          }).catch(() => {
-            // Barcode support is best-effort; decoder failures are non-fatal.
-          });
-        }
         const result = await readLiveFrame(jpeg);
         if (disposed) return;
         lastSentFrameSignature = frameSignature;
@@ -633,7 +631,7 @@ function WebLiveCamera(props: NativeProps) {
         recognitionBusy = false;
         if (labelFrameCanvas && !disposed) void readCandidateLabels(labelFrameCanvas);
         const elapsed = Date.now() - lastRecognitionStartedAt;
-        scheduleRecognition(Math.max(0, recognitionIntervalMs - elapsed));
+        scheduleRecognition(nextRecognitionDelay ?? Math.max(0, recognitionIntervalMs - elapsed));
       }
     };
 
