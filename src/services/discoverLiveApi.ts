@@ -83,6 +83,7 @@ export type BottleIntelligenceProfile = {
   packages: Array<Record<string, unknown>>;
   attributes: BottleIntelligenceAttribute[];
   evidence: BottleIntelligenceEvidence[];
+  sightings: { total: number; confirmed: number };
 };
 
 /** Loads shared product intelligence only after a user opens a bottle profile. */
@@ -95,6 +96,10 @@ export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'br
     packages: Array.isArray(result.packages) ? result.packages : [],
     attributes: Array.isArray(result.attributes) ? result.attributes : [],
     evidence: Array.isArray(result.evidence) ? result.evidence : [],
+    sightings: {
+      total: Number(result.sightings?.total) || 0,
+      confirmed: Number(result.sightings?.confirmed) || 0,
+    },
   };
 }
 
