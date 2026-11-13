@@ -8,7 +8,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.9";
+const VERSION = "0.4.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
 const FALLBACK = "claude-haiku-4-5";
@@ -358,12 +358,10 @@ Deno.serve(async (req: Request) => {
 
     // Exact identity only. Ambiguous or case-mismatched identities remain unknown;
     // a scan must never load intelligence belonging to a neighboring SKU.
-    const { data: products, error: productError } = await db
-      .from("discover_products")
-      .select("id,brand_name,product_name,product_class,expression_variant,upc_gtin,ean,status,match_confidence,identity_payload")
-      .eq("brand_name", brand)
-      .eq("product_name", productName)
-      .limit(2);
+    const { data: products, error: productError } = await db.rpc("discover_find_exact_product", {
+      p_brand: brand,
+      p_product: productName,
+    });
     if (productError) return reply({ error: "bottle_profile_lookup_failed" }, 503, origin);
     if (!Array.isArray(products) || products.length !== 1) {
       return reply({ ok: true, found: false, ambiguous: Array.isArray(products) && products.length > 1, category }, 200, origin);
