@@ -3,6 +3,7 @@ import { validateBottleVolumeProfile, type BottleVolumeProfile } from './bottleV
 
 const STORAGE_KEY = 'harmony-discover:bottle-volume-profiles:v1';
 let cachedProfiles: Record<string, BottleVolumeProfile> = {};
+let profileWriteQueue: Promise<void> = Promise.resolve();
 
 export function getCachedBottleVolumeProfile(identityKey: string): BottleVolumeProfile | undefined {
   return cachedProfiles[identityKey];
@@ -35,12 +36,18 @@ export async function loadBottleVolumeProfiles(): Promise<ProfileRegistry> {
   }
 }
 
-export async function saveBottleVolumeProfileForIdentity(identityKey: string, profile: BottleVolumeProfile): Promise<void> {
-  if (!identityKey.trim() || !validateBottleVolumeProfile(profile)) throw new Error('A verified bottle identity and valid calibration profile are required.');
-  const registry = await loadBottleVolumeProfiles();
-  registry.profiles[identityKey] = profile;
-  cachedProfiles[identityKey] = profile;
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(registry));
+export function saveBottleVolumeProfileForIdentity(identityKey: string, profile: BottleVolumeProfile): Promise<void> {
+  if (!identityKey.trim() || !validateBottleVolumeProfile(profile)) {
+    return Promise.reject(new Error('A verified bottle identity and valid calibration profile are required.'));
+  }
+  const task = profileWriteQueue.then(async () => {
+    const registry = await loadBottleVolumeProfiles();
+    registry.profiles[identityKey] = profile;
+    cachedProfiles[identityKey] = profile;
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(registry));
+  });
+  profileWriteQueue = task.catch(() => undefined);
+  return task;
 }
 
 export async function getBottleVolumeProfileForIdentity(identityKey: string): Promise<BottleVolumeProfile | null> {
