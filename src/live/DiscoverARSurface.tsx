@@ -480,7 +480,8 @@ function FallbackNativeCamera(props: NativeProps) {
               barcodes: [], classifications: result.bottles.map(bottle => ({ identifier: bottle.category, confidence: String(bottle.confidence) })),
               frameTimestamp: Date.now(), bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics, barcodeStatus: 'unsupported',
             } });
-            const tracked = trackNativeBottleReads(result.bottles);
+            if (generation !== nativeSessionGeneration.current) return;
+        const tracked = trackNativeBottleReads(result.bottles);
             props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, bottle: track.bottle })) } });
           }
         }
@@ -496,7 +497,6 @@ function FallbackNativeCamera(props: NativeProps) {
 type RecognitionTrack = { trackId: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; bottle: BottleRead };
 let nativeRecognitionTracks: RecognitionTrack[] = [];
 let nextNativeRecognitionTrackId = 1;
-let nativeFrameReadBusy = false;
 
 function trackNativeBottleReads(bottles: BottleRead[]) {
   const now = Date.now();
@@ -543,17 +543,39 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
 
 export function DiscoverARSurface(props: NativeProps) {
   const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
+  const nativeFrameReadBusy = useRef(false);
+  const nativeSessionGeneration = useRef(0);
+  const resetNativeSession = () => {
+    nativeSessionGeneration.current += 1;
+    nativeFrameReadBusy.current = false;
+    nativeRecognitionTracks = [];
+    nextNativeRecognitionTrackId = 1;
+    nativeVisionSignals.current = null;
+  };
+  useEffect(() => () => {
+    nativeSessionGeneration.current += 1;
+    nativeFrameReadBusy.current = false;
+  }, []);
   if (Platform.OS === 'web') return <WebLiveCamera {...props} />;
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
   return <NativeARView {...props}
+    onARReady={event => {
+      if (event.nativeEvent.state === 'starting') resetNativeSession();
+      props.onARReady?.(event);
+    }}
+    onTrackingUpdate={event => {
+      if (event.nativeEvent.state === 'paused' || event.nativeEvent.state === 'interrupted' || event.nativeEvent.state === 'not_available') resetNativeSession();
+      props.onTrackingUpdate?.(event);
+    }}
     onRecognitionUpdate={event => {
       const value = event.nativeEvent;
       nativeVisionSignals.current = { text: value.text || [], barcodes: value.barcodes || [], timestamp: Date.now() };
       props.onRecognitionUpdate?.({ nativeEvent: { ...value, barcodeStatus: 'available' } });
     }}
     onFrame={event => {
-      if (nativeFrameReadBusy) return;
-      nativeFrameReadBusy = true;
+      if (nativeFrameReadBusy.current) return;
+      nativeFrameReadBusy.current = true;
+      const generation = nativeSessionGeneration.current;
       const frame = event.nativeEvent;
       // The attached metric depth and image share this exact ARFrame timestamp.
       if (frame.depthEstimate) props.onDepthEstimate?.({ nativeEvent: frame.depthEstimate });
@@ -575,8 +597,12 @@ export function DiscoverARSurface(props: NativeProps) {
         const tracked = trackNativeBottleReads(result.bottles);
         props.onVisualCandidates?.({ nativeEvent: { count: tracked.length, depthFrame: frame.depthEstimate, candidates: tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle })) } });
       }).catch(error => {
-        props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
-      }).finally(() => { nativeFrameReadBusy = false; });
+        if (generation === nativeSessionGeneration.current) {
+          props.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'native_frame_read_failed' } });
+        }
+      }).finally(() => {
+        if (generation === nativeSessionGeneration.current) nativeFrameReadBusy.current = false;
+      });
     }}
   />;
 }
