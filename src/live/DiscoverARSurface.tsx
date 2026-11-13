@@ -11,6 +11,7 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
+import { isConfirmedWebBottleTrack } from './webTrackPolicy';
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -165,7 +166,7 @@ function WebLiveCamera(props: NativeProps) {
     let webTracks: WebTrack[] = [];
     let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }> }> = [];
     let nextWebTrackId = 1;
-    const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
+    const intersectionOverUnion = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
       const right = Math.min(a.x + a.width, b.x + b.width), bottom = Math.min(a.y + a.height, b.y + b.height);
       const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
@@ -216,7 +217,7 @@ function WebLiveCamera(props: NativeProps) {
       webTracks = next;
       // Do not expose one-frame guesses as visible bottle tracks. A track must
       // be seen twice and may survive only one missed recognition interval.
-      return next.filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+      return next.filter(isConfirmedWebBottleTrack)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
     };
 
@@ -225,9 +226,11 @@ function WebLiveCamera(props: NativeProps) {
 
     const publishVisibleCandidates = () => {
       const cloudCandidates = webTracks
-        .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
+        .filter(isConfirmedWebBottleTrack)
         .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
-      const localCandidates = latestLocalCandidates.map(candidate => {
+      const localCandidates = latestLocalCandidates
+        .filter(candidate => !cloudCandidates.some(cloud => intersectionOverUnion(cloud, candidate) > 0.25))
+        .map(candidate => {
         const read = labelReadsByTrack.get(candidate.trackId);
         if (!read) return candidate;
         const bottle: BottleRead = {
