@@ -55,7 +55,11 @@ final class DfineNativeRuntime {
     )
     let modelURL = cacheRoot.appendingPathComponent("dfine_seg_n_coco.onnx", isDirectory: false)
     if !FileManager.default.fileExists(atPath: modelURL.path) {
-      let sourceURL = URL(string: "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx")!
+      guard let sourceURL = URL(string: "https://raw.githubusercontent.com/robsloma-sudo/Harmony-Discover/a3b8b5c12fa73c5eb84b475aa82e9d2644564f7f/public/models/dfine_seg_n_coco.onnx") else {
+        throw NSError(domain: "DfineNativeRuntime", code: 5, userInfo: [
+          NSLocalizedDescriptionKey: "Pinned D-FINE model URL is invalid."
+        ])
+      }
       let (temporaryURL, response) = try await URLSession.shared.download(from: sourceURL)
       guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
         throw NSError(domain: "DfineNativeRuntime", code: 4, userInfo: [
