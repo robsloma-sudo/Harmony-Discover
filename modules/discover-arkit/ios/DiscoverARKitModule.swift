@@ -235,7 +235,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     let imageWidth = swapsDimensions ? rawHeight : rawWidth
     let imageHeight = swapsDimensions ? rawWidth : rawHeight
 
-    visionQueue.async { [weak self, pixelBufferBox] in
+    visionQueue.async { [weak self, pixelBufferBox, synchronizedDepth] in
       defer { self?.visionFrameGate.signal() }
       guard let self else { return }
       let pixelBuffer = pixelBufferBox.value
