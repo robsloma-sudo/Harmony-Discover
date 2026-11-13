@@ -31,6 +31,8 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
   const metadataRef = useRef(new Map<string, AnchorMetadata>());
   const identityRegistryRef = useRef(new PhysicalBottleIdentityRegistry(0.85, 0.9));
   const tracksRef = useRef<SpatialTrack[]>([]);
+  const processedCandidateKeysRef = useRef(new Set<string>());
+  const candidatePhysicalIdsRef = useRef(new Map<string, string>());
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -38,13 +40,15 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
     metadataRef.current.clear();
     identityRegistryRef.current.clear();
     tracksRef.current = [];
+    processedCandidateKeysRef.current.clear();
+    candidatePhysicalIdsRef.current.clear();
     setRevision(value => value + 1);
   }, [sessionKey]);
 
   useEffect(() => {
     const paired = candidates.flatMap(candidate => {
       const frame = candidate.depthFrame;
-      if (!frame || candidate.timestamp === undefined) return [];
+      if (!frame || candidate.timestamp === undefined || !Number.isFinite(candidate.timestamp)) return [];
       const result = buildBottleWorldObservations([{
         trackId: candidate.trackId,
         x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height,
@@ -52,23 +56,23 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
         contour: candidate.contour,
         bottle: candidate.bottle,
       }], frame);
-      return result.observations.map(observation => ({ observation, candidate }));
+      return result.observations.map(observation => ({
+        observation,
+        candidate,
+        key: `${candidate.trackId}:${candidate.timestamp!.toFixed(6)}`,
+      }));
     });
-    const now = Date.now();
-    const update = trackerRef.current!.update(paired.map(({ observation }) => ({
-      worldPoint: observation.worldPoint,
-      confidence: observation.confidence,
-      geometryComplete: observation.geometryComplete,
-      visualKey: observation.visualKey,
-    })), now);
+    if (!paired.length) return;
 
-    tracksRef.current = update.tracks;
-    paired.forEach(({ observation, candidate }, index) => {
-      const physical = update.observed[index];
-      if (!physical) return;
+    const now = Date.now();
+    const upsertMetadata = (
+      physicalObjectId: string,
+      observation: (typeof paired)[number]["observation"],
+      candidate: Candidate,
+    ) => {
       const bottle = candidate.bottle;
       if (bottle?.state === "matched" && bottle.match?.id && bottle.brand && bottle.product) {
-        identityRegistryRef.current.lock(physical.physicalObjectId, {
+        identityRegistryRef.current.lock(physicalObjectId, {
           catalogId: bottle.match.id,
           brand: bottle.match.brand || bottle.brand,
           product: bottle.match.product || bottle.product,
@@ -77,24 +81,64 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, curren
           matched: true,
         }, now);
       }
-      const lockedIdentity = identityRegistryRef.current.get(physical.physicalObjectId);
+      const lockedIdentity = identityRegistryRef.current.get(physicalObjectId);
       const observedName = [bottle?.brand, bottle?.product].filter(Boolean).join(" ").trim()
         || bottle?.category?.replace(/_/g, " ");
       const name = lockedIdentity
         ? [lockedIdentity.brand, lockedIdentity.product].filter(Boolean).join(" ")
         : observedName || "BOTTLE";
-      const previousMetadata = metadataRef.current.get(physical.physicalObjectId);
-      metadataRef.current.set(physical.physicalObjectId, {
+      const previousMetadata = metadataRef.current.get(physicalObjectId);
+      metadataRef.current.set(physicalObjectId, {
         worldCorners: observation.worldCorners,
         name: lockedIdentity?.brand && lockedIdentity.product ? name : (observedName || previousMetadata?.name || "BOTTLE"),
         confidence: Math.max(observation.confidence, lockedIdentity?.confidence ?? 0),
         verified: !!lockedIdentity,
         candidate,
       });
-    });
+    };
 
-    const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
-    for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
+    // A depth-frame state update can re-render this component many times while
+    // the same cloud detection is still in memory. Count each source-frame
+    // observation exactly once or a single read can falsely satisfy the
+    // tracker's two-frame confirmation threshold.
+    const fresh = paired.filter(item => !processedCandidateKeysRef.current.has(item.key));
+    for (const item of paired) {
+      if (processedCandidateKeysRef.current.has(item.key)) {
+        const physicalId = candidatePhysicalIdsRef.current.get(item.key);
+        if (physicalId) upsertMetadata(physicalId, item.observation, item.candidate);
+      }
+    }
+
+    if (fresh.length) {
+      const update = trackerRef.current!.update(fresh.map(({ observation }) => ({
+        worldPoint: observation.worldPoint,
+        confidence: observation.confidence,
+        geometryComplete: observation.geometryComplete,
+        visualKey: observation.visualKey,
+      })), now);
+
+      tracksRef.current = update.tracks;
+      fresh.forEach(({ observation, candidate, key }, index) => {
+        processedCandidateKeysRef.current.add(key);
+        const physical = update.observed[index];
+        if (!physical) return;
+        candidatePhysicalIdsRef.current.set(key, physical.physicalObjectId);
+        upsertMetadata(physical.physicalObjectId, observation, candidate);
+      });
+
+      // Keep the source-frame dedupe cache bounded for long-running camera sessions.
+      while (processedCandidateKeysRef.current.size > 512) {
+        const oldest = processedCandidateKeysRef.current.values().next().value;
+        if (oldest === undefined) break;
+        processedCandidateKeysRef.current.delete(oldest);
+        candidatePhysicalIdsRef.current.delete(oldest);
+      }
+
+      const active = new Set(update.tracks.filter(track => track.state !== "lost").map(track => track.physicalObjectId));
+      for (const id of metadataRef.current.keys()) if (!active.has(id)) metadataRef.current.delete(id);
+      for (const [key, id] of candidatePhysicalIdsRef.current) if (!active.has(id)) candidatePhysicalIdsRef.current.delete(key);
+    }
+
     setRevision(value => value + 1);
   }, [candidates, currentDepthFrame?.timestamp]);
 
