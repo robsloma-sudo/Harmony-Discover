@@ -206,6 +206,19 @@ function WebLiveCamera(props: NativeProps) {
           const score = overlap >= 0.08 ? overlap : (distance <= 0.20 ? 0.08 * (1 - distance / 0.20) : 0);
           if (score > bestScore) { bestScore = score; bestIndex = index; }
         });
+        // If the camera was turned away and returns at a different framing,
+        // reconnect a uniquely identified product to its retained track ID.
+        const identityOf = (bottle: BottleRead) => [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product]
+          .map(value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter(Boolean).join(' ');
+        if (bestIndex < 0) {
+          const identity = identityOf(detection.bottle);
+          if (identity) {
+            const matchingPrior = webTracks.map((track, index) => ({ track, index }))
+              .filter(item => !used.has(item.index) && identityOf(item.track.bottle) === identity);
+            const matchingCurrent = detections.filter(item => identityOf(item.bottle) === identity).length;
+            if (matchingPrior.length === 1 && matchingCurrent === 1) bestIndex = matchingPrior[0]!.index;
+          }
+        }
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
         if (bestIndex >= 0) used.add(bestIndex);
         const blend = previous ? 0.38 : 1;
