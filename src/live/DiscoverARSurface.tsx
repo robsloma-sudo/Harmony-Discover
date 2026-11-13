@@ -162,7 +162,7 @@ function WebLiveCamera(props: NativeProps) {
     let webTracks: WebTrack[] = [];
     let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; contour?: Array<{ x: number; y: number }> }> = [];
     let nextWebTrackId = 1;
-    const intersectionOverUnion = (a: WebTrack, b: { x: number; y: number; width: number; height: number }) => {
+    const intersectionOverUnion = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
       const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);
       const right = Math.min(a.x + a.width, b.x + b.width), bottom = Math.min(a.y + a.height, b.y + b.height);
       const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
