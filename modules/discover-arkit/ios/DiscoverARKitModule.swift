@@ -51,6 +51,11 @@ public class DiscoverARKitModule: Module {
       try DfineNativeRuntime.shared.initialize(modelPath: modelPath, cacheDirectory: cacheDirectory)
     }
 
+    // Research-only synthetic inference check; never called by the live scanner.
+    AsyncFunction("runDfineNativeSmokeTest") { () -> [String: Any] in
+      try DfineNativeRuntime.shared.smokeTest()
+    }
+
     AsyncFunction("analyzeLiquidLevels") { (imageBase64: String, boxes: [[String: Double]], promise: Promise) in
       DispatchQueue.global(qos: .utility).async {
         promise.resolve(Self.analyzeLiquidLevels(imageBase64, boxes: boxes))
