@@ -177,29 +177,34 @@ public class DiscoverARKitModule: Module {
       // those rows. Hand/glass occlusion that is not separable is rejected by
       // the multi-column support and temporal-consensus gates.
       var occludedRows = Set<Int>()
-      for y in stride(from: top + Int(Double(cropHeight) * 0.06), to: bottom - Int(Double(cropHeight) * 0.06), by: 2) {
+      let occlusionStartY = top + Int(Double(cropHeight) * 0.06)
+      let occlusionEndY = bottom - Int(Double(cropHeight) * 0.06)
+      var occlusionY = occlusionStartY
+      while occlusionY < occlusionEndY {
         var samples: [Double] = []
         samples.reserveCapacity(9)
-        for index in 0..<9 {
-          let fraction = 0.18 + (Double(index) * 0.64 / 8.0)
-          let sampleX = left + Int(fraction * Double(cropWidth - 1))
-          samples.append(luma(sampleX, y))
+        for sampleIndex in 0..<9 {
+          let sampleFraction = 0.18 + (Double(sampleIndex) * 0.64 / 8.0)
+          let sampleX = left + Int(sampleFraction * Double(cropWidth - 1))
+          samples.append(luma(sampleX, occlusionY))
         }
         var sampleSum = 0.0
         for sample in samples {
           sampleSum += sample
         }
-        let sampleAverage = sampleSum / Double(samples.count)
+        let sampleCount = Double(samples.count)
+        let sampleAverage = sampleSum / sampleCount
         var squaredDeviationSum = 0.0
         for sample in samples {
           let deviation = sample - sampleAverage
           squaredDeviationSum += deviation * deviation
         }
-        let variance = squaredDeviationSum / Double(samples.count)
+        let variance = squaredDeviationSum / sampleCount
         if sqrt(variance) >= 34 {
-          occludedRows.insert(y)
-          occludedRows.insert(min(bottom - 1, y + 1))
+          occludedRows.insert(occlusionY)
+          occludedRows.insert(min(bottom - 1, occlusionY + 1))
         }
+        occlusionY += 2
       }
 
       var bestY = -1
