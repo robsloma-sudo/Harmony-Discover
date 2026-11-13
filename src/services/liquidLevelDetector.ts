@@ -209,6 +209,59 @@ export function detectLiquidBoundaryCandidate(
 }
 
 
+
+/**
+ * Finds broad, textured horizontal obstructions such as printed labels.
+ * This is a conservative suspicion mask, not a semantic hand detector.
+ * It only masks bands with sustained high cross-column texture; other
+ * obstructions are handled by the detector's multi-column support gate.
+ */
+export function detectLiquidOcclusionBands(frame: PixelFrame, bounds: PixelBounds): OcclusionBand[] {
+  if (!frame || !frame.data || frame.width < 8 || frame.height < 12 ||
+      !bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return [];
+  const left = Math.max(0, Math.floor(bounds.x + bounds.width * 0.18));
+  const right = Math.min(frame.width, Math.ceil(bounds.x + bounds.width * 0.82));
+  const top = Math.max(0, Math.floor(bounds.y + bounds.height * 0.06));
+  const bottom = Math.min(frame.height, Math.ceil(bounds.y + bounds.height * 0.94));
+  if (right - left < 8 || bottom - top < 16) return [];
+  const samples =  nineColumns();
+  const rowFlags: boolean[] = [];
+  for (let y = top; y < bottom; y += 2) {
+    const values: number[] = [];
+    for (const fraction of samples) {
+      const x = Math.min(right - 1, left + Math.floor(fraction * (right - left - 1)));
+      const offset = (y * frame.width + x) * 4;
+      const alpha = frame.data[offset + 3] ?? 255;
+      if (alpha < 32) continue;
+      values.push(0.2126 * frame.data[offset] + 0.7152 * frame.data[offset + 1] + 0.0722 * frame.data[offset + 2]);
+    }
+    if (values.length < 7) { rowFlags.push(false); continue; }
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    rowFlags.push(Math.sqrt(variance) >= 34);
+  }
+  const bands: OcclusionBand[] = [];
+  const minimumRows = Math.max(3, Math.ceil((bottom - top) * 0.045 / 2));
+  let start = -1;
+  for (let index = 0; index <= rowFlags.length; index += 1) {
+    if (rowFlags[index] && start < 0) start = index;
+    const ends = (!rowFlags[index] || index === rowFlags.length) && start >= 0;
+    if (ends) {
+      if (index - start >= minimumRows) {
+        const bandTop = Math.max(0, ((top + start * 2) - bounds.y) / bounds.height);
+        const bandBottom = Math.min(1, ((top + (index - 1) * 2 + 1) - bounds.y) / bounds.height);
+        if (bandBottom > bandTop) bands.push({ top: bandTop, bottom: bandBottom });
+      }
+      start = -1;
+    }
+  }
+  return bands;
+}
+
+function nineColumns(): number[] {
+  return [0.08, 0.18, 0.28, 0.38, 0.5, 0.62, 0.72, 0.82, 0.92];
+}
+
 /**
  * Creates a dedicated browser worker for pixel analysis. The worker source is
  * assembled from the same detector functions used by unit tests, so the
@@ -232,6 +285,8 @@ export function createLiquidLevelWorker(): Worker | null {
     isOccluded.toString(),
     detectLiquidBoundaryCandidate.toString(),
     assessLiquidOpticalVisibility.toString(),
+    nineColumns.toString(),
+    detectLiquidOcclusionBands.toString(),
     `self.onmessage = (event) => {
       const job = event.data;
       const startedAt = performance.now();
@@ -240,7 +295,8 @@ export function createLiquidLevelWorker(): Worker | null {
         const results = job.tracks.map((track) => ({
           trackId: track.trackId,
           optical: assessLiquidOpticalVisibility(frame, track.bounds),
-          result: detectLiquidBoundaryCandidate(frame, track.bounds),
+          occlusionBands: detectLiquidOcclusionBands(frame, track.bounds),
+          result: detectLiquidBoundaryCandidate(frame, track.bounds, { occlusionBands: detectLiquidOcclusionBands(frame, track.bounds) }),
         }));
         self.postMessage({ id: job.id, timestamp: job.timestamp, results, processingMs: performance.now() - startedAt });
       } catch (error) {
