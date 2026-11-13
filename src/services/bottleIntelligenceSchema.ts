@@ -342,7 +342,7 @@ export function resolveBeverageFamily(category: string, details: Record<string, 
   if (/ros[eé]/.test(hint)) return "wine_rose";
   if (/white wine/.test(hint)) return "wine_white";
   if (/red wine/.test(hint)) return "wine_red";
-  if (category === "wine") return "wine_red"; // UI label remains "Wine"; subtype should be confirmed from label/research.
+  if (category === "wine") return "wine_unknown"; // Never assume red, white or rosé without evidence.
   if (category === "whiskey") return "other_whiskey";
   if (category === "tequila") return "tequila";
   if (category === "mezcal") return "mezcal";
