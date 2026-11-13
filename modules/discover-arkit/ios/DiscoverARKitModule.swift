@@ -514,14 +514,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       let classifyRequest = VNClassifyImageRequest()
       var cloudFrameBase64: String? = nil
       if shouldSendCloudFrame {
-        CVPixelBufferRetain(pixelBuffer)
         retainedTrackingFrames[now] = RetainedTrackingFrame(
           pixelBuffer: pixelBufferBox, orientation: orientation, generation: generation
         )
         for key in retainedTrackingFrames.keys.sorted().dropLast(4) {
-          if let old = retainedTrackingFrames.removeValue(forKey: key) {
-            CVPixelBufferRelease(old.pixelBuffer.value)
-          }
+          _ = retainedTrackingFrames.removeValue(forKey: key)
         }
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let scale = min(1.0, 960.0 / max(image.extent.width, image.extent.height))
@@ -732,9 +729,6 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
   /// Clears retained source images and active Vision requests. Must run on visionQueue.
   private func clearLocalTrackingState() {
-    for frame in retainedTrackingFrames.values {
-      CVPixelBufferRelease(frame.pixelBuffer.value)
-    }
     retainedTrackingFrames.removeAll()
     activeTrackingRequests.removeAll()
     trackingSequenceHandlers.removeAll()
@@ -785,9 +779,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       let newest = self.retainedTrackingFrames.keys.max() ?? 0
       let stale = self.retainedTrackingFrames.keys.filter { $0 < newest - 8.0 }
       for key in stale {
-        if let old = self.retainedTrackingFrames.removeValue(forKey: key) {
-          CVPixelBufferRelease(old.pixelBuffer.value)
-        }
+        _ = self.retainedTrackingFrames.removeValue(forKey: key)
       }
     }
   }
@@ -795,15 +787,11 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   /// Propagates bottle boxes at up to 10 Hz between cloud recognition passes.
   private func processLocalTrackingFrame(_ frame: ARFrame, generation: Int) {
     let pixelBuffer = frame.capturedImage
-    CVPixelBufferRetain(pixelBuffer)
     let pixelBufferBox = SendablePixelBuffer(value: pixelBuffer)
     let timestamp = frame.timestamp
     let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
     visionQueue.async { [weak self, pixelBufferBox] in
-      defer {
-        CVPixelBufferRelease(pixelBufferBox.value)
-        self?.localTrackingFrameGate.signal()
-      }
+      defer { self?.localTrackingFrameGate.signal() }
       guard let self, self.isActive, self.isRecognitionEnabled,
             self.recognitionGeneration == generation,
             !self.activeTrackingRequests.isEmpty else { return }
