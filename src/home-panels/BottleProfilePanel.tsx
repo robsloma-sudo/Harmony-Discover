@@ -85,13 +85,18 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
                   </View>
                 );
               })}
-              {intelligence.evidence.map((evidence, index) => (
-                <View key={String(index) + evidence.source_type + (evidence.source_url || "")} style={styles.source}>
-                  <Text style={styles.sourceTitle}>{evidence.source_name || evidence.source_type.replace(/_/g, " ")}</Text>
-                  <Text style={styles.sourceMeta}>{evidence.attribute_code || "PRODUCT EVIDENCE"} · {evidence.verification_state.replace(/_/g, " ")}{evidence.confidence !== null ? " · " + Math.round(evidence.confidence * 100) + "%" : ""}</Text>
-                  {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
-                </View>
-              ))}
+              {intelligence.evidence.map((evidence, index) => {
+                const observed = asText(evidence.observed_value)
+                  || (evidence.observed_value && typeof evidence.observed_value === "object" ? JSON.stringify(evidence.observed_value) : "");
+                return (
+                  <View key={String(index) + evidence.source_type + (evidence.source_url || "")} style={styles.source}>
+                    <Text style={styles.sourceTitle}>{evidence.source_name || evidence.source_type.replace(/_/g, " ")}</Text>
+                    <Text style={styles.sourceMeta}>{evidence.attribute_code || "PRODUCT EVIDENCE"} · {evidence.verification_state.replace(/_/g, " ")}{evidence.confidence !== null ? " · " + Math.round(evidence.confidence * 100) + "%" : ""}</Text>
+                    {observed ? <Text style={styles.fieldValue}>{observed.slice(0, 240)}</Text> : null}
+                    {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
+                  </View>
+                );
+              })}
             </>
           ) : null}
         </View>
