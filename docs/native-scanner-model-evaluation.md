@@ -29,6 +29,34 @@ The CoreML configuration was approximately 2.16x faster at warm p50 on this macO
 
 Labels matched exactly. The maximum absolute deltas observed were 0.002197 for boxes, 0.00000323 for scores, and 0.759165 for masks. The large mask delta means mask parity is not established; the updated CI now reports mean/p99 deltas and positive-logit agreement so this can be evaluated more usefully.
 
+## iOS runtime integration feasibility
+
+Official ONNX Runtime documentation confirms that the `onnxruntime-objc` CocoaPod for iOS includes CPU and CoreML support, and that its Objective-C API is callable from Swift through a bridging header. The Objective-C API exposes CoreML provider options and session execution.
+
+Relevant official references:
+- https://onnxruntime.ai/docs/get-started/with-obj-c.html
+- https://onnxruntime.ai/docs/api/objectivec/Classes/ORTSessionOptions.html
+- https://onnxruntime.ai/docs/api/objectivec/Classes/ORTCoreMLExecutionProviderOptions.html
+- https://onnxruntime.ai/docs/api/objectivec/Classes/ORTSession.html
+- https://onnxruntime.ai/docs/api/objectivec/Classes/ORTValue.html
+
+The documented Swift surface includes:
+- `ORTSessionOptions.appendCoreMLExecutionProvider(with:)`
+- `ORTCoreMLExecutionProviderOptions.createMLProgram`
+- `ORTCoreMLExecutionProviderOptions.onlyAllowStaticInputShapes`
+- `ORTSession(env:modelPath:sessionOptions:)`
+- `ORTSession.run(withInputs:outputNames:runOptions:)`
+
+This means the next native proof of concept should use the official iOS CocoaPod with CoreML enabled rather than attempting an unsupported ONNX-to-CoreML conversion. The existing macOS benchmark already shows that this provider can execute this graph, with a mixed CoreML/CPU partition.
+
+Implementation constraints:
+1. Keep session creation on a background queue and cache exactly one reusable session; the measured macOS cold initialization was about 2.13 seconds.
+2. Keep camera pixel-buffer conversion, resize/letterbox, normalization, and channel ordering explicit and covered by tests. The model expects NCHW float32 [1,3,640,640].
+3. Request the outputs by their actual names: labels, boxes, scores, masks. Confirm output tensor types and shapes at runtime rather than assuming them.
+4. Preserve CPU fallback. Do not require ANE-only execution until device compatibility and fallback behavior are measured.
+5. Confirm how the CocoaPod's headers are imported into this Expo Swift module. The official docs describe a bridging header; if the generated Expo iOS project makes that awkward, add a small Objective-C shim inside the module rather than changing app-wide build settings blindly.
+6. Do not add the dependency or model to the production app in this research PR. First create a separate native spike branch, verify CocoaPods resolution and iOS simulator compilation, then test on physical iPhone hardware.
+
 ## Engineering interpretation
 
 1. CoreML is a promising execution path for this graph, but the 2.13-second session creation cost means the model must be initialized off the camera-critical path and reused. Recreating the session per frame is unacceptable.
