@@ -10,6 +10,7 @@ import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '
 import { WorldBottleAnchorOverlay, type WorldBottleCandidate } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
+import { attachBottleReadsToCandidates } from '../src/services/bottleCandidateAssociation';
 import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
@@ -22,41 +23,6 @@ import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
-
-function bottleBoxIoU(a: BottleRead['box'], b: BottleRead['box']) {
-  const left = Math.max(a.x0, b.x0);
-  const top = Math.max(a.y0, b.y0);
-  const right = Math.min(a.x1, b.x1);
-  const bottom = Math.min(a.y1, b.y1);
-  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
-  const areaA = Math.max(0, a.x1 - a.x0) * Math.max(0, a.y1 - a.y0);
-  const areaB = Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
-  const union = areaA + areaB - intersection;
-  return union > 0 ? intersection / union : 0;
-}
-
-function bottleForCandidate(
-  candidate: { x: number; y: number; width: number; height: number; bottle?: BottleRead },
-  bottles: BottleRead[],
-) {
-  if (candidate.bottle) return candidate.bottle;
-  const candidateBox = {
-    x0: candidate.x,
-    y0: candidate.y,
-    x1: candidate.x + candidate.width,
-    y1: candidate.y + candidate.height,
-  };
-  let best: BottleRead | undefined;
-  let bestScore = 0;
-  for (const bottle of bottles) {
-    const score = bottleBoxIoU(candidateBox, bottle.box);
-    if (score > bestScore) {
-      best = bottle;
-      bestScore = score;
-    }
-  }
-  return bestScore >= 0.25 ? best : undefined;
-}
 
 export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'settings'|'collection'|'taste' } = {}) {
   const insets = useSafeAreaInsets();
@@ -258,9 +224,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onDepthStatus={event => setLiveDepthStatus(event.nativeEvent.status)}
           onDepthEstimate={event => { const value = event.nativeEvent; if ('depthMeters' in value) setLiveDepthFrame(value); }}
           onCameraPose={event => setLiveCameraPose(event.nativeEvent)}
-          onVisualCandidates={event => setLiveCandidates(event.nativeEvent.candidates.map(candidate => ({
+          onVisualCandidates={event => setLiveCandidates(attachBottleReadsToCandidates(event.nativeEvent.candidates, liveBottles).map(candidate => ({
             ...candidate,
-            bottle: bottleForCandidate(candidate, liveBottles),
             depthFrame: event.nativeEvent.depthFrame,
           })))}
           onRecognitionUpdate={event => {
@@ -268,10 +233,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             if (value.bottles) {
               setLiveBottles(value.bottles);
               setLiveReadAt(value.frameTimestamp);
-              setLiveCandidates(previous => previous.map(candidate => ({
-                ...candidate,
-                bottle: bottleForCandidate({ ...candidate, bottle: undefined }, value.bottles || []),
-              })));
+              setLiveCandidates(previous => attachBottleReadsToCandidates(previous, value.bottles || []));
             }
             if (value.barcodes?.length) setLiveBarcodes(previous => { const merged = [...previous]; value.barcodes!.forEach(barcode => { if (!merged.some(item => item.value === barcode.value)) merged.push(barcode); }); return merged.slice(-12); });
             if (value.text?.length) setLiveLabelText(previous => Array.from(new Set([...previous, ...value.text!])).slice(-24));
