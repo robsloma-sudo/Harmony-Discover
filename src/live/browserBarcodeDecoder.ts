@@ -15,7 +15,7 @@ function checksumValid(digits: string, ean8 = false): boolean {
   if (!/^\\d+$/.test(digits) || digits.length !== (ean8 ? 8 : 13)) return false;
   const body = digits.slice(0, -1);
   const sum = [...body].reduce((total, digit, index) => total + Number(digit) * (ean8 ? (index % 2 === 0 ? 3 : 1) : (index % 2 === 0 ? 1 : 3)), 0);
-  return (10 - sum % 10) % 10 === Number(digits.at(-1));
+  return (10 - sum % 10) % 10 === Number(digits[digits.length - 1]);
 }
 
 /** Decode one already-resampled EAN bit sequence (one bit per module). */
