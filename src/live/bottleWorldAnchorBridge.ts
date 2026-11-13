@@ -121,7 +121,7 @@ export function buildBottleWorldObservations(
       worldPoint,
       worldCorners,
       confidence: candidate.confidence,
-      geometryComplete: !!candidate.contour && candidate.contour.length >= 4,
+      geometryComplete: (cameraPoint.highConfidenceSampleCount ?? cameraPoint.sampleCount) >= 4,
       ...(identity ? { visualKey: identity } : {}),
       box,
       depthMetres: cameraPoint.depthMetres,
