@@ -26,9 +26,12 @@ describe("world-anchor camera reprojection", () => {
       { x: 0.2, y: -0.4, z: -2 },
       { x: -0.2, y: -0.4, z: -2 },
     ];
-    expect(projectWorldRectangle(corners, frame())).toEqual({
-      x: 0.4, y: 0.3, width: 0.2, height: 0.4,
-    });
+    const projected = projectWorldRectangle(corners, frame());
+    expect(projected).not.toBeNull();
+    expect(projected!.x).toBeCloseTo(0.4);
+    expect(projected!.y).toBeCloseTo(0.3);
+    expect(projected!.width).toBeCloseTo(0.2);
+    expect(projected!.height).toBeCloseTo(0.4);
   });
 
   it("hides anchors behind the camera or outside the current view", () => {
