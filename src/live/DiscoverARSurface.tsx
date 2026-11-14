@@ -309,6 +309,17 @@ function WebLiveCamera(props: NativeProps) {
           }
         }
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
+        if (previous) {
+          const previousIdentity = identityOf(previous.bottle);
+          const detectedIdentity = identityOf(detection.bottle);
+          // A track ID may be reused only for the same physical bottle. If a
+          // new observation resolves to a different product, discard cached
+          // OCR/catalogue state so the old identity cannot bleed into it.
+          if (previousIdentity && detectedIdentity && previousIdentity !== detectedIdentity) {
+            labelReadsByTrack.delete(previous.id);
+            lastLabelReadAt.delete(previous.id);
+          }
+        }
         if (bestIndex >= 0) used.add(bestIndex);
         // Weight the newest observation more heavily so boxes catch up during camera movement.
         const blend = previous ? 0.58 : 1;
