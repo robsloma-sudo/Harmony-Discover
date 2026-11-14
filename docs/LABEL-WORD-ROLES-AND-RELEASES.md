@@ -65,3 +65,19 @@ product name is flagged as category words; barcode beats a misread line word.
 - Nothing is written to PHG. PHG `product_releases` is empty; `brand_lines` has 4 rows; PHG has two
   E.H. Taylor brand rows ("E. H. Taylor" with 4 products, "Colonel E.H. Taylor" with 0) and no Cured Oak
   product. These are proposals for Rob, not changes.
+
+## Connected to the scanner and liquid level (2026-11-14, test site)
+- `discover-live-autosave` 0.3.0 resolves every bottle before saving. Matched bottles get one Discover
+  product per identity (named brand + line + release); category-only names create no product;
+  research uses the resolved line and release. Unresolved bottles use the old path.
+- The reply carries the identity and `shape_key` = brand|line|size.
+- Liquid-level calibration (Liquid Level audit P0 "product/package correctness") now keys on the
+  shape key — one calibration per bottle shape, shared by every release — and gives no volume when
+  the barcode and the label words disagree. Old catalogue-match rule kept as fallback.
+- Live test (DEV): Rob's Barrel Proof → 2025 release product; Single Barrel → standard; Buffalo Trace
+  "Kentucky Straight Bourbon Whiskey" → saved, no product made. Repeat save → already_saved.
+- Typecheck clean; 360/360 unit tests pass.
+
+Audit items still open: physical iPhone accuracy/performance test, track token + epoch for late
+liquid results, empty/trace labels, calibration provenance/versioning, shared calibration storage
+(profiles are still on the device), append-only inventory ledger (needs schema review + Rob's OK).
