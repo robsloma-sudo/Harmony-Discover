@@ -122,9 +122,11 @@ export function adaptDfineSegOnnxOutput(
   const nmsThreshold = options.nmsIoUThreshold ?? 0.7;
   const modelId = options.modelId ?? 'dfine-seg-coco-instance-onnx';
   const count = output.labels.length;
+  // Boxes-only output (mask head skipped): no masks at all, mask size 0.
+  const boxesOnly = output.maskWidth === 0 && output.maskHeight === 0 && output.masks.length === 0;
   if (![imageWidth, imageHeight, inputWidth, inputHeight, output.maskWidth, output.maskHeight].every(Number.isInteger) ||
       imageWidth < 2 || imageHeight < 2 || inputWidth < 2 || inputHeight < 2 ||
-      output.maskWidth < 2 || output.maskHeight < 2 ||
+      (!boxesOnly && (output.maskWidth < 2 || output.maskHeight < 2)) ||
       output.boxes.length !== count * 4 || output.scores.length !== count ||
       output.masks.length !== count * output.maskWidth * output.maskHeight ||
       !Number.isFinite(sourceTimestampMs)) return [];
@@ -178,6 +180,24 @@ export function adaptDfineSegOnnxOutput(
 
   const instances: SegmentationInstance[] = [];
   for (const candidate of kept) {
+    if (boxesOnly) {
+      // Same pixel snapping as the mask crop; a solid 1x1 mask stands in.
+      const left = Math.max(0, Math.floor(candidate.bounds.x * imageWidth));
+      const top = Math.max(0, Math.floor(candidate.bounds.y * imageHeight));
+      const right = Math.min(imageWidth, Math.ceil((candidate.bounds.x + candidate.bounds.width) * imageWidth));
+      const bottom = Math.min(imageHeight, Math.ceil((candidate.bounds.y + candidate.bounds.height) * imageHeight));
+      if (right - left < 2 || bottom - top < 2) continue;
+      instances.push({
+        width: 1,
+        height: 1,
+        data: new Uint8Array([1]),
+        bounds: { x: left / imageWidth, y: top / imageHeight, width: (right - left) / imageWidth, height: (bottom - top) / imageHeight },
+        detectionConfidence: candidate.score,
+        sourceTimestampMs,
+        modelId,
+      });
+      continue;
+    }
     const maskStart = candidate.index * output.maskWidth * output.maskHeight;
     const mask = output.masks.subarray(maskStart, maskStart + output.maskWidth * output.maskHeight);
     const cropped = cropMask(mask, output.maskWidth, output.maskHeight, imageWidth, imageHeight, candidate.bounds, maskThreshold);

@@ -161,18 +161,28 @@ export class SegmentationRunner {
 
   constructor(private readonly provider: SegmentationProvider, options: SegmentationRunnerOptions = {}) {
     this.now = options.now ?? (() => Date.now());
-    // Allow a 100ms cadence for the 10Hz scanner target; single-flight inference
+    // Fast devices (WebGPU) may run every ~100ms; single-flight inference
     // still prevents overlapping model runs on slower devices.
-    this.minimumIntervalMs = Math.max(250, options.minimumIntervalMs ?? 1000);
+    this.minimumIntervalMs = Math.max(80, options.minimumIntervalMs ?? 1000);
     this.maximumFrameAgeMs = Math.max(50, options.maximumFrameAgeMs ?? 400);
     this.maximumTracksPerFrame = Math.max(1, Math.min(8, options.maximumTracksPerFrame ?? 8));
   }
 
   async runInference(frame: ImageData, frameTimestampMs: number): Promise<SegmentationInstance[]> {
+    const result = await this.runInferenceDetailed(frame, frameTimestampMs);
+    return result.status === 'ran' ? result.instances : [];
+  }
+
+  /**
+   * Like runInference, but says whether the model actually looked at the
+   * frame. 'skipped' (busy, too soon, stale, reset) is not evidence that no
+   * bottles are present and must not count as a detector miss.
+   */
+  async runInferenceDetailed(frame: ImageData, frameTimestampMs: number): Promise<{ status: 'ran'; instances: SegmentationInstance[] } | { status: 'skipped' }> {
     if (this.disposed || this.busy || !finite(frameTimestampMs) ||
         this.now() - this.lastStartedAt < this.minimumIntervalMs ||
-        this.now() - frameTimestampMs > this.maximumFrameAgeMs) return [];
-    if (!frame || frame.width < 2 || frame.height < 2 || frame.data.length !== frame.width * frame.height * 4) return [];
+        this.now() - frameTimestampMs > this.maximumFrameAgeMs) return { status: 'skipped' };
+    if (!frame || frame.width < 2 || frame.height < 2 || frame.data.length !== frame.width * frame.height * 4) return { status: 'skipped' };
 
     this.busy = true;
     this.lastStartedAt = this.now();
@@ -180,14 +190,28 @@ export class SegmentationRunner {
     try {
       const instances = await this.provider.infer(frame, frameTimestampMs);
       if (this.disposed || generation !== this.generation ||
-          this.now() - frameTimestampMs > this.maximumFrameAgeMs) return [];
-      return instances.filter(instance =>
-        finite(instance.sourceTimestampMs) &&
-        Math.abs(instance.sourceTimestampMs - frameTimestampMs) <= 200,
-      );
+          this.now() - frameTimestampMs > this.maximumFrameAgeMs) return { status: 'skipped' };
+      return {
+        status: 'ran',
+        instances: instances.filter(instance =>
+          finite(instance.sourceTimestampMs) &&
+          Math.abs(instance.sourceTimestampMs - frameTimestampMs) <= 200,
+        ),
+      };
     } finally {
       this.busy = false;
     }
+  }
+
+  /** True when the provider reports it can no longer run (e.g. its worker died). */
+  get providerFailed(): boolean {
+    return !!(this.provider as SegmentationProvider & { failed?: boolean }).failed;
+  }
+
+  /** Milliseconds until the cadence limit allows the next inference. */
+  msUntilReady(): number {
+    if (this.busy) return this.minimumIntervalMs;
+    return Math.max(0, this.minimumIntervalMs - (this.now() - this.lastStartedAt));
   }
 
   async runFrame(frame: ImageData, frameTimestampMs: number, seeds: SegmentationSeed[]): Promise<SegmentedTrack[]> {

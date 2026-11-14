@@ -7,14 +7,19 @@ import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEsti
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
-import { LocalBottleTracker } from './localBottleTracker';
+import { LocalBottleTracker, isSameBottle, type LocalBottleCandidate } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { hasBottleIdentityConflict, isConfirmedWebBottleTrack, mergeBottleRead } from './webTrackPolicy';
 import { compensateDetections, projectLabelBox, type TrackPosition } from './trackMotionCompensation';
-import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
+import { rgbaToGrayscale } from './browserOpticalFlow';
+import {
+  CameraMotionHistory, IDENTITY_MOTION, applyMotionToBox, applyMotionToPoint, buildGrayPyramid, clipBoxToFrame,
+  estimateCameraMotion, invertMotion as invertCameraMotion, refineBoxMotion, visibleFraction, type CameraMotion, type GrayPyramid,
+} from './cameraMotion';
+import { computeAppearanceSignature } from './appearanceSignature';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -136,10 +141,24 @@ function WebLiveCamera(props: NativeProps) {
     let opticalFlowFrame = 0;
     let opticalFlowCanvas: HTMLCanvasElement | null = null;
     let opticalFlowContext: CanvasRenderingContext2D | null = null;
-    let previousOpticalGray: Uint8Array | null = null;
+    let previousPyramid: GrayPyramid | null = null;
     let previousOpticalSize = '';
     let lastOpticalFlowAt = 0;
+    let lastPublishAt = 0;
+    let lastPublishedSignature = '';
+    // Whole-frame camera motion: moves every bottle (on and off screen) and
+    // brings late detector/cloud results into the current view.
+    const cameraMotionHistory = new CameraMotionHistory(8_000);
+    let lastCameraMotion: CameraMotion = IDENTITY_MOTION;
+    let lostMotionFrames = 0;
     let localDetectionBusy = false;
+    let detectorFailures = 0;
+    // Names bound to a local bottle track. They stay with the bottle while it
+    // is remembered off screen, so it is named again the moment it returns.
+    const identityByLocalTrack = new Map<number, BottleRead>();
+    // Bottles re-found from memory get one fresh label check before their
+    // remembered name is trusted as verified again.
+    const reverifyTracks = new Set<number>();
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
@@ -163,7 +182,7 @@ function WebLiveCamera(props: NativeProps) {
         recognitionGeneration += 1;
         recognitionEpochStartedAt = Date.now();
         if (recognitionTimer) window.clearTimeout(recognitionTimer);
-        if (localDetectionTimer) window.clearInterval(localDetectionTimer);
+        if (localDetectionTimer) window.clearTimeout(localDetectionTimer);
         recognitionTimer = 0;
         localDetectionTimer = 0;
         localBottleTracker.reset();
@@ -172,12 +191,14 @@ function WebLiveCamera(props: NativeProps) {
         webTracks = [];
         labelReadsByTrack.clear();
         lastLabelReadAt.clear();
+        identityByLocalTrack.clear();
+        reverifyTracks.clear();
         nextWebTrackId = 1;
         lastSentFrameSignature = null;
         lastLiveReadAt = 0;
         lastLiveBottleCount = 0;
-        previousOpticalGray = null;
-        previousOpticalSize = '';
+        resetCameraMotion();
+        lastPublishedSignature = '';
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
         callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
       } else if (callbacksRef.current.recognitionEnabled) {
@@ -187,15 +208,26 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    function resetCameraMotion() {
+      cameraMotionHistory.reset();
+      previousPyramid = null;
+      previousOpticalSize = '';
+      lastCameraMotion = IDENTITY_MOTION;
+      lostMotionFrames = 0;
+    }
+    // Diagnostics only (backend may move from WASM to WebGPU after a check).
+    let detectorProvider: { backend?: string; gpuTrialResult?: string } | null = null;
     const ensureSegmentationRunner = () => {
       if (segmentationRunner || segmentationLoading || segmentationLoadFailed || disposed) return segmentationLoading;
       segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5, nmsIoUThreshold: 0.45 }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
+        detectorProvider = provider as { backend?: string; gpuTrialResult?: string };
         segmentationRunner = new SegmentationRunner(provider, {
-          // Target 10Hz local detection. The runner remains single-flight; if inference
-          // exceeds 100ms, the busy guard naturally caps throughput to device speed.
-          minimumIntervalMs: 350,
-          maximumFrameAgeMs: 700,
+          // Run as often as the device allows: the worker keeps the camera view
+          // smooth, and camera motion moves late results to the current view,
+          // so slow phones are no longer forced to throw results away.
+          minimumIntervalMs: 100,
+          maximumFrameAgeMs: 4_000,
           maximumTracksPerFrame: 8,
         });
       }).catch(error => {
@@ -278,21 +310,10 @@ function WebLiveCamera(props: NativeProps) {
       const union = a.width * a.height + b.width * b.height - intersection;
       return union > 0 ? intersection / union : 0;
     };
-    const isSameBottleBox = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => {
-      if (intersectionOverUnion(a, b) > 0.25) return true;
-      const intersectionWidth = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-      const intersectionHeight = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-      const intersection = intersectionWidth * intersectionHeight;
-      const areaA = a.width * a.height, areaB = b.width * b.height;
-      const smallerArea = Math.min(areaA, areaB), largerArea = Math.max(areaA, areaB);
-      if (!smallerArea || !largerArea || smallerArea / largerArea > 0.42) return false;
-      const coverage = intersection / smallerArea;
-      const parent = areaA >= areaB ? a : b;
-      const child = areaA >= areaB ? b : a;
-      const centered = Math.abs((child.x + child.width / 2) - (parent.x + parent.width / 2)) <= parent.width * 0.32;
-      const upperBottle = child.y + child.height <= parent.y + parent.height * 0.55;
-      return coverage >= 0.72 && centered && upperBottle;
-    };
+    // One physical bottle: overlapping boxes, or a neck/cork/label box that is
+    // part of a whole-bottle box (shared rule with the local tracker).
+    const isSameBottleBox = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+      isSameBottle(a, b);
     // Cross-model boxes can have different extents (cloud label/body box vs
     // local bottle silhouette). Associate by center as well as IoU so one
     // physical bottle is not painted twice merely because box sizes differ.
@@ -377,15 +398,52 @@ function WebLiveCamera(props: NativeProps) {
     // Local D-FINE detection has its own cadence. It must not wait for slower
     // cloud recognition before updating spatial boxes.
 
+    const hasIdentity = (bottle?: BottleRead | null) => !!bottle && !!(bottle.match?.brand || bottle.brand || bottle.match?.product || bottle.product);
+    const toLocalCandidates = (tracks: LocalBottleCandidate[], timestamp: number) => {
+      const previous = new Map(latestLocalCandidates.map(candidate => [candidate.trackId, candidate]));
+      return tracks.map(local => {
+        const trackId = -Math.abs(local.trackId);
+        return {
+          trackId,
+          x: local.bounds.x, y: local.bounds.y,
+          width: local.bounds.width, height: local.bounds.height,
+          confidence: local.confidence, timestamp, source: 'local' as const, contour: local.contour,
+          liquidLevel: previous.get(trackId)?.liquidLevel,
+        };
+      });
+    };
+    // Carry names and reads across tracker merges (a neck track folded into its bottle).
+    const migrateLocalTrackIds = (merged: Array<{ from: number; to: number }>) => {
+      for (const { from, to } of merged) {
+        const source = -Math.abs(from), target = -Math.abs(to);
+        const read = labelReadsByTrack.get(source);
+        if (read && !labelReadsByTrack.has(target)) labelReadsByTrack.set(target, { ...read, trackId: target });
+        const identity = identityByLocalTrack.get(source);
+        if (identity && !identityByLocalTrack.has(target)) identityByLocalTrack.set(target, identity);
+        const readAt = lastLabelReadAt.get(source);
+        if (readAt !== undefined && !lastLabelReadAt.has(target)) lastLabelReadAt.set(target, readAt);
+        labelReadsByTrack.delete(source);
+        identityByLocalTrack.delete(source);
+        lastLabelReadAt.delete(source);
+        liquidHistoryByTrack.delete(source);
+        if (reverifyTracks.delete(source)) reverifyTracks.add(target);
+      }
+    };
+
     const publishVisibleCandidates = () => {
-      // Prefer a fresh local geometry update over a cloud box that has already
-      // missed a recognition cycle. Otherwise keep the confirmed cloud track
-      // visible while local segmentation catches up.
-      const freshLocalCandidates = latestLocalCandidates.filter(local => Date.now() - local.timestamp <= 900);
+      lastPublishAt = performance.now();
+      // Local geometry (detector + camera motion) is preferred; a confirmed
+      // cloud box is shown only where no local box covers the same bottle.
+      const now = Date.now();
+      const freshLocalCandidates = latestLocalCandidates.filter(local => now - local.timestamp <= 2_500);
       const cloudCandidates = webTracks
         .filter(isConfirmedWebBottleTrack)
+        .filter(track => visibleFraction(track) >= 0.5)
         .filter(track => !freshLocalCandidates.some(local => isCrossSourceSameBottle(track, local)))
-        .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour, bottle: track.bottle }));
+        .map(track => {
+          const box = clipBoxToFrame({ x: track.x, y: track.y, width: track.width, height: track.height });
+          return { trackId: track.id, ...box, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour, bottle: track.bottle };
+        });
       const localCandidates = freshLocalCandidates
         .filter(candidate => !cloudCandidates.some(cloud => isCrossSourceSameBottle(cloud, candidate)))
         .map(candidate => {
@@ -393,10 +451,14 @@ function WebLiveCamera(props: NativeProps) {
         // bottle identity still belongs to its confirmed cloud track. Preserve
         // that identity so a box does not regress to an anonymous placeholder.
         const matchingCloud = webTracks.find(track =>
-          isConfirmedWebBottleTrack(track) && isCrossSourceSameBottle(track, candidate)
+          isConfirmedWebBottleTrack(track) && visibleFraction(track) >= 0.5 && isCrossSourceSameBottle(track, candidate)
         );
+        if (matchingCloud && hasIdentity(matchingCloud.bottle)) identityByLocalTrack.set(candidate.trackId, matchingCloud.bottle);
         const read = labelReadsByTrack.get(candidate.trackId);
-        if (!read) return matchingCloud?.bottle ? { ...candidate, bottle: matchingCloud.bottle } : candidate;
+        if (!read) {
+          const remembered = matchingCloud?.bottle ?? identityByLocalTrack.get(candidate.trackId);
+          return remembered ? { ...candidate, bottle: remembered } : candidate;
+        }
         const bottle: BottleRead = {
           box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
           label_box: null, edgePaths: [], words: read.words,
@@ -409,30 +471,47 @@ function WebLiveCamera(props: NativeProps) {
         return { ...candidate, source: 'local' as const, bottle };
       });
       const visibleCandidates = [...cloudCandidates, ...localCandidates];
+      // Skip identical updates (nothing moved, nothing renamed): the camera
+      // screen re-renders on every update.
+      const signature = visibleCandidates.map(candidate => {
+        const bottle = (candidate as { bottle?: BottleRead }).bottle;
+        const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
+        return [
+          candidate.trackId,
+          Math.round(candidate.x * 2000), Math.round(candidate.y * 2000),
+          Math.round(candidate.width * 2000), Math.round(candidate.height * 2000),
+          bottle ? (bottle.match?.id || bottle.brand + '|' + bottle.product + '|' + bottle.state) : '',
+          liquid ? liquid.heightPercent : '',
+        ].join(',');
+      }).join(';');
+      if (signature === lastPublishedSignature) return;
+      lastPublishedSignature = signature;
       callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: visibleCandidates.length, candidates: visibleCandidates } });
     };
 
-
-    // Run sparse Lucas–Kanade flow between detector updates. D-FINE establishes
-    // object identity/shape; optical flow carries those boxes across camera
-    // frames at display cadence (up to 60Hz) so boxes remain visually attached while the camera moves.
+    // Camera motion between detector passes. Each display frame (up to ~33Hz)
+    // a pyramidal Lucas-Kanade tracker measures how the whole view moved
+    // (pan + zoom). That one motion moves every bottle, including bottles that
+    // are off screen, so boxes stay glued to bottles during fast moves and
+    // remembered bottles are back in place when the camera returns.
     const startOpticalFlow = () => {
       if (disposed || !pageVisible || opticalFlowFrame || !callbacksRef.current.recognitionEnabled) return;
       const tick = (time: number) => {
         if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled) {
           opticalFlowFrame = 0;
-          previousOpticalGray = null;
+          previousPyramid = null;
           return;
         }
         const video = videoRef.current;
-        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 30) {
+          const elapsedMs = lastOpticalFlowAt ? time - lastOpticalFlowAt : 33;
           lastOpticalFlowAt = time;
           const crop = getObjectFitCoverCrop(
             video.videoWidth, video.videoHeight,
             video.clientWidth || video.videoWidth,
             video.clientHeight || video.videoHeight,
           );
-          if (!crop) { previousOpticalGray = null; opticalFlowFrame = window.requestAnimationFrame(tick); return; }
+          if (!crop) { previousPyramid = null; opticalFlowFrame = window.requestAnimationFrame(tick); return; }
           const { x: sx, y: sy, width: sw, height: sh } = crop;
           const scale = Math.min(1, 320 / Math.max(sw, sh));
           const width = Math.max(24, Math.round(sw * scale));
@@ -445,64 +524,54 @@ function WebLiveCamera(props: NativeProps) {
             if (opticalFlowCanvas.width !== width || opticalFlowCanvas.height !== height) {
               opticalFlowCanvas.width = width;
               opticalFlowCanvas.height = height;
-              previousOpticalGray = null;
+              previousPyramid = null;
             }
             opticalFlowContext.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
             const gray = rgbaToGrayscale(opticalFlowContext.getImageData(0, 0, width, height).data, width, height);
+            const pyramid = buildGrayPyramid(gray, width, height, 4);
             const sizeKey = width + 'x' + height;
-            if (previousOpticalGray && previousOpticalSize === sizeKey) {
-              const now = Date.now();
-              const freshLocal = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 1200);
-              const activeCloud = webTracks.filter(track => isConfirmedWebBottleTrack(track)
-                && !freshLocal.some(local => isCrossSourceSameBottle(track, local)));
-              const targets = [
-                ...freshLocal.map(candidate => ({ source: 'local' as const, id: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })),
-                ...activeCloud.map(track => ({ source: 'cloud' as const, id: track.id, x: track.x, y: track.y, width: track.width, height: track.height })),
-              ];
-              if (targets.length) {
-                const results = trackBoxesWithOpticalFlow(previousOpticalGray, gray, width, height, targets);
-                let moved = false;
-                const updates = new Map<string, { x: number; y: number }>();
-                results.forEach((result, index) => {
-                  if (!result || result.trackedPoints < 3 || result.quality < 0.45) return;
-                  const before = targets[index]!;
-                  const dx = result.box.x - before.x, dy = result.box.y - before.y;
-                  if (Math.abs(dx) + Math.abs(dy) < 0.00015) return;
-                  updates.set(before.source + ':' + before.id, { x: result.box.x, y: result.box.y });
-                  moved = true;
+            const now = Date.now();
+            if (previousPyramid && previousOpticalSize === sizeKey && pyramid.length) {
+              const measured = estimateCameraMotion(previousPyramid, pyramid, { guess: lastCameraMotion });
+              let motion: CameraMotion | null = null;
+              if (measured) {
+                motion = { tx: measured.tx, ty: measured.ty, scale: measured.scale };
+                lostMotionFrames = 0;
+              } else if (lostMotionFrames < 4 && Math.hypot(lastCameraMotion.tx, lastCameraMotion.ty) > 0.002) {
+                // Blur or a featureless wall: coast on the last motion briefly.
+                lostMotionFrames += 1;
+                motion = { tx: lastCameraMotion.tx * 0.7, ty: lastCameraMotion.ty * 0.7, scale: 1 + (lastCameraMotion.scale - 1) * 0.7 };
+              } else {
+                lostMotionFrames += 1;
+              }
+              lastCameraMotion = motion ?? IDENTITY_MOTION;
+              if (motion) {
+                // Parallax: near bottles move more than the shelf behind them.
+                // Measure each visible bottle's own shift before moving it.
+                const nudges = measured
+                  ? localBottleTracker.visible(now).flatMap(local => {
+                    const shift = refineBoxMotion(previousPyramid!, pyramid, local.bounds, motion!);
+                    if (!shift || shift.quality < 0.5 || Math.abs(shift.dx) > 0.08 || Math.abs(shift.dy) > 0.08) return [];
+                    return [{ trackId: local.trackId, dx: shift.dx, dy: shift.dy }];
+                  })
+                  : [];
+                cameraMotionHistory.record(now, motion, elapsedMs);
+                localBottleTracker.applyCameraMotion(motion, now);
+                if (nudges.length) localBottleTracker.nudgeTracks(nudges);
+                webTracks = webTracks.map(track => {
+                  const moved = applyMotionToBox({ x: track.x, y: track.y, width: track.width, height: track.height }, motion!);
+                  // Moving with the camera is not a new recognition observation:
+                  // timestamps and lastSeenAt stay, so ghosts still expire.
+                  return { ...track, ...moved, contour: track.contour?.map(point => applyMotionToPoint(point, motion!)) };
                 });
-                if (moved) {
-                  localBottleTracker.applyOpticalFlow(latestLocalCandidates.flatMap(candidate => {
-                    const next = updates.get('local:' + candidate.trackId);
-                    return next ? [{
-                      trackId: Math.abs(candidate.trackId),
-                      bounds: { x: next.x, y: next.y, width: candidate.width, height: candidate.height },
-                    }] : [];
-                  }));
-                  latestLocalCandidates = latestLocalCandidates.map(candidate => {
-                    const next = updates.get('local:' + candidate.trackId);
-                    if (!next) return candidate;
-                    const dx = next.x - candidate.x, dy = next.y - candidate.y;
-                    return { ...candidate, x: next.x, y: next.y, timestamp: now,
-                      contour: candidate.contour?.map(point => ({ x: point.x + dx, y: point.y + dy })) };
-                  });
-                  webTracks = webTracks.map(track => {
-                    const next = updates.get('cloud:' + track.id);
-                    if (!next) return track;
-                    const dx = next.x - track.x, dy = next.y - track.y;
-                    // Optical flow estimates motion between detector reads; it
-                    // is not a new recognition observation. Do not refresh the
-                    // source timestamp or lastSeenAt, or a drifting ghost can
-                    // keep itself alive indefinitely.
-                    return { ...track, x: next.x, y: next.y,
-                      contour: track.contour?.map(point => ({ x: point.x + dx, y: point.y + dy })) };
-                  });
-                  publishVisibleCandidates();
-                }
+              } else {
+                cameraMotionHistory.record(now, IDENTITY_MOTION, elapsedMs);
               }
             }
-            previousOpticalGray = gray;
+            previousPyramid = pyramid.length ? pyramid : null;
             previousOpticalSize = sizeKey;
+            latestLocalCandidates = toLocalCandidates(localBottleTracker.visible(now), now);
+            if (performance.now() - lastPublishAt >= 30) publishVisibleCandidates();
           }
         }
         opticalFlowFrame = window.requestAnimationFrame(tick);
@@ -569,21 +638,27 @@ function WebLiveCamera(props: NativeProps) {
       if (!frameCanvas) return;
       const generation = recognitionGeneration;
       const now = Date.now();
-      const isVerifiedRead = (read?: LabelBatchRead) =>
-        !!read?.brand && !!read.product && read.confidence >= 0.85
-        && read.state === 'matched' && !!read.match?.id && read.match.score >= 0.9;
+      const isVerifiedRead = (trackId: number) => {
+        const read = labelReadsByTrack.get(trackId);
+        // A bottle re-found from memory gets one fresh check before its
+        // remembered name counts as verified again.
+        return !reverifyTracks.has(trackId)
+          && !!read?.brand && !!read.product && read.confidence >= 0.85
+          && read.state === 'matched' && !!read.match?.id && read.match.score >= 0.9;
+      };
       // A catalog-verified label read belongs to this tracked object. Do not
       // spend another label-batch request re-reading it on every later frame.
       const activeCloudTracks = webTracks.filter(track => track.misses === 0
-        && !isVerifiedRead(labelReadsByTrack.get(track.id)));
+        && visibleFraction(track) >= 0.5
+        && !isVerifiedRead(track.id));
       const candidates = [
         ...activeCloudTracks.map(track => ({
-          trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
+          trackId: track.id, ...clipBoxToFrame({ x: track.x, y: track.y, width: track.width, height: track.height }), confidence: track.confidence,
           bottle: track.bottle,
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
-          .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
+          .filter(local => !isVerifiedRead(local.trackId))
           .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
@@ -624,6 +699,7 @@ function WebLiveCamera(props: NativeProps) {
         crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
         for (const read of reads) {
           labelReadsByTrack.set(read.trackId, read);
+          reverifyTracks.delete(read.trackId);
           const cloudTrack = webTracks.find(track => track.id === read.trackId);
           if (cloudTrack) {
             cloudTrack.bottle = mergeBottleRead(cloudTrack.bottle, read);
@@ -639,11 +715,14 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
+    let detectionCanvas: HTMLCanvasElement | null = null;
+    let detectionContext: CanvasRenderingContext2D | null = null;
     const runLocalDetection = async () => {
       if (disposed || !pageVisible || localDetectionBusy || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
       const video = videoRef.current;
       if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 2 || video.videoHeight < 2) return;
       localDetectionBusy = true;
+      const runner = segmentationRunner;
       const generation = recognitionGeneration;
       const localFrameStartedAt = performance.now();
       const frameTimestamp = Date.now();
@@ -656,63 +735,98 @@ function WebLiveCamera(props: NativeProps) {
         if (!crop) return;
         const { x: sx, y: sy, width: sw, height: sh } = crop;
         const scale = Math.min(1, 640 / Math.max(sw, sh));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(sw * scale));
-        canvas.height = Math.max(1, Math.round(sh * scale));
-        const context = canvas.getContext('2d');
-        if (!context) return;
-        context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-        const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+        if (!detectionCanvas) {
+          detectionCanvas = document.createElement('canvas');
+          detectionContext = detectionCanvas.getContext('2d', { willReadFrequently: true });
+        }
+        if (!detectionContext) return;
+        const width = Math.max(1, Math.round(sw * scale)), height = Math.max(1, Math.round(sh * scale));
+        if (detectionCanvas.width !== width || detectionCanvas.height !== height) {
+          detectionCanvas.width = width;
+          detectionCanvas.height = height;
+        }
+        detectionContext.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+        const frame = detectionContext.getImageData(0, 0, width, height);
         const segmentationStartedAt = performance.now();
-        const instances = await segmentationRunner.runInference(frame, frameTimestamp);
+        const result = await runner.runInferenceDetailed(frame, frameTimestamp);
         lastSegmentationMs = performance.now() - segmentationStartedAt;
-        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration || Date.now() - frameTimestamp > 1400) return;
-        const localTracks = localBottleTracker.update(instances.map(instance => {
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
+        // Skipped (busy/too soon/stale) is not evidence that bottles are gone.
+        if (result.status !== 'ran') return;
+        detectorFailures = 0;
+        const now = Date.now();
+        // The camera kept moving while the model ran: move this frame's boxes
+        // to where those bottles are now.
+        const motion = cameraMotionHistory.motionSince(frameTimestamp) ?? IDENTITY_MOTION;
+        // Fast moves blur the frame; a missed bottle then is not a gone bottle.
+        const countMisses = cameraMotionHistory.peakSpeed(frameTimestamp - 100, now) < 0.9 && lostMotionFrames === 0;
+        const localTracks = localBottleTracker.update(result.instances.map(instance => {
           const contour = extractMaskContour(instance.data, instance.width, instance.height, {
             bounds: instance.bounds, minimumPixels: 12, minimumArea: 0.001, maxPoints: 96,
           });
-          return { bounds: instance.bounds, confidence: instance.detectionConfidence, contour: contour?.points };
-        }), frameTimestamp);
-        const activeLocalTracks = localTracks.filter(local =>
-          !webTracks.some(cloud => cloud.misses === 0 && isConfirmedWebBottleTrack(cloud) && isSameBottleBox(cloud, local.bounds))
-        );
-        const candidates = activeLocalTracks.map(local => ({
-          trackId: -Math.abs(local.trackId),
-          x: local.bounds.x, y: local.bounds.y,
-          width: local.bounds.width, height: local.bounds.height,
-          confidence: local.confidence, timestamp: frameTimestamp, source: 'local' as const, contour: local.contour,
+          return {
+            bounds: clipBoxToFrame(applyMotionToBox(instance.bounds, motion)),
+            confidence: instance.detectionConfidence,
+            contour: contour?.points.map(point => applyMotionToPoint(point, motion)),
+            appearance: computeAppearanceSignature(frame.data, frame.width, frame.height, instance.bounds),
+          };
+        }), now, { countMisses });
+        migrateLocalTrackIds(localBottleTracker.takeMergedTrackIds());
+        for (const trackId of localBottleTracker.takeReacquiredTrackIds()) reverifyTracks.add(-Math.abs(trackId));
+        latestLocalCandidates = toLocalCandidates(localTracks, now);
+        // Transfer this frame's pixel buffer to the liquid worker (capture-time
+        // geometry). Neither detection nor recognition waits for its result.
+        liquidAnalysisQueue.submit(frame, frameTimestamp, latestLocalCandidates.map(local => {
+          const back = clipBoxToFrame(applyMotionToBox({ x: local.x, y: local.y, width: local.width, height: local.height }, invertCameraMotion(motion)));
+          return {
+            trackId: local.trackId,
+            bounds: { x: back.x * frame.width, y: back.y * frame.height, width: back.width * frame.width, height: back.height * frame.height },
+          };
         }));
-        latestLocalCandidates = candidates;
-        // Transfer this frame's pixel buffer to the worker. The worker owns the
-        // buffer after transfer; the primary segmentation and recognition paths
-        // do not wait for its result.
-        liquidAnalysisQueue.submit(frame, frameTimestamp, activeLocalTracks.map(local => ({
-          trackId: -Math.abs(local.trackId),
-          bounds: {
-            x: local.bounds.x * frame.width,
-            y: local.bounds.y * frame.height,
-            width: local.bounds.width * frame.width,
-            height: local.bounds.height * frame.height,
-          },
-        })));
-        const cloudCandidates = webTracks
-          .filter(track => track.hits >= 1 && track.misses === 0 && track.confidence >= 0.45)
-          .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         publishVisibleCandidates();
         lastLocalFrameMs = performance.now() - localFrameStartedAt;
+        const diagnostics = window as unknown as { __discoverDetector?: { frames?: number } };
+        diagnostics.__discoverDetector = {
+          backend: detectorProvider?.backend ?? 'main-thread', gpu: detectorProvider?.gpuTrialResult,
+          segmentationMs: Math.round(lastSegmentationMs), frames: (diagnostics.__discoverDetector?.frames ?? 0) + 1,
+          boxes: latestLocalCandidates.length,
+        } as { frames: number };
         void readCandidateLabels();
       } catch (error) {
+        detectorFailures += 1;
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'local_segmentation_frame_failed: ' + error.message : 'local_segmentation_frame_failed' } });
+        // A dead worker (or repeated failures) gets a fresh detector next pass.
+        if ((runner.providerFailed || detectorFailures >= 3) && segmentationRunner === runner) {
+          segmentationRunner = null;
+          detectorFailures = 0;
+          void runner.dispose();
+        }
       } finally {
         localDetectionBusy = false;
       }
     };
+    // Back-to-back local detection: the next pass starts as soon as the
+    // detector is free (bounded by its cadence limit), not on a fixed timer.
+    const scheduleLocalDetection = (delay: number) => {
+      if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled) return;
+      localDetectionTimer = window.setTimeout(() => {
+        localDetectionTimer = 0;
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled) return;
+        if (!segmentationRunner) {
+          if (segmentationLoadFailed) return;
+          void Promise.resolve(ensureSegmentationRunner()).then(() => scheduleLocalDetection(segmentationRunner ? 0 : 1_000));
+          return;
+        }
+        void runLocalDetection().finally(() => {
+          scheduleLocalDetection(Math.max(30, segmentationRunner?.msUntilReady() ?? 250));
+        });
+      }, delay);
+    };
     const startLocalDetectionLoop = () => {
       if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled) return;
       void Promise.resolve(ensureSegmentationRunner()).then(() => {
-        if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
-        void runLocalDetection();
-        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 350);
+        if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled) return;
+        scheduleLocalDetection(0);
       });
     };
 
@@ -784,7 +898,17 @@ function WebLiveCamera(props: NativeProps) {
         // moving since then so identities land on the bottle they were read from.
         const captureBoxes = result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0 }));
         const compensated = compensateDetections(captureBoxes, captureTracks, trackPositionsNow());
-        updateWebTracks(result.bottles.map((b, index) => ({ ...compensated[index]!.box, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
+        const motionSinceCapture = cameraMotionHistory.motionSince(frameTimestamp);
+        const currentBoxes = compensated.map((item, index) => item.method === 'track' || !motionSinceCapture
+          ? item.box
+          : clipBoxToFrame(applyMotionToBox(captureBoxes[index]!, motionSinceCapture)));
+        // A name read from the bottle a local track was following at capture
+        // time belongs to that track; it stays with the bottle off screen.
+        compensated.forEach((item, index) => {
+          const bottle = result.bottles[index]!;
+          if (item.boundTrackId !== null && item.boundTrackId < 0 && hasIdentity(bottle)) identityByLocalTrack.set(item.boundTrackId, bottle);
+        });
+        updateWebTracks(result.bottles.map((b, index) => ({ ...currentBoxes[index]!, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
         publishVisibleCandidates();
@@ -893,9 +1017,11 @@ function WebLiveCamera(props: NativeProps) {
         lastLabelReadAt.clear();
         liquidHistoryByTrack.clear();
         localBottleTracker.reset();
+        identityByLocalTrack.clear();
+        reverifyTracks.clear();
         nextWebTrackId = 1;
-        previousOpticalGray = null;
-        previousOpticalSize = '';
+        resetCameraMotion();
+        lastPublishedSignature = '';
         lastSentFrameSignature = null;
         lastLiveReadAt = 0;
         lastLiveBottleCount = 0;
@@ -918,6 +1044,8 @@ function WebLiveCamera(props: NativeProps) {
       labelReadsByTrack.clear();
       lastLabelReadAt.clear();
       liquidHistoryByTrack.clear();
+      identityByLocalTrack.clear();
+      reverifyTracks.clear();
       nextWebTrackId = 1;
       lastSentFrameSignature = null;
       lastLiveReadAt = 0;
@@ -925,9 +1053,9 @@ function WebLiveCamera(props: NativeProps) {
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
-      if (localDetectionTimer) window.clearInterval(localDetectionTimer);
+      if (localDetectionTimer) window.clearTimeout(localDetectionTimer);
       if (opticalFlowFrame) window.cancelAnimationFrame(opticalFlowFrame);
-      previousOpticalGray = null;
+      resetCameraMotion();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (depthTimer) window.clearInterval(depthTimer);
       localBottleTracker.reset();

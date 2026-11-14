@@ -4,8 +4,9 @@ import {
   type DfineOrtRuntime,
   type DfineSegOnnxProvider,
 } from "./dfineSegOnnxProvider";
-import { DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrity";
+import { DFINE_SEG_MODEL_SHA256, DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrity";
 import { UPRIGHT_CONTAINER_CLASS_RULES } from "./dfineSegAdapter";
+import { DfineSegWorkerProvider, detectorBackendPreference } from "./dfineWorkerProvider";
 
 export { DFINE_SEG_MODEL_URL, DFINE_SEG_MODEL_SHA256, verifyDfineModelBytes } from "./dfineModelIntegrity";
 
@@ -59,14 +60,32 @@ async function loadRuntime(): Promise<DfineOrtRuntime> {
   return runtimePromise;
 }
 
-/** Load the browser-hosted WASM runtime and checksum-verify the bundled model. */
+/** Main-thread fallback: the browser-hosted WASM runtime and the checksum-verified model. */
+async function loadMainThreadProvider(options: DfineOnnxProviderOptions): Promise<DfineSegOnnxProvider> {
+  const [runtime, modelBytes] = await Promise.all([loadRuntime(), loadModelBytes()]);
+  return createDfineSegOnnxProvider(runtime, modelBytes, options);
+}
+
+/**
+ * Load the local bottle detector. Prefers a dedicated worker (WebGPU when it
+ * is available and verified, otherwise WASM) so the camera view never waits
+ * for the model; falls back to the main thread if workers cannot start.
+ */
 export async function loadDfineSegOnnxProvider(
   options: DfineOnnxProviderOptions = {},
-): Promise<DfineSegOnnxProvider> {
-  const [runtime, modelBytes] = await Promise.all([loadRuntime(), loadModelBytes()]);
-  return createDfineSegOnnxProvider(
-    runtime,
-    modelBytes,
-    { bottleClassIds: [39], containerClassRules: UPRIGHT_CONTAINER_CLASS_RULES, minimumScore: 0.5, maskThreshold: 0.5, ...options },
-  );
+): Promise<(DfineSegWorkerProvider | DfineSegOnnxProvider) & { backend?: string }> {
+  const resolved = { bottleClassIds: [39], containerClassRules: UPRIGHT_CONTAINER_CLASS_RULES, minimumScore: 0.5, maskThreshold: 0.5, ...options };
+  if (typeof Worker !== "undefined") {
+    try {
+      return await DfineSegWorkerProvider.create({
+        ...resolved,
+        modelUrl: DFINE_SEG_MODEL_URL,
+        sha256: DFINE_SEG_MODEL_SHA256,
+        backend: detectorBackendPreference(),
+      });
+    } catch {
+      // Older browsers without module workers: run on the main thread.
+    }
+  }
+  return loadMainThreadProvider(resolved);
 }
