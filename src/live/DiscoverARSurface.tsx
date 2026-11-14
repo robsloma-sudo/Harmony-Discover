@@ -370,7 +370,7 @@ function WebLiveCamera(props: NativeProps) {
         } });
       }).catch(() => {
         // Barcode support is best-effort; decoder failures are non-fatal.
-      });
+      }).finally(() => releaseCanvas(barcodeCanvas));
     };
     let lastRecognitionStartedAt = 0;
     // Full-frame reads and label batches share the DEV endpoint's 30-request/minute quota.
@@ -389,13 +389,20 @@ function WebLiveCamera(props: NativeProps) {
       ...latestLocalCandidates.map(candidate => ({ trackId: candidate.trackId, box: { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height } })),
     ];
     // Capture the pixels the user currently sees (object-fit: cover crop).
+    // iPhone Safari frees canvas memory late: a fresh full-resolution canvas
+    // (plus up to 8 crop canvases) every 1.5 s with many bottles in view used
+    // up the page's memory and Safari killed the tab. These two are reused.
+    let labelSourceCanvas: HTMLCanvasElement | null = null;
+    let labelCropCanvas: HTMLCanvasElement | null = null;
+    let frameReadCanvas: HTMLCanvasElement | null = null;
+    const releaseCanvas = (canvas: HTMLCanvasElement | null) => { if (canvas) { canvas.width = 0; canvas.height = 0; } };
     const captureVisibleFrame = (maxLongEdge: number): HTMLCanvasElement | null => {
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) return null;
       const crop = getObjectFitCoverCrop(video.videoWidth, video.videoHeight, video.clientWidth || video.videoWidth, video.clientHeight || video.videoHeight);
       if (!crop) return null;
       const scale = Math.min(1, maxLongEdge / Math.max(crop.width, crop.height));
-      const canvas = document.createElement('canvas');
+      const canvas = labelSourceCanvas ??= document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(crop.width * scale));
       canvas.height = Math.max(1, Math.round(crop.height * scale));
       const context = canvas.getContext('2d');
@@ -820,7 +827,7 @@ function WebLiveCamera(props: NativeProps) {
         };
         const crop = calculateLabelCrop(labelBox, frameCanvas.width, frameCanvas.height, { maxLongEdge: 896, maxUpscale: 1.5 });
         if (!crop) continue;
-        const cropCanvas = document.createElement('canvas');
+        const cropCanvas = labelCropCanvas ??= document.createElement('canvas');
         cropCanvas.width = crop.outputWidth;
         cropCanvas.height = crop.outputHeight;
         const cropContext = cropCanvas.getContext('2d');
@@ -1033,7 +1040,8 @@ function WebLiveCamera(props: NativeProps) {
       let labelFrameCanvas: HTMLCanvasElement | null = null;
       let nextRecognitionDelay: number | null = null;
       try {
-        const canvas = document.createElement('canvas');
+        // Reused between reads (recognitionBusy keeps them one at a time); see labelSourceCanvas.
+        const canvas = frameReadCanvas ??= document.createElement('canvas');
         labelFrameCanvas = canvas;
         // Match the crop the user actually sees (object-fit: cover). On a
         // portrait phone the camera stream may be landscape; sending the full
@@ -1254,6 +1262,8 @@ function WebLiveCamera(props: NativeProps) {
       resetAutoSave();
       window.clearInterval(autoSaveTimer);
       reverifyTracks.clear();
+      releaseCanvas(labelSourceCanvas); releaseCanvas(labelCropCanvas); releaseCanvas(frameReadCanvas);
+      labelSourceCanvas = labelCropCanvas = frameReadCanvas = null;
       nextWebTrackId = 1;
       lastSentFrameSignature = null;
       lastLiveReadAt = 0;
