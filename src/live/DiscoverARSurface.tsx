@@ -745,11 +745,14 @@ function WebLiveCamera(props: NativeProps) {
         // A bottle re-found from memory gets one fresh check before its
         // remembered name counts as verified again.
         // Keep reading a bottle until its name is reliable (reads agree).
-        return !reverifyTracks.has(trackId)
-          && !!evidence.identity(trackId)?.reliable
-          && !!read?.brand && !!read.product && read.confidence >= 0.85
-          && read.state === 'matched' && !!read.match?.id && read.match.score >= 0.9;
+        void read;
+        return !reverifyTracks.has(trackId) && !!evidence.identity(trackId)?.reliable;
       };
+      // Until a bottle's name is reliable, keep re-reading it (every 6 s), even
+      // when one earlier read looked complete: agreement needs a second read.
+      // Only the label position of earlier reads is passed on.
+      const placementOnly = (bottle?: { box?: BottleRead['box']; label_box?: BottleRead['label_box'] } | null) =>
+        bottle ? { label_box: bottle.label_box ?? null, box: bottle.box } : undefined;
       // A catalog-verified label read belongs to this tracked object. Do not
       // spend another label-batch request re-reading it on every later frame.
       const activeCloudTracks = webTracks.filter(track => track.misses === 0
@@ -758,14 +761,14 @@ function WebLiveCamera(props: NativeProps) {
       const candidates = [
         ...activeCloudTracks.map(track => ({
           trackId: track.id, ...clipBoxToFrame({ x: track.x, y: track.y, width: track.width, height: track.height }), confidence: track.confidence,
-          bottle: track.bottle,
+          bottle: placementOnly(track.bottle),
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
           .filter(local => !isVerifiedRead(local.trackId))
-          .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
+          .map(candidate => ({ ...candidate, bottle: undefined })),
       ];
-      const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
+      const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 6_000);
       const crops: Array<{ trackId: number; image: string }> = [];
       for (const candidate of eligible) {
         if (crops.length >= 8) break;
@@ -1014,9 +1017,24 @@ function WebLiveCamera(props: NativeProps) {
           : clipBoxToFrame(applyMotionToBox(captureBoxes[index]!, motionSinceCapture)));
         // A name read from the bottle a local track was following at capture
         // time belongs to that track; it stays with the bottle off screen.
+        // Cloud boxes are approximate: when a read was not bound by overlap at
+        // capture time, give it to the local bottle box that contains its
+        // centre now (each local bottle takes at most one read per frame).
+        const boundLocal = new Set(compensated.map(item => item.boundTrackId).filter((id): id is number => id !== null && id < 0));
         compensated.forEach((item, index) => {
           const bottle = result.bottles[index]!;
-          if (item.boundTrackId !== null && item.boundTrackId < 0 && hasIdentity(bottle)) evidence.observeIdentity(item.boundTrackId, bottle, 'frame:' + frameTimestamp + ':' + index);
+          if (!hasIdentity(bottle)) return;
+          let trackId = item.boundTrackId !== null && item.boundTrackId < 0 ? item.boundTrackId : null;
+          if (trackId === null) {
+            const box = currentBoxes[index]!;
+            const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+            const host = latestLocalCandidates
+              .filter(local => !boundLocal.has(local.trackId)
+                && cx >= local.x && cx <= local.x + local.width && cy >= local.y && cy <= local.y + local.height)
+              .sort((a, b) => Math.abs(a.x + a.width / 2 - cx) - Math.abs(b.x + b.width / 2 - cx))[0];
+            if (host) { trackId = host.trackId; boundLocal.add(host.trackId); }
+          }
+          if (trackId !== null) evidence.observeIdentity(trackId, bottle, 'frame:' + frameTimestamp + ':' + index);
         });
         updateWebTracks(result.bottles.map((b, index) => ({ ...currentBoxes[index]!, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
         // Publish model detections immediately; optional local segmentation must

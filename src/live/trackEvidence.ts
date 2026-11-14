@@ -40,6 +40,23 @@ export function identityKey(read: IdentityRead): string | null {
 
 const clamp = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 
+const tokens = (value?: string | null) => new Set(clean(value).split(' ').filter(word => word.length > 1 && !['the', 'and', 'jr', 'sr', 'co', 'company'].includes(word)));
+
+/** Two reads name the same bottle: same catalogue product, or brands that clearly agree. */
+export function sameBottleIdentity(a: IdentityRead, b: IdentityRead): boolean {
+  if (a.match?.id && b.match?.id) return a.match.id === b.match.id;
+  const brandA = tokens(a.match?.brand || a.brand), brandB = tokens(b.match?.brand || b.brand);
+  if (!brandA.size || !brandB.size) {
+    // No brand on one side: agree only on the same expression words.
+    const productA = clean(a.match?.product || a.product), productB = clean(b.match?.product || b.product);
+    return !!productA && productA === productB;
+  }
+  let shared = 0;
+  brandA.forEach(word => { if (brandB.has(word)) shared++; });
+  const smaller = Math.min(brandA.size, brandB.size);
+  return shared / smaller >= 0.6 || shared / (brandA.size + brandB.size - shared) >= 0.5;
+}
+
 export class TrackEvidence<T extends IdentityRead> {
   private entries = new Map<number, Entry<T>>();
 
@@ -60,16 +77,24 @@ export class TrackEvidence<T extends IdentityRead> {
 
   /** A label/cloud read of this bottle. `sourceKey` makes repeats of one read count once. */
   observeIdentity(trackId: number, read: T, sourceKey: string): void {
-    const key = identityKey(read);
-    if (!key) return;
+    const own = identityKey(read);
+    if (!own) return;
     const entry = this.entry(trackId);
     if (entry.seen.has(sourceKey)) return;
     entry.seen.add(sourceKey);
     if (entry.seen.size > 64) entry.seen = new Set([...entry.seen].slice(-32));
+    // One physical bottle: reads that name the same brand agree, even when OCR
+    // words the expression slightly differently ("Small Batch" / "Small Batch
+    // Bourbon") or reads the brand a little differently ("E.H. Taylor" /
+    // "Colonel E.H. Taylor, Jr.").
+    const key = [...entry.votes.keys()].find(existing => sameBottleIdentity(entry.votes.get(existing)!.read, read)) ?? own;
     const matched = read.state === 'matched' && (read.match?.score ?? 0) >= 0.9;
     const strength = clamp(read.confidence) * (matched ? 0.8 : 0.7);
     const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0 };
-    vote.read = read;
+    // Show the most informative read: catalogue match first, then a read with
+    // an expression, then the most legible.
+    const rank = (r: T) => (r.match?.id ? 2 : 0) + (clean(r.product) ? 1 : 0) + clamp(r.confidence) * 0.5;
+    if (vote.reads === 0 || rank(read) >= rank(vote.read)) vote.read = read;
     vote.weight += clamp(read.confidence);
     vote.reads += 1;
     vote.evidence = 1 - (1 - vote.evidence) * (1 - strength);

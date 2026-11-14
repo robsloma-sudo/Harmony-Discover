@@ -57,3 +57,22 @@ describe('evidence that builds up while scanning', () => {
     expect(identityKey({ brand: '', product: '', confidence: 0.9 })).toBeNull();
   });
 });
+
+describe('reads that word the same bottle differently', () => {
+  it('agree on one bottle despite OCR differences in brand and expression', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(-1, { brand: 'E.H. Taylor', product: 'Small Batch', confidence: 0.86, state: 'reported', match: null }, 'a');
+    evidence.observeIdentity(-1, { brand: 'Colonel E.H. Taylor, Jr.', product: 'Small Batch Bottled in Bond', confidence: 0.9, state: 'reported', match: null }, 'b');
+    const identity = evidence.identity(-1)!;
+    expect(identity.reliable).toBe(true);
+    expect(identity.agreeingReads).toBe(2);
+    expect(identity.read.product).toBe('Small Batch Bottled in Bond');
+  });
+
+  it('keeps different brands apart', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(-1, { brand: 'Blanton\'s', product: 'Single Barrel', confidence: 0.9, state: 'reported', match: null }, 'a');
+    evidence.observeIdentity(-1, { brand: 'Weller', product: 'Special Reserve', confidence: 0.9, state: 'reported', match: null }, 'b');
+    expect(evidence.identity(-1)!.reliable).toBe(false);
+  });
+});
