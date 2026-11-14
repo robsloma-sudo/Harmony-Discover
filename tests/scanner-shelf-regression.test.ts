@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { LocalBottleTracker } from '../src/live/localBottleTracker';
-import { shelfScanAnnotations } from './fixtures/scanner-shelf-2026-11-13';
+import { shelfScanAnnotations, shelfScanCoordinateSpace } from './fixtures/scanner-shelf-2026-11-13';
 
 describe('shelf-scan visual annotation fixture', () => {
+  it('declares the source coordinate space so screen bounds are not mistaken for camera bounds', () => {
+    expect(shelfScanCoordinateSpace).toBe('full-screen-recording');
+  });
+
   it('contains unique physical object IDs within each annotated frame', () => {
     for (const frame of shelfScanAnnotations) {
       const ids = frame.objects.map(object => object.objectId);
@@ -34,47 +37,12 @@ describe('shelf-scan visual annotation fixture', () => {
     }
   });
 
-  it('replays annotated early-frame geometry without merging adjacent physical objects', () => {
-    const tracker = new LocalBottleTracker();
-    const first = shelfScanAnnotations.find(frame => frame.timestampSeconds === 5)!;
-    const second = shelfScanAnnotations.find(frame => frame.timestampSeconds === 9)!;
-    const toProposals = (frame: typeof first) => frame.objects.map(object => ({
-      bounds: object.bounds,
-      confidence: 0.95
-    }));
-
-    const firstCandidates = tracker.update(toProposals(first), 1000);
-    const secondCandidates = tracker.update(toProposals(second), 1400);
-
-    // Three clearly visible physical objects must remain separately represented.
-    expect(firstCandidates.length).toBeGreaterThanOrEqual(3);
-    expect(secondCandidates.length).toBeGreaterThanOrEqual(3);
-    expect(new Set(secondCandidates.map(candidate => candidate.trackId)).size).toBe(secondCandidates.length);
-
-    // Tracker output order is area-sorted and may change between frames.
-    // Associate each annotation with its nearest returned candidate by box
-    // center instead of relying on array position.
-    const trackByObject = (frame: typeof first, candidates: typeof firstCandidates) => {
-      expect(candidates).toHaveLength(frame.objects.length);
-      return new Map(frame.objects.map(object => {
-        const center = {
-          x: object.bounds.x + object.bounds.width / 2,
-          y: object.bounds.y + object.bounds.height / 2,
-        };
-        const nearest = [...candidates].sort((a, b) => {
-          const distance = (candidate: typeof a) => Math.hypot(
-            candidate.bounds.x + candidate.bounds.width / 2 - center.x,
-            candidate.bounds.y + candidate.bounds.height / 2 - center.y,
-          );
-          return distance(a) - distance(b);
-        })[0]!;
-        return [object.objectId, nearest.trackId] as const;
-      }));
-    };
-    const firstTracks = trackByObject(first, firstCandidates);
-    const secondTracks = trackByObject(second, secondCandidates);
-    for (const object of first.objects) {
-      expect(secondTracks.get(object.objectId)).toBe(firstTracks.get(object.objectId));
-    }
+  it('does not feed full-screen annotations directly into the camera-space tracker', () => {
+    // The recording includes app chrome and a camera viewport. Its full-screen
+    // bounds have not been transformed into the camera frame's normalized space.
+    // A tracker replay here would compare incompatible coordinate systems and
+    // could pass or fail for the wrong reason. Tracker behavior is covered by
+    // the isolated synthetic scenarios in scanner-tracking-scenarios.test.ts.
+    expect(shelfScanCoordinateSpace).not.toBe('camera-frame');
   });
 });
