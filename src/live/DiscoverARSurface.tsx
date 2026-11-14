@@ -118,6 +118,7 @@ function WebLiveCamera(props: NativeProps) {
 
   useEffect(() => {
     if (!active) {
+      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
       callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'camera_paused' } });
       return;
     }
@@ -853,7 +854,29 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
-    recognitionSchedulerRef.current = () => { scheduleRecognition(0); startLocalDetectionLoop(); startOpticalFlow(); };
+    recognitionSchedulerRef.current = () => {
+      if (!callbacksRef.current.recognitionEnabled) {
+        // Turning recognition off ends the current visual-tracking epoch.
+        // Do not allow old candidates or cached OCR to return on the next toggle.
+        webTracks = [];
+        latestLocalCandidates = [];
+        labelReadsByTrack.clear();
+        lastLabelReadAt.clear();
+        liquidHistoryByTrack.clear();
+        localBottleTracker.reset();
+        nextWebTrackId = 1;
+        previousOpticalGray = null;
+        previousOpticalSize = '';
+        lastSentFrameSignature = null;
+        lastLiveReadAt = 0;
+        lastLiveBottleCount = 0;
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
+        return;
+      }
+      scheduleRecognition(0);
+      startLocalDetectionLoop();
+      startOpticalFlow();
+    };
     void start();
 
     return () => {
@@ -893,7 +916,7 @@ function WebLiveCamera(props: NativeProps) {
   }, [active]);
 
   useEffect(() => {
-    if (active && recognitionEnabled) recognitionSchedulerRef.current?.();
+    if (active) recognitionSchedulerRef.current?.();
   }, [active, recognitionEnabled]);
 
   return (
