@@ -21,3 +21,9 @@ export function isConfirmedWebBottleTrack(track: WebBottleTrackState): boolean {
 
   return track.hits >= 2 || (track.hits === 1 && track.confidence >= 0.78);
 }
+
+/** Prevent a nearby but different bottle from inheriting a prior track identity. */
+export function shouldAssociateWebBottleTrack(overlap: number, centerDistance: number, areaRatio: number): boolean {
+  if (![overlap, centerDistance, areaRatio].every(Number.isFinite)) return false;
+  return overlap >= 0.08 || (centerDistance <= 0.08 && areaRatio <= 3);
+}
