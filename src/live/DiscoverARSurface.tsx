@@ -133,9 +133,6 @@ function WebLiveCamera(props: NativeProps) {
     let previousOpticalGray: Uint8Array | null = null;
     let previousOpticalSize = '';
     let lastOpticalFlowAt = 0;
-    // requestAnimationFrame can outpace the camera (e.g. 60Hz display / 30Hz video).
-    // Only run grayscale conversion and optical flow when the video advances.
-    let lastOpticalVideoTime = -1;
     let localDetectionBusy = false;
     let depthTimer = 0;
     let depthEstimator: BrowserDepthEstimator | null = null;
@@ -395,7 +392,6 @@ function WebLiveCamera(props: NativeProps) {
         const video = videoRef.current;
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
           lastOpticalFlowAt = time;
-          lastOpticalVideoTime = video.currentTime;
           const displayWidth = video.clientWidth || video.videoWidth;
           const displayHeight = video.clientHeight || video.videoHeight;
           const displayAspect = displayWidth / displayHeight;
