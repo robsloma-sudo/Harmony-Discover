@@ -580,7 +580,8 @@ function WebLiveCamera(props: NativeProps) {
         return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined };
       };
       const cloudCandidates = webTracks
-        .filter(isConfirmedWebBottleTrack)
+        // A bottle whose name is already confirmed shows at once; it does not wait for a second whole-picture read.
+        .filter(track => isConfirmedWebBottleTrack(track) || (track.misses === 0 && !!evidence.identity(track.id)?.reliable))
         .filter(track => visibleFraction(track) >= 0.5)
         .filter(track => !freshLocalCandidates.some(local => isCrossSourceSameBottle(track, local)))
         .map(track => {
