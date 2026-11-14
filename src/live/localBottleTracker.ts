@@ -85,7 +85,7 @@ export class LocalBottleTracker {
       this.tracks.forEach((track, index) => {
         // Retain brief occlusion recovery, but never let an old object donate
         // its ID to a different bottle entering the same position later.
-        if (used.has(index) || now - track.lastSeenAt > 1_800) return;
+        if (used.has(index) || now - track.lastSeenAt > 3_000) return;
         const overlap = iou(track.bounds, detection.bounds);
         const dx = track.bounds.x + track.bounds.width / 2 - (detection.bounds.x + detection.bounds.width / 2);
         const dy = track.bounds.y + track.bounds.height / 2 - (detection.bounds.y + detection.bounds.height / 2);
