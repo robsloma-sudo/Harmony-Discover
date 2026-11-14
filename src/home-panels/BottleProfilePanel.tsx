@@ -2,6 +2,7 @@ import React from "react";
 import { ScrollView, Text, View, Pressable, StyleSheet } from "react-native";
 import type { BottleRead, BottleIntelligenceProfile } from "../services/discoverLiveApi";
 import { getBottleFamilyLabel, getBottleIntelligenceSections } from "../services/bottleIntelligenceSchema";
+import { displayName } from '../live/foundTray';
 
 type Props = { bottle: BottleRead; onClose: () => void; intelligence?: BottleIntelligenceProfile | null; intelligenceLoading?: boolean };
 
@@ -12,7 +13,7 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
   const details = bottle.details || {};
   const family = getBottleFamilyLabel(bottle.category, details);
   const sections = getBottleIntelligenceSections(bottle.category, details);
-  const identity = [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(" ").trim() || "Bottle identity pending";
+  const identity = displayName(bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product) || "Bottle identity pending";
   const fields: Record<string, unknown> = {
     ...details,
     brand: bottle.match?.brand || bottle.brand,

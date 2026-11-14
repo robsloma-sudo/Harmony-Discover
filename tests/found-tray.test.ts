@@ -55,3 +55,12 @@ describe('found strip same product', () => {
     expect(a.list).toHaveLength(3);
   });
 });
+
+import { displayName } from '../src/live/foundTray';
+describe('display name', () => {
+  it('does not repeat the brand', () => {
+    expect(displayName('Colonel E.H. Taylor', 'Colonel E.H. Taylor Jr. Single Barrel')).toBe('Colonel E.H. Taylor Jr. Single Barrel');
+    expect(displayName('Colonel E.H. Taylor', 'Single Barrel')).toBe('Colonel E.H. Taylor Single Barrel');
+    expect(displayName("Blanton's", '')).toBe("Blanton's");
+  });
+});

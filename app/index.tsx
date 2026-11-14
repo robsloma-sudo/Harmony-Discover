@@ -459,7 +459,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         const startX = from.x - screenWidth / 2;
         const startY = from.y - (screenHeight - cardBottom - cardHeight / 2);
         return (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        // zIndex here too: on the web every view starts its own layer, so without it the scan boxes drew over the card.
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 69 }]}>
           <Animated.View
             pointerEvents="box-none"
             style={{

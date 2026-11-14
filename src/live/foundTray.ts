@@ -47,8 +47,17 @@ export function sameFoundProduct(a: BottleRead, b: BottleRead): boolean {
   return [...small].every(w => large.has(w));
 }
 
+/** Brand + expression, without repeating the brand when the expression already names it. */
+export function displayName(brand?: string | null, product?: string | null): string {
+  const b = String(brand ?? '').trim(), p = String(product ?? '').trim();
+  const fold = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const bw = fold(b).split(' ').filter(w => w.length > 1 && !['colonel', 'jr', 'sr', 'the'].includes(w));
+  const pf = ' ' + fold(p) + ' ';
+  const repeats = !!p && bw.length > 0 && bw.every(w => pf.includes(' ' + w + ' '));
+  return (repeats ? p : [b, p].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
+}
 export const foundName = (bottle: BottleRead) =>
-  [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  displayName(bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product);
 
 /**
  * Adds every fully recognised bottle (candidate.bottle is only set once reads
