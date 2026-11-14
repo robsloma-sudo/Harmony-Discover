@@ -9,7 +9,7 @@ import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker, isSameBottle, type LocalBottleCandidate } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
-import { selectLabelBatchCandidates } from './labelBatch';
+import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { hasBottleIdentityConflict, isConfirmedWebBottleTrack, mergeBottleRead } from './webTrackPolicy';
@@ -258,6 +258,9 @@ function WebLiveCamera(props: NativeProps) {
     let nextLabelBatchAt = Date.now() + 2200;
     const labelReadsByTrack = new Map<number, LabelBatchRead>();
     const lastLabelReadAt = new Map<number, number>();
+    // Second looks (stronger reader) run on their own, so easy bottles never wait for hard ones.
+    const lastSecondLookAt = new Map<number, number>();
+    let secondLookBusy = false;
     let segmentationRunner: SegmentationRunner | null = null;
     let segmentationLoading: Promise<void> | null = null;
     let segmentationLoadFailed = false;
@@ -840,21 +843,40 @@ function WebLiveCamera(props: NativeProps) {
       if (!crops.length) return;
       labelBatchBusy = true;
       crops.forEach(crop => lastLabelReadAt.set(crop.trackId, now));
-      try {
-        const reads = await readLiveLabelBatch(crops);
-        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
-        const returnedTrackIds = new Set(reads.map(read => read.trackId));
-        crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
+      const applyReads = (reads: LabelBatchRead[], readAt: number) => {
         for (const read of reads) {
+          // A blank second look adds nothing; keep what the first read had.
+          if (read.tier === 'escalate' && !read.brand) continue;
           labelReadsByTrack.set(read.trackId, read);
           reverifyTracks.delete(read.trackId);
-          evidence.observeIdentity(read.trackId, labelReadToBottle(read), 'label:' + now + ':' + read.trackId);
+          evidence.observeIdentity(read.trackId, labelReadToBottle(read), 'label:' + read.tier + ':' + readAt + ':' + read.trackId);
           const cloudTrack = webTracks.find(track => track.id === read.trackId);
           if (cloudTrack) {
             cloudTrack.bottle = mergeBottleRead(cloudTrack.bottle, read);
           }
         }
         publishVisibleCandidates();
+      };
+      try {
+        const reads = await readLiveLabelBatch(crops);
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
+        const returnedTrackIds = new Set(reads.map(read => read.trackId));
+        crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
+        applyReads(reads, now);
+        // Hard labels only: send the unsure or guessed ones (same crops) for a second look, in the background.
+        const secondLook = secondLookBusy ? [] : selectSecondLookCrops(crops, reads, lastSecondLookAt, Date.now());
+        if (secondLook.length) {
+          secondLookBusy = true;
+          const lookAt = Date.now();
+          secondLook.forEach(crop => { lastSecondLookAt.set(crop.trackId, lookAt); lastLabelReadAt.set(crop.trackId, lookAt); });
+          void readLiveLabelBatch(secondLook, 'escalate')
+            .then(better => {
+              if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
+              applyReads(better, lookAt);
+            })
+            .catch(() => { /* the normal re-read pace covers a failed second look */ })
+            .finally(() => { secondLookBusy = false; });
+        }
       } catch (error) {
         crops.forEach(crop => lastLabelReadAt.delete(crop.trackId));
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'label_batch_failed: ' + error.message : 'label_batch_failed' } });

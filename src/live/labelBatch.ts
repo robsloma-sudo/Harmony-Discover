@@ -34,3 +34,26 @@ export function selectLabelBatchCandidates(
     )
     .slice(0, limit);
 }
+
+/**
+ * Crops worth a second (stronger, slower) look: the first read came back unsure,
+ * looked like a guess, or never came back. Each bottle gets at most one second
+ * look per cooldown, and only a few are sent at once to keep cost down.
+ */
+export function selectSecondLookCrops<T extends { trackId: number }>(
+  sent: T[],
+  reads: ReadonlyArray<{ trackId: number; needsSecondLook?: boolean }>,
+  lastSecondLookAt: ReadonlyMap<number, number>,
+  now: number,
+  maximum = 4,
+  cooldownMs = 8_000,
+): T[] {
+  const byTrack = new Map(reads.map(read => [read.trackId, read]));
+  return sent
+    .filter(crop => {
+      const read = byTrack.get(crop.trackId);
+      return (!read || read.needsSecondLook === true)
+        && now - (lastSecondLookAt.get(crop.trackId) ?? -Infinity) >= cooldownMs;
+    })
+    .slice(0, Math.max(0, Math.min(4, Math.floor(maximum))));
+}

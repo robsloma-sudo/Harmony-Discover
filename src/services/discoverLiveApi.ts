@@ -157,13 +157,18 @@ export type LabelBatchRead = {
   confidence: number;
   match: { id: string; brand: string | null; product: string | null; score: number } | null;
   state: BottleState;
+  /** First (fast) read looked unsure or like a guess: worth one second look by the stronger reader. */
+  needsSecondLook: boolean;
+  tier: 'base' | 'escalate';
 };
 
-export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: string }>): Promise<LabelBatchRead[]> {
+/** tier 'base' = fast first read (Haiku); 'escalate' = second look by the stronger reader (Sonnet), max 4 crops. */
+export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: string }>, tier: 'base' | 'escalate' = 'base'): Promise<LabelBatchRead[]> {
   if (!crops.length) return [];
   const result = await call({
     action: 'label_batch',
-    crops: crops.slice(0, 8).map(crop => ({ track_id: String(crop.trackId), image: crop.image })),
+    tier,
+    crops: crops.slice(0, tier === 'escalate' ? 4 : 8).map(crop => ({ track_id: String(crop.trackId), image: crop.image })),
   });
   return (Array.isArray(result.reads) ? result.reads : []).map((read: Record<string, unknown>) => ({
     trackId: Number(read.track_id),
@@ -179,6 +184,8 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
     confidence: Number(read.confidence) || 0,
     match: read.match && typeof read.match === 'object' ? read.match as LabelBatchRead['match'] : null,
     state: read.state === 'matched' || read.state === 'reported' ? read.state : 'unsure',
+    needsSecondLook: read.needs_second_look === true,
+    tier: read.tier === 'escalate' ? 'escalate' : 'base',
   })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
 }
 

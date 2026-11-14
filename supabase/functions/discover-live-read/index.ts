@@ -1,4 +1,4 @@
-// Harmony Discover DEV — discover-live-read v0.4.1 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.0 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
@@ -7,12 +7,19 @@
 // 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
 // v0.4.1: label and frame reads use Claude Sonnet 5.5 (Rob, 14 Nov 2026). Sonnet 5.5 does not accept a
 // forced tool choice, so it gets tool_choice auto with low effort (fast); save-time research stays on Haiku.
+// v0.5.0: two-step reading to keep cost down (Rob, 14 Nov 2026). Haiku does every first read (whole picture
+// and label crops). A label read that looks like a guess (no brand, low confidence, or a brand/product not
+// backed by the words it actually transcribed) is marked needs_second_look and downgraded to unsure; the app
+// then sends only those crops back with tier "escalate", which Sonnet 5.5 reads. Easy bottles never wait.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4.1";
+const VERSION = "0.5.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
-const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-sonnet-5-5";
+const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
+const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
+const ESCALATION_MODEL = Deno.env.get("DISCOVER_ESCALATION_MODEL") || "claude-sonnet-5-5";
+const MAX_ESCALATION_CROPS = 4;
 const FALLBACK = "claude-haiku-5-5";
 const RESEARCH_MODEL = Deno.env.get("DISCOVER_RESEARCH_MODEL") || "claude-haiku-5-5";
 // Newer adaptive-thinking models reject a forced tool choice: ask for the tool instead, and keep thinking low for speed.
@@ -97,6 +104,16 @@ function headers(origin: string | null): Headers {
   return h;
 }
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
+const foldText = (v: unknown) => String(v ?? "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+// True when most meaningful words of a value appear in the words the model itself transcribed.
+// A brand or product it "knows" but did not transcribe is treated as a guess.
+function backedByWords(value: string, words: string[]): boolean {
+  const tokens = foldText(value).split(" ").filter((t) => t.length >= 3 || /\d/.test(t));
+  if (!tokens.length) return true;
+  const said = foldText(words.join(" ")), squashed = said.replace(/ /g, "");
+  const hits = tokens.filter((t) => (" " + said + " ").includes(" " + t + " ") || squashed.includes(t)).length;
+  return hits >= Math.ceil(tokens.length * 0.6);
+}
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
 
@@ -345,7 +362,7 @@ Deno.serve(async (req: Request) => {
   try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
   catch { return reply({ error: "invalid_json" }, 400, origin); }
   const action = String(body.action || "");
-  if (action === "health") return reply({ ok: true, version: VERSION, model: MODEL }, 200, origin);
+  if (action === "health") return reply({ ok: true, version: VERSION, model: MODEL, frame_model: FRAME_MODEL, label_model: MODEL, escalation_model: ESCALATION_MODEL }, 200, origin);
 
   const match = async (queries: string[]) => {
     const { data } = await db.rpc("discover_match_products", { p_queries: queries });
@@ -428,7 +445,8 @@ Deno.serve(async (req: Request) => {
   if (!anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
 
   if (action === "label_batch") {
-    const incoming = Array.isArray(body.crops) ? body.crops.slice(0, 8) as Array<Record<string, unknown>> : [];
+    const escalate = body.tier === "escalate";
+    const incoming = Array.isArray(body.crops) ? body.crops.slice(0, escalate ? MAX_ESCALATION_CROPS : 8) as Array<Record<string, unknown>> : [];
     if (!incoming.length) return reply({ error: "label_crops_required" }, 400, origin);
     const crops: Array<{track_id:string;image:string}> = [];
     let totalImageChars = 0;
@@ -448,7 +466,7 @@ Deno.serve(async (req: Request) => {
     const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
     const providerStartedAt = Date.now();
-    let model = MODEL, r = await readLabelBatch(anthropicKey, model, crops);
+    let model = escalate ? ESCALATION_MODEL : MODEL, r = await readLabelBatch(anthropicKey, model, crops);
     if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) {
       console.log(JSON.stringify({ evt: "bottle_model_fallback", from: model, status: r.status, msg: clean(r.j?.error?.message, 160) }));
       model = FALLBACK; r = await readLabelBatch(anthropicKey, model, crops);
@@ -485,10 +503,17 @@ Deno.serve(async (req: Request) => {
       const matched = sameBrand && hit?.id && hit.product && (hit.score ?? 0) >= 0.72
         ? { id: hit.id, brand: hit.brand, product: hit.product, score: Math.round((hit.score ?? 0) * 100) / 100 }
         : null;
-      return { ...read, match: matched, state: !read.brand || read.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : matched ? "matched" : "reported" };
+      const guessed = !!read.brand && (!backedByWords(read.brand, read.words) || (!!read.product && !backedByWords(read.product, read.words)));
+      const weakProduct = !!read.product && (read.fieldConfidence.product ?? read.confidence) < MIN_LABEL_CONFIDENCE;
+      const unsure = !read.brand || read.confidence < MIN_LABEL_CONFIDENCE || guessed;
+      // Only first (Haiku) reads ask for a second look; a second look is final.
+      const needsSecondLook = !escalate && (unsure || weakProduct);
+      return { ...read, confidence: guessed ? Math.min(read.confidence, 0.5) : read.confidence, match: guessed ? null : matched,
+        state: unsure ? "unsure" : matched ? "matched" : "reported", needs_second_look: needsSecondLook, tier: escalate ? "escalate" : "base" };
     });
-    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
-    return reply({ ok: true, version: VERSION, model, reads: matchedReads, diagnostics: { provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length } }, 200, origin);
+    const secondLook = matchedReads.filter((r) => r.needs_second_look).length + (escalate ? 0 : crops.length - matchedReads.length);
+    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, tier: escalate ? "escalate" : "base", provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, reads_confident: matchedReads.filter((r) => r.state !== "unsure").length, guessed: matchedReads.filter((r) => r.state === "unsure" && !!r.brand).length, second_look_wanted: secondLook, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
+    return reply({ ok: true, version: VERSION, model, tier: escalate ? "escalate" : "base", reads: matchedReads, diagnostics: { provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, second_look_wanted: secondLook } }, 200, origin);
   }
 
   if (action === "frame") {
@@ -501,7 +526,7 @@ Deno.serve(async (req: Request) => {
 
     const providerStartedAt = Date.now();
     const focus = body.focus === "fine_print" ? "fine_print" : "standard";
-    let model = MODEL, r = await readFrame(anthropicKey, model, image, focus);
+    let model = focus === "fine_print" ? MODEL : FRAME_MODEL, r = await readFrame(anthropicKey, model, image, focus);
     if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { console.log(JSON.stringify({ evt: "bottle_model_fallback", from: model, status: r.status, msg: clean(r.j?.error?.message, 160) })); model = FALLBACK; r = await readFrame(anthropicKey, model, image, focus); }
     const usage = r.j?.usage || {};
     await db.rpc("discover_bottle_scan_tokens", { p_subject: subject, p_in: usage.input_tokens || 0, p_out: usage.output_tokens || 0 });
