@@ -41,7 +41,9 @@ export const CONFIDENT_SINGLE_READ = 0.9;
 export const RELIABLE_IDENTITY = 0.75;
 const RELIABLE_SHARE = 0.75;
 
-const clean = (value?: string | null) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** Lower case, accents dropped ("Mescladís" = "mescladis"), only letters and digits. */
+export const foldWords = (value?: string | null) => String(value ?? '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const clean = foldWords;
 
 export function identityKey(read: IdentityRead): string | null {
   if (read.match?.id && (read.match.score ?? 0) >= 0.85) return 'match:' + read.match.id;
@@ -51,6 +53,10 @@ export function identityKey(read: IdentityRead): string | null {
 
 const clamp = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 
+/** Words many different bottles share; they never prove two reads name the same bottle. */
+const SHARED_NAME_WORDS = new Set(['domaine', 'chateau', 'bodega', 'bodegas', 'cantina', 'tenuta', 'weingut', 'estate', 'winery', 'wines', 'wine',
+  'vineyard', 'vineyards', 'cellars', 'distillery', 'brewing', 'brewery', 'rose', 'red', 'white', 'blanc', 'rouge', 'saint', 'santa', 'san',
+  'bourbon', 'whiskey', 'whisky', 'straight', 'kentucky', 'vodka', 'gin', 'rum', 'tequila', 'beer', 'reserve', 'reserva', 'old']);
 const tokens = (value?: string | null) => new Set(clean(value).split(' ').filter(word => word.length > 1 && !['the', 'and', 'jr', 'sr', 'co', 'company'].includes(word)));
 
 /** Two reads name the same bottle: same catalogue product, or brands that clearly agree. */
@@ -65,7 +71,17 @@ export function sameBottleIdentity(a: IdentityRead, b: IdentityRead): boolean {
   let shared = 0;
   brandA.forEach(word => { if (brandB.has(word)) shared++; });
   const smaller = Math.min(brandA.size, brandB.size);
-  return shared / smaller >= 0.6 || shared / (brandA.size + brandB.size - shared) >= 0.5;
+  if (shared / smaller >= 0.6 || shared / (brandA.size + brandB.size - shared) >= 0.5) return true;
+  // Wine labels carry two names (estate and cuvee) and readers differ on which is the
+  // brand: "Mescladís / Pic Saint Loup" and "Domaine Clavel / Mescladís" are one bottle.
+  // They agree when one read's brand is wholly named somewhere in the other read.
+  const nameA = tokens((a.match?.brand || a.brand || '') + ' ' + (a.match?.product || a.product || ''));
+  const nameB = tokens((b.match?.brand || b.brand || '') + ' ' + (b.match?.product || b.product || ''));
+  const within = (brand: Set<string>, name: Set<string>) => {
+    const distinctive = [...brand].filter(word => word.length >= 3 && !SHARED_NAME_WORDS.has(word));
+    return distinctive.length > 0 && distinctive.every(word => name.has(word));
+  };
+  return within(brandA, nameB) || within(brandB, nameA);
 }
 
 const FILL_FIELDS = ['proof', 'size', 'origin', 'category'] as const;

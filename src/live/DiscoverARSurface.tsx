@@ -33,6 +33,8 @@ import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
 
 /** Smallest label crop (longest side, in camera pixels) worth sending to the label reader. */
 export const MIN_READABLE_LABEL_PX = 200;
+/** Whole-bottle crops narrower than this (width / height) are slivers with no readable label. */
+export const MIN_BODY_CROP_ASPECT = 0.16;
 
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
@@ -830,6 +832,8 @@ function WebLiveCamera(props: NativeProps) {
         };
         const crop = calculateLabelCrop(labelBox, frameCanvas.width, frameCanvas.height, { maxLongEdge: 896, maxUpscale: 1.5 });
         if (!crop) continue;
+        // A thin sliver (a bottle edge behind its neighbour, or a neck) never shows a readable label.
+        if (!projectedLabel && Math.min(crop.sw, crop.sh) / Math.max(crop.sw, crop.sh) < MIN_BODY_CROP_ASPECT) continue;
         // Too few real pixels to read: enlarging adds nothing, so do not pay for a read.
         // The bottle is read once it is closer (or the camera moves in).
         if (Math.max(crop.sw, crop.sh) < MIN_READABLE_LABEL_PX || Math.min(crop.sw, crop.sh) < MIN_READABLE_LABEL_PX / 3) continue;
@@ -871,7 +875,9 @@ function WebLiveCamera(props: NativeProps) {
         publishVisibleCandidates();
       };
       try {
-        const reads = await readLiveLabelBatch(crops);
+        const video = videoRef.current;
+        const diag = { video_w: video?.videoWidth ?? 0, video_h: video?.videoHeight ?? 0, frame_w: frameCanvas.width, frame_h: frameCanvas.height };
+        const reads = await readLiveLabelBatch(crops, 'base', diag);
         if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
         const returnedTrackIds = new Set(reads.map(read => read.trackId));
         crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
@@ -882,7 +888,7 @@ function WebLiveCamera(props: NativeProps) {
           secondLookBusy = true;
           const lookAt = Date.now();
           secondLook.forEach(crop => { lastSecondLookAt.set(crop.trackId, lookAt); lastLabelReadAt.set(crop.trackId, lookAt); });
-          void readLiveLabelBatch(secondLook, 'escalate')
+          void readLiveLabelBatch(secondLook, 'escalate', diag)
             .then(better => {
               if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
               applyReads(better, lookAt);

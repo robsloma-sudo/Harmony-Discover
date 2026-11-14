@@ -1,4 +1,4 @@
-// Harmony Discover DEV — discover-live-read v0.5.2 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.3 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
@@ -14,10 +14,14 @@
 // v0.5.1: logs each batch's label crop sizes (pixels only, no image or text) to check readability.
 // v0.5.2: the guess check ignores generic words (Domaine, Rosé, Bourbon...) and needs only half the
 // distinctive words to be on the label; second looks (Sonnet) are trusted and never capped as guesses.
+// v0.5.3: label reads say what "brand" means (the biggest identifying name; wine: estate or cuvee), so Haiku
+// and Sonnet name a wine the same way; a name returned only as product becomes the brand; the product never
+// repeats the brand. Logs why a crop was unreadable (blurry, too small...) and the phone's camera/frame size
+// (pixel counts only) to find why reads fail on a real phone.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.2";
+const VERSION = "0.5.3";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -233,6 +237,8 @@ const LABEL_TOOL = {
 };
 
 
+// Diagnostics only: why a crop could not be read (blur, size, angle...).
+const UNREADABLE_REASONS = ["", "blurry", "too_small", "glare", "turned_away", "cut_off", "no_label"];
 const LABEL_BATCH_TOOL = {
   name: "label_reads",
   description: "Read each supplied beverage label crop independently and return one result for its exact track ID.",
@@ -243,12 +249,14 @@ const LABEL_BATCH_TOOL = {
         type: "object", required: ["track_id", "brand", "product", "category", "proof", "size", "origin", "label_words", "details", "field_confidence"],
         properties: {
           track_id: { type: "string" },
-          brand: { type: "string" }, product: { type: "string" },
+          brand: { type: "string", description: "The main name that identifies this bottle, exactly as printed: the largest brand, estate, producer or cuvee name on the label. For wine this is usually the biggest name on the label; for spirits and beer the brand. Fill it whenever any identifying name is legible; empty only when no name can be read." },
+          product: { type: "string", description: "What the label adds to that name, exactly as printed: expression, cuvee, appellation, variety or style (e.g. Reposado, Pic Saint Loup, Single Barrel). Never repeat the brand. Empty if none." },
+          unreadable_reason: { type: "string", enum: UNREADABLE_REASONS, description: "Why the name could not be read clearly; empty when it was read." },
           category: { type: "string", enum: CATEGORIES },
           proof: { type: "string" }, size: { type: "string" }, origin: { type: "string" },
           label_words: { type: "array", maxItems: 12, items: { type: "string" } },
           details: { type: "object", properties: Object.fromEntries(DETAIL_KEYS.map((k) => [k, { type: "string", description: DETAILS[k] }])), additionalProperties: false },
-          field_confidence: { type: "object", additionalProperties: { type: "number" } }
+          field_confidence: { type: "object", description: "0 to 1 legibility confidence for each filled field; always include brand when brand is filled.", additionalProperties: { type: "number" } }
         }
       } }
     }
@@ -507,9 +515,26 @@ Deno.serve(async (req: Request) => {
       const rawScores = (read.field_confidence && typeof read.field_confidence === "object" ? read.field_confidence : {}) as Record<string, unknown>;
       const fieldConfidence: Record<string, number> = {};
       for (const [key, value] of Object.entries(rawScores)) if (Number.isFinite(Number(value))) fieldConfidence[key] = unit(value);
-      const brand = clean(read.brand, 80), product = clean(read.product, 80);
+      let brand = clean(read.brand, 80), product = clean(read.product, 80);
+      // Models differ on which printed name is the "brand" (wine: estate vs cuvee).
+      // A legible name put only in product still names the bottle.
+      if (!brand && product) {
+        brand = product; product = "";
+        if (fieldConfidence.brand === undefined && fieldConfidence.product !== undefined) fieldConfidence.brand = fieldConfidence.product;
+      }
+      // Never repeat the brand inside the product ("Mescladis" / "Mescladis Rose").
+      if (brand && product) {
+        if (foldText(product) === foldText(brand)) product = "";
+        else {
+          const brandWords = foldText(brand).split(" "), productWords = product.split(/\s+/);
+          let i = 0;
+          while (i < brandWords.length && i < productWords.length && foldText(productWords[i]) === brandWords[i]) i++;
+          if (i === brandWords.length && i < productWords.length) product = clean(productWords.slice(i).join(" ").replace(/^[,:-]+\s*/, ""), 80);
+        }
+      }
       return {
         track_id: clean(read.track_id, 48), brand, product,
+        unreadable_reason: UNREADABLE_REASONS.includes(String(read.unreadable_reason)) ? String(read.unreadable_reason) : "",
         category: CATEGORIES.includes(String(read.category)) ? String(read.category) : "other",
         proof: clean(read.proof, 30), size: clean(read.size, 30), origin: clean(read.origin, 60),
         words: (Array.isArray(read.label_words) ? read.label_words : []).map(w => clean(w, 60)).filter(Boolean).slice(0, 12),
@@ -538,7 +563,11 @@ Deno.serve(async (req: Request) => {
     const sizes = crops.map((c) => jpegSize(c.image)).filter((x): x is { w: number; h: number } => !!x);
     const shortSides = sizes.map((x) => Math.min(x.w, x.h)).sort((a, b) => a - b);
     const secondLook = matchedReads.filter((r) => r.needs_second_look).length + (escalate ? 0 : crops.length - matchedReads.length);
-    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, tier: escalate ? "escalate" : "base", provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, reads_confident: matchedReads.filter((r) => r.state !== "unsure").length, guessed: matchedReads.filter((r) => r.state === "unsure" && !!r.brand).length, second_look_wanted: secondLook, brand_empty: matchedReads.filter((r) => !r.brand).length, crop_short_side_min: shortSides[0] ?? 0, crop_short_side_median: shortSides[Math.floor(shortSides.length / 2)] ?? 0, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
+    const reasons: Record<string, number> = {};
+    for (const r of matchedReads) if (r.unreadable_reason) reasons[r.unreadable_reason] = (reasons[r.unreadable_reason] || 0) + 1;
+    const diag = (body.diag && typeof body.diag === "object" ? body.diag : {}) as Record<string, unknown>;
+    const px = (v: unknown) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 && n < 10000 ? n : 0; };
+    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, tier: escalate ? "escalate" : "base", unreadable: reasons, video_w: px(diag.video_w), video_h: px(diag.video_h), frame_w: px(diag.frame_w), frame_h: px(diag.frame_h), provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, reads_confident: matchedReads.filter((r) => r.state !== "unsure").length, guessed: matchedReads.filter((r) => r.state === "unsure" && !!r.brand).length, second_look_wanted: secondLook, brand_empty: matchedReads.filter((r) => !r.brand).length, crop_short_side_min: shortSides[0] ?? 0, crop_short_side_median: shortSides[Math.floor(shortSides.length / 2)] ?? 0, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
     return reply({ ok: true, version: VERSION, model, tier: escalate ? "escalate" : "base", reads: matchedReads, diagnostics: { provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, second_look_wanted: secondLook } }, 200, origin);
   }
 

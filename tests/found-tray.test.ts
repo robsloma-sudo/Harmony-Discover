@@ -64,3 +64,11 @@ describe('display name', () => {
     expect(displayName("Blanton's", '')).toBe("Blanton's");
   });
 });
+
+describe('names with accents', () => {
+  it('does not repeat an accented brand', async () => {
+    const { displayName } = await import('../src/live/foundTray');
+    expect(displayName('Mescladís', 'Mescladis Rosé')).toBe('Mescladis Rosé');
+    expect(displayName('Mescladís', 'Pic Saint Loup')).toBe('Mescladís Pic Saint Loup');
+  });
+});

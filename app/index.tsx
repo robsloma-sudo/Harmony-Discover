@@ -23,7 +23,7 @@ import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
-import { mergeFound, type FoundItem } from '../src/live/foundTray';
+import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -372,7 +372,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
             const identifying = !bottle && typeof tracked.identifying === 'number';
             const provisional = !bottle ? tracked.provisional : undefined;
-            const readName = (read?: BottleRead) => read ? [read.match?.brand || read.brand, read.match?.product || read.product].filter(Boolean).join(' ').trim() : '';
+            const readName = (read?: BottleRead) => read ? displayName(read.match?.brand || read.brand, read.match?.product || read.product) : '';
             const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,

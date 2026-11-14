@@ -118,3 +118,34 @@ describe('identity builds up across reads', () => {
     for (let i = 1; i < values.length; i++) expect(values[i]!).toBeGreaterThanOrEqual(values[i - 1]!);
   });
 });
+
+describe('wine labels with two names (estate and cuvée)', () => {
+  const wine = (brand: string, product: string, confidence = 0.85) => ({ brand, product, confidence, state: 'reported', match: null });
+
+  it('accents do not split one name', async () => {
+    const { foldWords } = await import('../src/live/trackEvidence');
+    expect(foldWords('Mescladís')).toBe('mescladis');
+    expect(foldWords('Château Léoville')).toBe('chateau leoville');
+  });
+
+  it('"Mescladís / Pic Saint Loup" and "Domaine Clavel / Mescladís" are one bottle', async () => {
+    const { sameBottleIdentity } = await import('../src/live/trackEvidence');
+    expect(sameBottleIdentity(wine('Mescladís', 'Pic Saint Loup'), wine('Domaine Clavel', 'Mescladís'))).toBe(true);
+    expect(sameBottleIdentity(wine('Mescladis', ''), wine('Mescladís', 'Rosé'))).toBe(true);
+  });
+
+  it('a shared grape or place never makes two brands agree', async () => {
+    const { sameBottleIdentity } = await import('../src/live/trackEvidence');
+    expect(sameBottleIdentity(wine('Giuliano Rosati', 'Pinot Grigio'), wine('Barefoot', 'Pinot Grigio'))).toBe(false);
+    expect(sameBottleIdentity(wine('Domaine Clavel', 'Pic Saint Loup'), wine('Château de Lancyre', 'Pic Saint Loup'))).toBe(false);
+  });
+
+  it('the two wordings add up to a confirmed name instead of splitting the vote', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(3, wine('Mescladís', 'Pic Saint Loup', 0.85), 'label:base:1');
+    evidence.observeIdentity(3, wine('Domaine Clavel', 'Mescladís', 0.8), 'label:escalate:1');
+    const identity = evidence.identity(3)!;
+    expect(identity.agreeingReads).toBe(2);
+    expect(identity.reliable).toBe(true);
+  });
+});

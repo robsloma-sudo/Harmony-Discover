@@ -1,5 +1,5 @@
 import type { BottleRead } from '../services/discoverLiveApi';
-import { identityKey, sameBottleIdentity } from './trackEvidence';
+import { foldWords, identityKey, sameBottleIdentity } from './trackEvidence';
 
 /** One identified product in the "found" strip at the top of the scanner. */
 export type FoundItem = {
@@ -29,7 +29,7 @@ export function foundFacts(bottle: BottleRead): string {
 }
 
 const GENERIC = new Set(['straight', 'kentucky', 'tennessee', 'bourbon', 'whiskey', 'whisky', 'bottled', 'in', 'bond', 'of', 'the', 'and', 'colonel', 'jr', 'sr', 'year', 'years', 'old', 'aged']);
-const words = (value?: string | null) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+const words = (value?: string | null) => foldWords(value).split(' ').filter(Boolean);
 /**
  * One product, even when reads word it differently ("Single Barrel" vs
  * "Single Barrel Straight Kentucky Bourbon Whiskey"): same brand, and the
@@ -50,7 +50,7 @@ export function sameFoundProduct(a: BottleRead, b: BottleRead): boolean {
 /** Brand + expression, without repeating the brand when the expression already names it. */
 export function displayName(brand?: string | null, product?: string | null): string {
   const b = String(brand ?? '').trim(), p = String(product ?? '').trim();
-  const fold = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const fold = foldWords;
   const bw = fold(b).split(' ').filter(w => w.length > 1 && !['colonel', 'jr', 'sr', 'the'].includes(w));
   const pf = ' ' + fold(p) + ' ';
   const repeats = !!p && bw.length > 0 && bw.every(w => pf.includes(' ' + w + ' '));
