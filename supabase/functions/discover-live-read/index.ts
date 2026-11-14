@@ -1,4 +1,4 @@
-// Harmony Discover DEV — discover-live-read v0.5.3 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.4 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
@@ -18,10 +18,12 @@
 // and Sonnet name a wine the same way; a name returned only as product becomes the brand; the product never
 // repeats the brand. Logs why a crop was unreadable (blurry, too small...) and the phone's camera/frame size
 // (pixel counts only) to find why reads fail on a real phone.
+// v0.5.4: the live whole-frame read asks only for boxes and names (no edge tracing, no long fact list):
+// far fewer tokens, so the first names arrive seconds sooner.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.3";
+const VERSION = "0.5.4";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -193,22 +195,13 @@ const TOOL = {
         properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } } },
       label_box: { type: "object", description: "tight box around the main paper, foil, or sticker label on this bottle, as fractions of the full image (0 to 1); omit if no label boundary is visible",
         properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } } },
-      edge_paths: { type: "array", maxItems: 48, description: "Visible edge polylines for this bottle, in normalized full-image coordinates. Trace observed image boundaries only; do not invent hidden edges. Classify hard structural boundaries, paper/label boundaries, and fine printed strokes separately. Points should follow the visible contour in order.", items: {
-        type: "object", required: ["kind","points","confidence"], properties: {
-          kind: { type: "string", enum: ["hard","label","print"] },
-          points: { type: "array", minItems: 2, maxItems: 32, items: { type: "object", required: ["x","y"], properties: { x: { type: "number" }, y: { type: "number" } } } },
-          confidence: { type: "number", description: "0 to 1 confidence that this edge is visibly present in the image" }
-        }
-      } },
       label_words: { type: "array", maxItems: 8, items: { type: "string" }, description: "the main words printed on the label, largest first, exactly as printed" },
-      brand: { type: "string", description: "brand name exactly as printed on the label; empty if it cannot be read" },
+      brand: { type: "string", description: "the main identifying name exactly as printed (for wine the biggest name on the label); empty if it cannot be read" },
       product: { type: "string", description: "expression or product name as printed (e.g. Blanco, Reposado, Single Barrel); empty if none" },
       category: { type: "string", enum: CATEGORIES },
       proof: { type: "string", description: "strength exactly as printed (e.g. 40% ALC/VOL or 80 PROOF); empty if not readable" },
       size: { type: "string", description: "bottle size as printed; empty if not readable" },
       origin: { type: "string", description: "place of origin as printed; empty if not readable" },
-      certifications: { type: "array", maxItems: 6, items: { type: "string" }, description: "certification marks or claims printed (e.g. USDA Organic, Kosher, Biodynamic, Vegan, Gluten Free, Additive Free)" },
-      ...Object.fromEntries(DETAIL_KEYS.map((k) => [k, { type: "string", description: DETAILS[k] + "; empty if not printed or not readable" }])),
       field_confidence: { type: "object", description: "Independent 0-to-1 confidence for each returned field. Include only fields with a value; confidence is based on legibility, not whether the answer seems plausible.", additionalProperties: { type: "number" } },
       detection_confidence: { type: "number", description: "0 to 1 confidence that this object is a beverage bottle and that the returned whole-bottle box follows its visible bounds. Judge object presence and geometry only; do not reduce this score because label text is unreadable." },
       confidence: { type: "number", description: "0 to 1 confidence that the brand was READ from the label, not guessed. This is identity/OCR confidence only and must not be used as bottle-detection confidence." },
@@ -263,7 +256,9 @@ const LABEL_BATCH_TOOL = {
   }
 };
 
-const SYSTEM = "You read one photo taken in a bar, shop or restaurant: beverage bottles (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true, return a tight box around the visible paper/menu card when its boundary is visible, and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. Detect every clearly visible beverage bottle even when its label is turned away, occluded, blurry, too small, or unreadable. For each bottle return a tight box around the whole visible bottle and a separate tight label_box around the paper/foil/sticker label if its boundary is visible. Detection confidence is solely about whether the object is a beverage bottle and whether the box fits it. Brand confidence is solely about whether brand text is legible. Never lower detection confidence because brand confidence is low. When brand text is not legible, leave brand and product empty and set brand confidence below 0.4; still return the bottle box and detection confidence. Also return edge_paths: short ordered polylines following ONLY visible image edges, with normalized full-image x/y coordinates and a confidence score. Use kind=hard for glass/wood/metal/container silhouette and other strong structural boundaries, kind=label for paper/foil/sticker boundaries and fine material edges, and kind=print for visible fine text strokes. Split paths at occlusions or uncertain gaps. Never draw an edge merely because a bottle is expected to be symmetrical; do not invent hidden or obscured geometry. A line should track a visible intensity/color boundary, not a conceptual object outline. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Return an independent field_confidence score for every populated field; a low-confidence value must be left empty rather than guessed. Distinguish exact product expression from brand, producer, distillery, bottler, category, legal class, style, appellation, region, origin, package size and SKU/barcode. Extract all legible label and package facts, including bottling/distillation/harvest/disgorgement dates, mash bill/grain/agave, cask/barrel, lot/batch, vineyard/estate, dosage/residual sugar, importer, awards, organic claims and package material when printed or visibly identifiable. Do not infer a SKU or barcode from a product match. Skip glasses, glassware, taps, people, tables, shelves and background objects. A beverage bottle remains a valid detection even when its label faces away or is obscured. Never return boxes for anything except a bottle and its own label. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. Return an empty bottles list only when no beverage bottle is visibly present anywhere in the image. A visible bottle MUST receive a whole-bottle box even if its label is absent, turned away, covered, blurred, unreadable, or outside the crop; in those cases leave brand and product empty and keep detection_confidence based only on visible bottle geometry. Never use label readability as a condition for detecting the bottle. Always call the bottles tool.";
+// Live frame read is kept short for speed (v0.5.4): boxes + the name only. Edge tracing and the
+// long list of label facts were dropped here; label crops and save-time research fill in facts.
+const SYSTEM = "You read one photo taken in a bar, shop or restaurant. Detect every visible beverage bottle (beer, wine, spirits, anything), even when its label is turned away, blurred or too small to read. For each bottle return a tight box around the whole bottle and a tight label_box around its main label when visible, as fractions of the image. detection_confidence is only about whether it is a bottle and the box fits. Read only what is printed: brand is the main identifying name (for wine the biggest name on the label), product what the label adds to it (expression, cuvee, appellation, style). Never identify a bottle from shape, colour or cap; if the name is not legible leave brand and product empty and set confidence below 0.4. confidence is how sure you are the brand was read, not guessed. Give field_confidence for each filled field. If a printed menu is in view, set menu.visible true and copy each legible item name and price exactly; otherwise menu.visible false. Skip glasses, taps, people and shelves. Always call the bottles tool.";
 
 async function readFrame(key: string, model: string, b64: string, focus: string = "standard") {
   const finePrint = focus === "fine_print";

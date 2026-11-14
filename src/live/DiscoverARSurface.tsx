@@ -385,8 +385,8 @@ function WebLiveCamera(props: NativeProps) {
     };
     let lastRecognitionStartedAt = 0;
     // Full-frame reads and label batches share the DEV endpoint's 30-request/minute quota.
-    // Each path is paced at 4.4s and recognitionBusy serializes them under the shared ceiling.
-    const recognitionIntervalMs = 4400;
+    // Each path is paced at 3.4s (whole-frame reads are short since live-read 0.5.4) and recognitionBusy serializes them under the shared ceiling.
+    const recognitionIntervalMs = 3400;
     // Temporal object tracker for the web camera path. Cloud detections arrive
     // intermittently; stable IDs and smoothed boxes keep an object visually
     // attached between recognition passes instead of resetting by array index.
