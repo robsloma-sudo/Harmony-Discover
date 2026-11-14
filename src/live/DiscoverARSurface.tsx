@@ -404,7 +404,7 @@ function WebLiveCamera(props: NativeProps) {
             video.clientWidth || video.videoWidth,
             video.clientHeight || video.videoHeight,
           );
-          if (!crop) { previousOpticalGray = null; return; }
+          if (!crop) { previousOpticalGray = null; opticalFlowFrame = window.requestAnimationFrame(tick); return; }
           const { x: sx, y: sy, width: sw, height: sh } = crop;
           const scale = Math.min(1, 320 / Math.max(sw, sh));
           const width = Math.max(24, Math.round(sw * scale));
