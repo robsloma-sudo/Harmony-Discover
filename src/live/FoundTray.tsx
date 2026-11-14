@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { FoundItem } from './foundTray';
 
-export type FoundFlight = { id: string; key: string; name: string; from: { x: number; y: number }; to: { x: number; y: number } };
+export type FoundFlight = { id: string; key: string; name: string; startedAt: number; from: { x: number; y: number }; to: { x: number; y: number } };
 
-/** Thin strip at the top of the scanner: one chip per identified product, newest on the left. */
+/** Thin strip at the top of the scanner: one chip per identified product, newest on the right. */
 export function FoundTray({ items, hiddenKeys, unseenKeys, selectedKey, top, onSelect, onClear }: {
   items: FoundItem[];
   hiddenKeys: ReadonlySet<string>;
@@ -16,12 +16,12 @@ export function FoundTray({ items, hiddenKeys, unseenKeys, selectedKey, top, onS
   onClear: () => void;
 }) {
   const scroll = useRef<ScrollView>(null);
-  // Newest chip is on the left: bring it into view when one arrives.
-  useEffect(() => { scroll.current?.scrollTo({ x: 0, animated: true }); }, [items.length]);
+  // Newest chip is added on the right (inserting on the left made browsers
+  // keep the old scroll spot, pushing the new chip out of view): follow it.
   if (!items.length) return null;
   return (
     <View pointerEvents="box-none" style={[s.wrap, { top }]}>
-      <ScrollView ref={scroll} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row} style={s.scroll}>
+      <ScrollView ref={scroll} horizontal onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })} showsHorizontalScrollIndicator={false} contentContainerStyle={s.row} style={s.scroll}>
         {items.map(item => (
           <Pressable
             key={item.key}
@@ -65,8 +65,9 @@ export function FoundFlightLabel({ flight, onDone }: { flight: FoundFlight; onDo
 
 const s = StyleSheet.create({
   wrap: { position: 'absolute', left: 8, right: 8, height: 26, zIndex: 25, flexDirection: 'row', alignItems: 'center' },
-  scroll: { flex: 1 },
-  row: { alignItems: 'center', gap: 6, paddingRight: 4 },
+  // Explicit size: a flex-only horizontal scroller collapsed to nothing on iPhone browsers.
+  scroll: { flexGrow: 1, flexShrink: 1, minWidth: 0, height: 26 },
+  row: { alignItems: 'center', height: 26, gap: 6, paddingRight: 4, paddingLeft: 1 },
   chip: { height: 22, maxWidth: 170, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 11, backgroundColor: 'rgba(5,15,16,0.9)', borderWidth: 1, borderColor: 'rgba(119,229,181,0.85)' },
   chipSelected: { borderColor: '#C6A36A', backgroundColor: 'rgba(40,32,18,0.95)' },
   dot: { position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 4, backgroundColor: '#C6A36A', borderWidth: 1, borderColor: '#05100F' },

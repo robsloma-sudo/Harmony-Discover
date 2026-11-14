@@ -82,13 +82,22 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       setFoundFlights(flights => [...flights, ...added.map(({ item, candidate }, index) => ({
         id: item.key + ':' + item.firstSeenAt,
         key: item.key,
+        startedAt: Date.now(),
         name: item.name,
         from: { x: Math.max(4, Math.min(screenWidth - 120, candidate.x * screenWidth)), y: Math.max(foundTrayTop, candidate.y * screenHeight - 29) },
-        to: { x: 8 + index * 4, y: foundTrayTop + 2 },
+        to: { x: Math.max(8, screenWidth - 236) - index * 4, y: foundTrayTop + 2 },
       }))]);
     }
   }, [liveCandidates, screenWidth, screenHeight, foundTrayTop]);
-  const foundKeysInFlight = new Set(foundFlights.map(flight => flight.key));
+  // A chip is hidden only while its label is flying (under a second). Flights
+  // are cleared by a timer too, so a chip can never stay hidden if the
+  // animation does not report that it finished.
+  useEffect(() => {
+    if (!foundFlights.length) return;
+    const timer = setTimeout(() => setFoundFlights(flights => flights.filter(flight => Date.now() - flight.startedAt < 900)), 950);
+    return () => clearTimeout(timer);
+  }, [foundFlights]);
+  const foundKeysInFlight = new Set(foundFlights.filter(flight => Date.now() - flight.startedAt < 900).map(flight => flight.key));
   // Profile card for a chip in the found strip. It follows that chip's entry,
   // so new label reads fill in while it is open, and research is re-checked
   // every 8 s. It grows out of the chip that was tapped.

@@ -9,12 +9,12 @@ const read = (brand: string, product: string): BottleRead => ({
 const cand = (trackId: number, bottle?: BottleRead) => ({ trackId, x: 0.1, y: 0.4, width: 0.1, height: 0.3, bottle });
 
 describe('found strip', () => {
-  it('adds only fully recognised bottles, newest first', () => {
+  it('adds only fully recognised bottles, newest last', () => {
     const first = mergeFound([], [cand(1, read('E.H. Taylor', 'Single Barrel')), cand(2)], 1);
     expect(first.list.map(i => i.name)).toEqual(['E.H. Taylor Single Barrel']);
     expect(first.added).toHaveLength(1);
     const second = mergeFound(first.list, [cand(3, read('E.H. Taylor', 'Cured Oak'))], 2);
-    expect(second.list.map(i => i.name)).toEqual(['E.H. Taylor Cured Oak', 'E.H. Taylor Single Barrel']);
+    expect(second.list.map(i => i.name)).toEqual(['E.H. Taylor Single Barrel', 'E.H. Taylor Cured Oak']);
   });
   it('never duplicates a product seen again or on another bottle', () => {
     const a = mergeFound([], [cand(1, read('E.H. Taylor', 'Single Barrel'))], 1);
@@ -39,5 +39,19 @@ describe('found strip new-data version', () => {
     const richer = { ...read('E.H. Taylor', 'Barrel Proof'), proof: '127.3 Proof', details: { batch: 'Batch 16' } } as BottleRead;
     const more = mergeFound(same.list, [cand(2, richer)], 3);
     expect(more.list[0].version).toBe(2);
+  });
+});
+
+describe('found strip same product', () => {
+  it('merges differently worded reads of one product, keeps the shorter name', () => {
+    const a = mergeFound([], [cand(1, read('Colonel E.H. Taylor', 'Single Barrel Straight Kentucky Bourbon Whiskey'))], 1);
+    const b = mergeFound(a.list, [cand(2, read('Colonel E.H. Taylor', 'Single Barrel'))], 2);
+    expect(b.list).toHaveLength(1);
+    expect(b.added).toHaveLength(0);
+    expect(b.list[0].name).toBe('Colonel E.H. Taylor Single Barrel');
+  });
+  it('keeps different expressions of the same brand apart', () => {
+    const a = mergeFound([], [cand(1, read('Colonel E.H. Taylor', 'Single Barrel')), cand(2, read('E.H. Taylor, Jr.', 'Cured Oak')), cand(3, read('Colonel E.H. Taylor', 'Barrel Proof'))], 1);
+    expect(a.list).toHaveLength(3);
   });
 });

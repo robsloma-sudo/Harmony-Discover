@@ -1,5 +1,5 @@
 import type { BottleRead } from '../services/discoverLiveApi';
-import { identityKey } from './trackEvidence';
+import { identityKey, sameBottleIdentity } from './trackEvidence';
 
 /** One identified product in the "found" strip at the top of the scanner. */
 export type FoundItem = {
@@ -28,12 +28,31 @@ export function foundFacts(bottle: BottleRead): string {
     ...filled.map(key => key + '=' + String((details as Record<string, unknown>)[key]))].map(v => String(v ?? '').trim().toLowerCase()).join('|');
 }
 
+const GENERIC = new Set(['straight', 'kentucky', 'tennessee', 'bourbon', 'whiskey', 'whisky', 'bottled', 'in', 'bond', 'of', 'the', 'and', 'colonel', 'jr', 'sr', 'year', 'years', 'old', 'aged']);
+const words = (value?: string | null) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+/**
+ * One product, even when reads word it differently ("Single Barrel" vs
+ * "Single Barrel Straight Kentucky Bourbon Whiskey"): same brand, and the
+ * shorter expression's words are all in the longer one. "Single Barrel" and
+ * "Cured Oak" stay separate.
+ */
+export function sameFoundProduct(a: BottleRead, b: BottleRead): boolean {
+  if (a.match?.id && b.match?.id) return a.match.id === b.match.id;
+  if (!sameBottleIdentity(a, b)) return false;
+  const brandWords = new Set([...words(a.match?.brand || a.brand), ...words(b.match?.brand || b.brand)]);
+  const expression = (r: BottleRead) => new Set(words(r.match?.product || r.product).filter(w => !brandWords.has(w) && !GENERIC.has(w)));
+  const x = expression(a), y = expression(b);
+  if (!x.size || !y.size) return x.size === y.size;
+  const [small, large] = x.size <= y.size ? [x, y] : [y, x];
+  return [...small].every(w => large.has(w));
+}
+
 export const foundName = (bottle: BottleRead) =>
   [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
 /**
  * Adds every fully recognised bottle (candidate.bottle is only set once reads
- * agree) to the strip. One chip per product, newest first; a product already
+ * agree) to the strip. One chip per product, newest on the right; a product already
  * in the strip only gets its read refreshed and never moves or duplicates.
  * Returns the new list and the candidates that were added (for the fly-up).
  */
@@ -51,20 +70,22 @@ export function mergeFound(
     const key = identityKey(bottle);
     const name = foundName(bottle);
     if (!key || !name) continue;
-    const index = next.findIndex(item => item.key === key);
+    const index = next.findIndex(item => item.key === key || sameFoundProduct(item.bottle, bottle));
     if (index >= 0) {
       const existing = next[index];
       if (existing.bottle === bottle && existing.trackIds.includes(candidate.trackId)) continue;
       const changed = foundFacts(existing.bottle) !== foundFacts(bottle);
+      // Keep the cleaner, shorter name once the product is known.
+      const betterName = name.length < existing.name.length ? name : existing.name;
       const updated: FoundItem = {
-        ...existing, bottle, name, version: existing.version + (changed ? 1 : 0),
+        ...existing, bottle, name: betterName, version: existing.version + (changed ? 1 : 0),
         trackIds: existing.trackIds.includes(candidate.trackId) ? existing.trackIds : [...existing.trackIds, candidate.trackId].slice(-8),
       };
       next = next.map((item, i) => (i === index ? updated : item));
       continue;
     }
     const item: FoundItem = { key, name, bottle, trackIds: [candidate.trackId], firstSeenAt: now, version: 1 };
-    next = [item, ...next].slice(0, maximum);
+    next = [...next, item].slice(-maximum);
     added.push({ item, candidate });
   }
   return { list: next, added };
