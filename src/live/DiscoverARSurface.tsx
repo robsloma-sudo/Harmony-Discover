@@ -12,7 +12,7 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
-import { isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { isConfirmedWebBottleTrack, shouldAssociateWebBottleTrack } from './webTrackPolicy';
 import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -288,7 +288,11 @@ function WebLiveCamera(props: NativeProps) {
           const dx = (track.x + track.width / 2) - (detection.x + detection.width / 2);
           const dy = (track.y + track.height / 2) - (detection.y + detection.height / 2);
           const distance = Math.hypot(dx, dy);
-          const score = overlap >= 0.08 ? overlap : (distance <= 0.20 ? 0.08 * (1 - distance / 0.20) : 0);
+          const areaA = track.width * track.height;
+          const areaB = detection.width * detection.height;
+          const areaRatio = areaA > 0 && areaB > 0 ? Math.max(areaA, areaB) / Math.min(areaA, areaB) : Infinity;
+          const score = shouldAssociateWebBottleTrack(overlap, distance, areaRatio)
+            ? (overlap >= 0.08 ? overlap : 0.08 * (1 - distance / 0.08)) : 0;
           if (score > bestScore) { bestScore = score; bestIndex = index; }
         });
         // If the camera was turned away and returns at a different framing,
@@ -305,6 +309,17 @@ function WebLiveCamera(props: NativeProps) {
           }
         }
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
+        if (previous) {
+          const previousIdentity = identityOf(previous.bottle);
+          const detectedIdentity = identityOf(detection.bottle);
+          // A track ID may be reused only for the same physical bottle. If a
+          // new observation resolves to a different product, discard cached
+          // OCR/catalogue state so the old identity cannot bleed into it.
+          if (previousIdentity && detectedIdentity && previousIdentity !== detectedIdentity) {
+            labelReadsByTrack.delete(previous.id);
+            lastLabelReadAt.delete(previous.id);
+          }
+        }
         if (bestIndex >= 0) used.add(bestIndex);
         // Weight the newest observation more heavily so boxes catch up during camera movement.
         const blend = previous ? 0.58 : 1;
@@ -392,6 +407,23 @@ function WebLiveCamera(props: NativeProps) {
         const video = videoRef.current;
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
           lastOpticalFlowAt = time;
+          // Do not read and grayscale camera pixels when there are no bottle
+          // tracks to follow. The previous loop did this continuously on
+          // mobile Safari, consuming main-thread time before any box existed.
+          const now = Date.now();
+          const freshLocal = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 1200);
+          const activeCloud = webTracks.filter(track => isConfirmedWebBottleTrack(track)
+            && !freshLocal.some(local => isCrossSourceSameBottle(track, local)));
+          const targets = [
+            ...freshLocal.map(candidate => ({ source: 'local' as const, id: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })),
+            ...activeCloud.map(track => ({ source: 'cloud' as const, id: track.id, x: track.x, y: track.y, width: track.width, height: track.height })),
+          ];
+          if (!targets.length) {
+            previousOpticalGray = null;
+            previousOpticalSize = '';
+            opticalFlowFrame = window.requestAnimationFrame(tick);
+            return;
+          }
           const displayWidth = video.clientWidth || video.videoWidth;
           const displayHeight = video.clientHeight || video.videoHeight;
           const displayAspect = displayWidth / displayHeight;
@@ -416,15 +448,6 @@ function WebLiveCamera(props: NativeProps) {
             const gray = rgbaToGrayscale(opticalFlowContext.getImageData(0, 0, width, height).data, width, height);
             const sizeKey = width + 'x' + height;
             if (previousOpticalGray && previousOpticalSize === sizeKey) {
-              const now = Date.now();
-              const freshLocal = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 1200);
-              const activeCloud = webTracks.filter(track => isConfirmedWebBottleTrack(track)
-                && !freshLocal.some(local => isCrossSourceSameBottle(track, local)));
-              const targets = [
-                ...freshLocal.map(candidate => ({ source: 'local' as const, id: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })),
-                ...activeCloud.map(track => ({ source: 'cloud' as const, id: track.id, x: track.x, y: track.y, width: track.width, height: track.height })),
-              ];
-              if (targets.length) {
                 const results = trackBoxesWithOpticalFlow(previousOpticalGray, gray, width, height, targets);
                 let moved = false;
                 const updates = new Map<string, { x: number; y: number }>();
@@ -460,7 +483,6 @@ function WebLiveCamera(props: NativeProps) {
                   });
                   publishVisibleCandidates();
                 }
-              }
             }
             previousOpticalGray = gray;
             previousOpticalSize = sizeKey;
@@ -538,9 +560,9 @@ function WebLiveCamera(props: NativeProps) {
           bottle: track.bottle,
         })),
         ...latestLocalCandidates
-          .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
+          .filter(local => !activeCloudTracks.some(cloud => isCrossSourceSameBottle(cloud, local)))
           .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
-          .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
+          .map(candidate => ({ ...candidate, trackId: candidate.trackId, bottle: labelReadsByTrack.get(candidate.trackId) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
       const crops: Array<{ trackId: number; image: string }> = [];
