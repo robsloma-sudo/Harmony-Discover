@@ -282,6 +282,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onCameraPose={event => setLiveCameraPose(event.nativeEvent)}
           onVisualCandidates={event => {
             const value = event.nativeEvent;
+            if (!value.candidates.length) {
+              setLiveCandidates([]);
+              setLiveSpatialObservationFrame(null);
+              setAnchorSessionKey(session => session + 1);
+              return;
+            }
             setLiveCandidates(attachBottleReadsToCandidates(value.candidates, liveBottles).map(candidate => ({
               ...candidate,
               source: candidate.source ?? value.source ?? (value.depthFrame?.unit === 'meters' ? 'cloud' : undefined),
