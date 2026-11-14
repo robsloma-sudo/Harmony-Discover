@@ -12,7 +12,7 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
-import { isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { isConfirmedWebBottleTrack, shouldAssociateWebBottleTrack } from './webTrackPolicy';
 import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -288,7 +288,11 @@ function WebLiveCamera(props: NativeProps) {
           const dx = (track.x + track.width / 2) - (detection.x + detection.width / 2);
           const dy = (track.y + track.height / 2) - (detection.y + detection.height / 2);
           const distance = Math.hypot(dx, dy);
-          const score = overlap >= 0.08 ? overlap : (distance <= 0.20 ? 0.08 * (1 - distance / 0.20) : 0);
+          const areaA = track.width * track.height;
+          const areaB = detection.width * detection.height;
+          const areaRatio = areaA > 0 && areaB > 0 ? Math.max(areaA, areaB) / Math.min(areaA, areaB) : Infinity;
+          const score = shouldAssociateWebBottleTrack(overlap, distance, areaRatio)
+            ? (overlap >= 0.08 ? overlap : 0.08 * (1 - distance / 0.08)) : 0;
           if (score > bestScore) { bestScore = score; bestIndex = index; }
         });
         // If the camera was turned away and returns at a different framing,
