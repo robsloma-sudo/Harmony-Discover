@@ -16,7 +16,7 @@ describe('independent label batch scheduling', () => {
   it('skips confidently identified bottles and respects retry cooldowns', () => {
     const lastRead = new Map([[2, 15_000]]);
     const selected = selectLabelBatchCandidates([
-      candidate(1, 0.9, { brand: 'Known Brand', confidence: 0.92 }),
+      candidate(1, 0.9, { brand: 'Known Brand', product: 'Known Expression', confidence: 0.92 }),
       candidate(2, 0.9),
       candidate(3, 0.7),
     ], lastRead, 20_000);
@@ -33,5 +33,11 @@ describe('independent label batch scheduling', () => {
       candidate(0), candidate(Number.NaN), { ...candidate(4), width: 0 },
     ], new Map(), 20_000);
     expect(selected).toEqual([]);
+  });
+  it('re-reads a confident brand that still has no product', () => {
+    const selected = selectLabelBatchCandidates([
+      candidate(1, 0.9, { brand: 'Colonel E.H. Taylor', confidence: 0.95 }),
+    ], new Map(), 20_000);
+    expect(selected.map(item => item.trackId)).toEqual([1]);
   });
 });

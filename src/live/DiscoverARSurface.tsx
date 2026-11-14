@@ -12,7 +12,8 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
-import { hasBottleIdentityConflict, isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { hasBottleIdentityConflict, isConfirmedWebBottleTrack, mergeBottleRead } from './webTrackPolicy';
+import { compensateDetections, projectLabelBox, type TrackPosition } from './trackMotionCompensation';
 import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
@@ -244,6 +245,27 @@ function WebLiveCamera(props: NativeProps) {
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; timestamp: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
     let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; source: 'local'; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> = [];
+    // Positions of every device-followed track (cloud ids > 0, local ids < 0),
+    // used to move late cloud results into the current view.
+    const trackPositionsNow = (): TrackPosition[] => [
+      ...webTracks.filter(track => track.misses === 0).map(track => ({ trackId: track.id, box: { x: track.x, y: track.y, width: track.width, height: track.height } })),
+      ...latestLocalCandidates.map(candidate => ({ trackId: candidate.trackId, box: { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height } })),
+    ];
+    // Capture the pixels the user currently sees (object-fit: cover crop).
+    const captureVisibleFrame = (maxLongEdge: number): HTMLCanvasElement | null => {
+      const video = videoRef.current;
+      if (!video || video.videoWidth < 2 || video.videoHeight < 2) return null;
+      const crop = getObjectFitCoverCrop(video.videoWidth, video.videoHeight, video.clientWidth || video.videoWidth, video.clientHeight || video.videoHeight);
+      if (!crop) return null;
+      const scale = Math.min(1, maxLongEdge / Math.max(crop.width, crop.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(crop.width * scale));
+      canvas.height = Math.max(1, Math.round(crop.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+      context.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    };
     // Liquid evidence is kept per local bottle track and never blocks cloud label recognition.
     const liquidHistoryByTrack = new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>();
     let bottleVolumeProfiles: Record<string, import('../services/bottleVolumeCalibration').BottleVolumeProfile> = {};
@@ -539,8 +561,12 @@ function WebLiveCamera(props: NativeProps) {
       if (changed) publishVisibleCandidates();
     }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
-    const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
+    const readCandidateLabels = async () => {
       if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
+      // Crop from a frame captured now: track boxes describe the current view,
+      // and the cloud-read frame is 2-5 s old by the time this runs.
+      const frameCanvas = captureVisibleFrame(960);
+      if (!frameCanvas) return;
       const generation = recognitionGeneration;
       const now = Date.now();
       const isVerifiedRead = (read?: LabelBatchRead) =>
@@ -564,7 +590,11 @@ function WebLiveCamera(props: NativeProps) {
       const crops: Array<{ trackId: number; image: string }> = [];
       for (const candidate of eligible) {
         if (crops.length >= 8) break;
-        const labelBox = candidate.bottle?.label_box || {
+        const capturedBottle = candidate.bottle as { label_box?: { x0: number; y0: number; x1: number; y1: number } | null; box?: { x0: number; y0: number; x1: number; y1: number } } | undefined;
+        const projectedLabel = capturedBottle?.label_box && capturedBottle.box
+          ? projectLabelBox(capturedBottle.label_box, capturedBottle.box, { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })
+          : null;
+        const labelBox = projectedLabel || {
           x0: candidate.x + candidate.width * 0.12,
           y0: candidate.y + candidate.height * 0.30,
           x1: candidate.x + candidate.width * 0.88,
@@ -596,26 +626,7 @@ function WebLiveCamera(props: NativeProps) {
           labelReadsByTrack.set(read.trackId, read);
           const cloudTrack = webTracks.find(track => track.id === read.trackId);
           if (cloudTrack) {
-            const previous = cloudTrack.bottle;
-            cloudTrack.bottle = {
-              ...previous,
-              brand: read.brand || previous.brand,
-              product: read.product || previous.product,
-              category: read.category || previous.category,
-              proof: read.proof || previous.proof,
-              size: read.size || previous.size,
-              origin: read.origin || previous.origin,
-              words: read.words.length ? read.words : previous.words,
-              confidence: Math.max(previous.confidence, read.confidence),
-              fieldConfidence: { ...previous.fieldConfidence, ...read.fieldConfidence },
-              details: { ...previous.details, ...read.details },
-              match: hasBottleIdentityConflict(previous, read)
-                ? (read.state === 'matched' ? (read.match ?? null) : null)
-                : (read.match || previous.match || null),
-              state: hasBottleIdentityConflict(previous, read)
-                ? (read.state === 'matched' ? 'matched' : read.state)
-                : (read.state === 'matched' ? 'matched' : read.brand ? read.state : previous.state),
-            };
+            cloudTrack.bottle = mergeBottleRead(cloudTrack.bottle, read);
           }
         }
         publishVisibleCandidates();
@@ -689,7 +700,7 @@ function WebLiveCamera(props: NativeProps) {
           .map(track => ({ trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour, bottle: track.bottle }));
         publishVisibleCandidates();
         lastLocalFrameMs = performance.now() - localFrameStartedAt;
-        void readCandidateLabels(canvas);
+        void readCandidateLabels();
       } catch (error) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'local_segmentation_frame_failed: ' + error.message : 'local_segmentation_frame_failed' } });
       } finally {
@@ -742,6 +753,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!context) throw new Error('Frame capture is unavailable in this browser.');
         context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
         const frameTimestamp = Date.now();
+        const captureTracks = trackPositionsNow();
         const frameSignature = sampleLumaGrid(
           context.getImageData(0, 0, canvas.width, canvas.height).data,
           canvas.width,
@@ -768,7 +780,11 @@ function WebLiveCamera(props: NativeProps) {
         const text = result.bottles.flatMap(b => [b.brand, b.product, ...b.words]).filter(Boolean);
         const classifications = result.bottles.map(b => ({ identifier: b.category, confidence: String(b.confidence) }));
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: { text, barcodes: [], barcodeStatus: barcodeDetector ? 'available' : 'unsupported', classifications, frameTimestamp, bottles: result.bottles, menu: result.menu, diagnostics: result.diagnostics } });
-        updateWebTracks(result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
+        // Boxes describe the capture frame; follow the tracks the device kept
+        // moving since then so identities land on the bottle they were read from.
+        const captureBoxes = result.bottles.map(b => ({ x: b.box.x0, y: b.box.y0, width: b.box.x1 - b.box.x0, height: b.box.y1 - b.box.y0 }));
+        const compensated = compensateDetections(captureBoxes, captureTracks, trackPositionsNow());
+        updateWebTracks(result.bottles.map((b, index) => ({ ...compensated[index]!.box, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
         // Publish model detections immediately; optional local segmentation must
         // never block the basic bottle boxes from reaching the viewfinder.
         publishVisibleCandidates();
@@ -777,7 +793,7 @@ function WebLiveCamera(props: NativeProps) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? error.message : 'recognition_request_failed' } });
       } finally {
         recognitionBusy = false;
-        if (labelFrameCanvas && !disposed) void readCandidateLabels(labelFrameCanvas);
+        if (labelFrameCanvas && !disposed) void readCandidateLabels();
         const elapsed = Date.now() - lastRecognitionStartedAt;
         scheduleRecognition(nextRecognitionDelay ?? Math.max(0, recognitionIntervalMs - elapsed));
       }

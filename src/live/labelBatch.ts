@@ -5,10 +5,10 @@ export type LabelBatchCandidate = {
   width: number;
   height: number;
   confidence: number;
-  bottle?: { brand?: string; confidence?: number; label_box?: { x0: number; y0: number; x1: number; y1: number } | null };
+  bottle?: { brand?: string; product?: string; confidence?: number; label_box?: { x0: number; y0: number; x1: number; y1: number } | null };
 };
 
-/** Select unresolved, cooldown-eligible tracks fairly, preferring stronger local detections. */
+/** Select incomplete or uncertain, cooldown-eligible tracks fairly, preferring stronger local detections. */
 export function selectLabelBatchCandidates(
   candidates: LabelBatchCandidate[],
   lastReadAt: ReadonlyMap<number, number>,
@@ -23,7 +23,9 @@ export function selectLabelBatchCandidates(
       candidate.trackId !== 0 &&
       [candidate.x, candidate.y, candidate.width, candidate.height, candidate.confidence].every(Number.isFinite) &&
       candidate.width > 0 && candidate.height > 0 &&
-      (!candidate.bottle?.brand || (candidate.bottle.confidence ?? 0) < 0.85) &&
+      // Skip only complete, confident identities; a brand without a product
+      // (or a weak read) is re-read so missing fields and wrong reads get fixed.
+      !(candidate.bottle?.brand && candidate.bottle?.product && (candidate.bottle.confidence ?? 0) >= 0.85) &&
       now - (lastReadAt.get(candidate.trackId) ?? 0) >= retryAfterMs,
     )
     .sort((a, b) =>
