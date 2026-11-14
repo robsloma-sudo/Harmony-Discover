@@ -21,6 +21,7 @@ import {
 } from './cameraMotion';
 import { computeAppearanceSignature } from './appearanceSignature';
 import { checkPreviousScannerExit, markScannerRunning, markScannerStopped } from './scannerHealth';
+import { TrackEvidence } from './trackEvidence';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -159,9 +160,19 @@ function WebLiveCamera(props: NativeProps) {
     let lostMotionFrames = 0;
     let localDetectionBusy = false;
     let detectorFailures = 0;
-    // Names bound to a local bottle track. They stay with the bottle while it
-    // is remembered off screen, so it is named again the moment it returns.
-    const identityByLocalTrack = new Map<number, BottleRead>();
+    // Evidence per bottle (cloud ids > 0, local ids < 0): detector passes and
+    // label reads add up instead of replacing each other. A name is shown only
+    // once reads agree; it stays with the bottle while it is off screen.
+    const evidence = new TrackEvidence<BottleRead>();
+    const lastHitsByLocalTrack = new Map<number, number>();
+    const labelReadToBottle = (read: LabelBatchRead): BottleRead => ({
+      box: { x0: 0, y0: 0, x1: 0, y1: 0 }, label_box: null, edgePaths: [], words: read.words,
+      brand: read.brand, product: read.product, category: read.category,
+      proof: read.proof, size: read.size, origin: read.origin,
+      confidence: read.confidence, detectionConfidence: read.confidence,
+      fieldConfidence: read.fieldConfidence, researchSources: [], details: read.details,
+      match: read.match, state: read.state,
+    });
     // Bottles re-found from memory get one fresh label check before their
     // remembered name is trusted as verified again.
     const reverifyTracks = new Set<number>();
@@ -197,7 +208,8 @@ function WebLiveCamera(props: NativeProps) {
         webTracks = [];
         labelReadsByTrack.clear();
         lastLabelReadAt.clear();
-        identityByLocalTrack.clear();
+        evidence.clear();
+        lastHitsByLocalTrack.clear();
         reverifyTracks.clear();
         nextWebTrackId = 1;
         lastSentFrameSignature = null;
@@ -401,6 +413,8 @@ function WebLiveCamera(props: NativeProps) {
           })),
         };
         next.push(track);
+        evidence.observeDetection(track.id, detection.confidence);
+        if (hasIdentity(detection.bottle)) evidence.observeIdentity(track.id, detection.bottle, 'frame:' + frameTimestamp + ':' + track.id);
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour };
       });
       webTracks.forEach((track, index) => {
@@ -436,12 +450,10 @@ function WebLiveCamera(props: NativeProps) {
         const source = -Math.abs(from), target = -Math.abs(to);
         const read = labelReadsByTrack.get(source);
         if (read && !labelReadsByTrack.has(target)) labelReadsByTrack.set(target, { ...read, trackId: target });
-        const identity = identityByLocalTrack.get(source);
-        if (identity && !identityByLocalTrack.has(target)) identityByLocalTrack.set(target, identity);
+        evidence.migrate(source, target);
         const readAt = lastLabelReadAt.get(source);
         if (readAt !== undefined && !lastLabelReadAt.has(target)) lastLabelReadAt.set(target, readAt);
         labelReadsByTrack.delete(source);
-        identityByLocalTrack.delete(source);
         lastLabelReadAt.delete(source);
         liquidHistoryByTrack.delete(source);
         if (reverifyTracks.delete(source)) reverifyTracks.add(target);
@@ -454,47 +466,44 @@ function WebLiveCamera(props: NativeProps) {
       // cloud box is shown only where no local box covers the same bottle.
       const now = Date.now();
       const freshLocalCandidates = latestLocalCandidates.filter(local => now - local.timestamp <= 2_500);
+      // Shown values only build up: the box's certainty is the evidence from
+      // every detector pass, and a name appears only once reads agree on it.
+      const withEvidence = <C extends { trackId: number; confidence: number }>(candidate: C) => {
+        const identity = evidence.identity(candidate.trackId);
+        const confidence = evidence.detection(candidate.trackId) || candidate.confidence;
+        if (identity?.reliable) return { ...candidate, confidence, bottle: identity.read, identityConfidence: identity.confidence };
+        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined };
+      };
       const cloudCandidates = webTracks
         .filter(isConfirmedWebBottleTrack)
         .filter(track => visibleFraction(track) >= 0.5)
         .filter(track => !freshLocalCandidates.some(local => isCrossSourceSameBottle(track, local)))
         .map(track => {
           const box = clipBoxToFrame({ x: track.x, y: track.y, width: track.width, height: track.height });
-          return { trackId: track.id, ...box, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour, bottle: track.bottle };
+          return withEvidence({ trackId: track.id, ...box, confidence: track.confidence, timestamp: track.timestamp, source: 'cloud' as const, contour: track.contour });
         });
       const localCandidates = freshLocalCandidates
         .filter(candidate => !cloudCandidates.some(cloud => isCrossSourceSameBottle(cloud, candidate)))
         .map(candidate => {
-        // Geometry can switch to a newer local segmentation box while the
-        // bottle identity still belongs to its confirmed cloud track. Preserve
-        // that identity so a box does not regress to an anonymous placeholder.
-        const matchingCloud = webTracks.find(track =>
-          isConfirmedWebBottleTrack(track) && visibleFraction(track) >= 0.5 && isCrossSourceSameBottle(track, candidate)
-        );
-        if (matchingCloud && hasIdentity(matchingCloud.bottle)) identityByLocalTrack.set(candidate.trackId, matchingCloud.bottle);
-        const read = labelReadsByTrack.get(candidate.trackId);
-        if (!read) {
-          const remembered = matchingCloud?.bottle ?? identityByLocalTrack.get(candidate.trackId);
-          return remembered ? { ...candidate, bottle: remembered } : candidate;
-        }
-        const bottle: BottleRead = {
-          box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
-          label_box: null, edgePaths: [], words: read.words,
-          brand: read.brand, product: read.product, category: read.category,
-          proof: read.proof, size: read.size, origin: read.origin,
-          confidence: read.confidence, detectionConfidence: candidate.confidence,
-          fieldConfidence: read.fieldConfidence, researchSources: [], details: read.details,
-          match: read.match, state: read.state,
-        };
-        return { ...candidate, source: 'local' as const, bottle };
-      });
+          // The cloud track covering this bottle contributes its read once per
+          // cloud frame; the local box keeps the identity off screen.
+          const matchingCloud = webTracks.find(track =>
+            isConfirmedWebBottleTrack(track) && visibleFraction(track) >= 0.5 && isCrossSourceSameBottle(track, candidate)
+          );
+          if (matchingCloud && hasIdentity(matchingCloud.bottle)) {
+            evidence.observeIdentity(candidate.trackId, matchingCloud.bottle, 'cloud:' + matchingCloud.id + ':' + matchingCloud.timestamp);
+          }
+          return withEvidence(candidate);
+        });
       const visibleCandidates = [...cloudCandidates, ...localCandidates];
       // Skip identical updates (nothing moved, nothing renamed): the camera
       // screen re-renders on every update.
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
+        const shown = candidate as { identityConfidence?: number; identifying?: number };
         return [
+          Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
           candidate.trackId,
           Math.round(candidate.x * 2000), Math.round(candidate.y * 2000),
           Math.round(candidate.width * 2000), Math.round(candidate.height * 2000),
@@ -664,7 +673,9 @@ function WebLiveCamera(props: NativeProps) {
         const read = labelReadsByTrack.get(trackId);
         // A bottle re-found from memory gets one fresh check before its
         // remembered name counts as verified again.
+        // Keep reading a bottle until its name is reliable (reads agree).
         return !reverifyTracks.has(trackId)
+          && !!evidence.identity(trackId)?.reliable
           && !!read?.brand && !!read.product && read.confidence >= 0.85
           && read.state === 'matched' && !!read.match?.id && read.match.score >= 0.9;
       };
@@ -722,6 +733,7 @@ function WebLiveCamera(props: NativeProps) {
         for (const read of reads) {
           labelReadsByTrack.set(read.trackId, read);
           reverifyTracks.delete(read.trackId);
+          evidence.observeIdentity(read.trackId, labelReadToBottle(read), 'label:' + now + ':' + read.trackId);
           const cloudTrack = webTracks.find(track => track.id === read.trackId);
           if (cloudTrack) {
             cloudTrack.bottle = mergeBottleRead(cloudTrack.bottle, read);
@@ -795,6 +807,11 @@ function WebLiveCamera(props: NativeProps) {
         }), now, { countMisses });
         migrateLocalTrackIds(localBottleTracker.takeMergedTrackIds());
         for (const trackId of localBottleTracker.takeReacquiredTrackIds()) reverifyTracks.add(-Math.abs(trackId));
+        for (const local of localTracks) {
+          if ((lastHitsByLocalTrack.get(local.trackId) ?? 0) < local.hits) evidence.observeDetection(-Math.abs(local.trackId), local.confidence);
+          lastHitsByLocalTrack.set(local.trackId, local.hits);
+        }
+        if (lastHitsByLocalTrack.size > 400) lastHitsByLocalTrack.clear();
         latestLocalCandidates = toLocalCandidates(localTracks, now);
         // Transfer this frame's pixel buffer to the liquid worker (capture-time
         // geometry). Neither detection nor recognition waits for its result.
@@ -928,7 +945,7 @@ function WebLiveCamera(props: NativeProps) {
         // time belongs to that track; it stays with the bottle off screen.
         compensated.forEach((item, index) => {
           const bottle = result.bottles[index]!;
-          if (item.boundTrackId !== null && item.boundTrackId < 0 && hasIdentity(bottle)) identityByLocalTrack.set(item.boundTrackId, bottle);
+          if (item.boundTrackId !== null && item.boundTrackId < 0 && hasIdentity(bottle)) evidence.observeIdentity(item.boundTrackId, bottle, 'frame:' + frameTimestamp + ':' + index);
         });
         updateWebTracks(result.bottles.map((b, index) => ({ ...currentBoxes[index]!, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
         // Publish model detections immediately; optional local segmentation must
@@ -1039,7 +1056,8 @@ function WebLiveCamera(props: NativeProps) {
         lastLabelReadAt.clear();
         liquidHistoryByTrack.clear();
         localBottleTracker.reset();
-        identityByLocalTrack.clear();
+        evidence.clear();
+        lastHitsByLocalTrack.clear();
         reverifyTracks.clear();
         nextWebTrackId = 1;
         resetCameraMotion();
@@ -1067,7 +1085,8 @@ function WebLiveCamera(props: NativeProps) {
       labelReadsByTrack.clear();
       lastLabelReadAt.clear();
       liquidHistoryByTrack.clear();
-      identityByLocalTrack.clear();
+      evidence.clear();
+      lastHitsByLocalTrack.clear();
       reverifyTracks.clear();
       nextWebTrackId = 1;
       lastSentFrameSignature = null;
