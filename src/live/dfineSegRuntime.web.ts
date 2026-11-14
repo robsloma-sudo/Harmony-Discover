@@ -5,6 +5,7 @@ import {
   type DfineSegOnnxProvider,
 } from "./dfineSegOnnxProvider";
 import { DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrity";
+import { UPRIGHT_CONTAINER_CLASS_RULES } from "./dfineSegAdapter";
 
 export { DFINE_SEG_MODEL_URL, DFINE_SEG_MODEL_SHA256, verifyDfineModelBytes } from "./dfineModelIntegrity";
 
@@ -66,6 +67,6 @@ export async function loadDfineSegOnnxProvider(
   return createDfineSegOnnxProvider(
     runtime,
     modelBytes,
-    { bottleClassIds: [39], minimumScore: 0.5, maskThreshold: 0.5, ...options },
+    { bottleClassIds: [39], containerClassRules: UPRIGHT_CONTAINER_CLASS_RULES, minimumScore: 0.5, maskThreshold: 0.5, ...options },
   );
 }

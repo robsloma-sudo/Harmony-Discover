@@ -1,5 +1,5 @@
 import type { SegmentationInstance, SegmentationProvider } from './segmentationEngine';
-import { adaptDfineSegOnnxOutput } from './dfineSegAdapter';
+import { adaptDfineSegOnnxOutput, type ContainerClassRule } from './dfineSegAdapter';
 
 export type DfineOrtTensor = {
   data: ArrayLike<number | bigint>;
@@ -22,6 +22,7 @@ export type DfineTensorFactory = (
 export type DfineOnnxProviderOptions = {
   inputSize?: number;
   bottleClassIds?: number[];
+  containerClassRules?: readonly ContainerClassRule[];
   minimumScore?: number;
   maskThreshold?: number;
   nmsIoUThreshold?: number;
@@ -127,6 +128,7 @@ export class DfineSegOnnxProvider implements SegmentationProvider {
       maskHeight,
     }, frame.width, frame.height, this.inputSize, this.inputSize, timestamp, {
       bottleClassIds: this.options.bottleClassIds,
+      containerClassRules: this.options.containerClassRules,
       minimumScore: this.options.minimumScore,
       maskThreshold: this.options.maskThreshold,
       nmsIoUThreshold: this.options.nmsIoUThreshold,

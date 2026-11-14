@@ -5,6 +5,7 @@ import {
   type DfineSegOnnxProvider,
 } from "./dfineSegOnnxProvider";
 import { DFINE_SEG_MODEL_SHA256, DFINE_SEG_MODEL_URL, verifyDfineModelBytes } from "./dfineModelIntegrity";
+import { UPRIGHT_CONTAINER_CLASS_RULES } from "./dfineSegAdapter";
 
 declare global {
   interface Window {
@@ -81,5 +82,5 @@ export async function loadDfineSegOnnxProvider(
   options: DfineOnnxProviderOptions = {},
 ): Promise<DfineSegOnnxProvider> {
   const [runtime, model] = await Promise.all([loadRuntime(), loadVerifiedModel()]);
-  return createDfineSegOnnxProvider(runtime, model, options);
+  return createDfineSegOnnxProvider(runtime, model, { containerClassRules: UPRIGHT_CONTAINER_CLASS_RULES, ...options });
 }

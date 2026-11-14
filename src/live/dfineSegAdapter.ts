@@ -9,8 +9,22 @@ export type DfineSegOutput = {
   maskHeight: number;
 };
 
+/**
+ * A non-bottle COCO class accepted only when its box looks like an upright
+ * beverage container. D-FINE's COCO head labels gift tubes and canisters
+ * (e.g. Colonel E.H. Taylor tubes) as class 73 "book"; aspect and score gates
+ * keep flat books, menus and shelves out. Measured on the 13 Nov iPhone
+ * recording: tubes scored 0.58-0.77 with height/width 1.9-2.6.
+ */
+export type ContainerClassRule = { classId: number; minAspect: number; minimumScore: number };
+
+export const UPRIGHT_CONTAINER_CLASS_RULES: readonly ContainerClassRule[] = Object.freeze([
+  { classId: 73, minAspect: 1.6, minimumScore: 0.58 },
+]);
+
 export type DfineSegAdapterOptions = {
   bottleClassIds?: number[];
+  containerClassRules?: readonly ContainerClassRule[];
   maskThreshold?: number;
   minimumScore?: number;
   nmsIoUThreshold?: number;
@@ -126,10 +140,13 @@ export function adaptDfineSegOnnxOutput(
     bounds: { x: number; y: number; width: number; height: number };
   }> = [];
 
+  const containerRules = new Map((options.containerClassRules ?? []).map(rule => [rule.classId, rule]));
   for (let index = 0; index < count; index++) {
     const label = Number(output.labels[index]);
     const score = Number(output.scores[index]);
-    if (!bottleClassIds.has(label) || !Number.isFinite(score) || score < minimumScore) continue;
+    const containerRule = bottleClassIds.has(label) ? undefined : containerRules.get(label);
+    if ((!bottleClassIds.has(label) && !containerRule) || !Number.isFinite(score)) continue;
+    if (score < (containerRule ? Math.max(minimumScore, containerRule.minimumScore) : minimumScore)) continue;
     const raw = Array.from({ length: 4 }, (_, i) => Number(output.boxes[index * 4 + i]));
     if (!isFiniteArray(raw)) continue;
     const x1 = Math.max(0, Math.min(1, Math.min(raw[0]!, raw[2]!) / inputWidth));
@@ -137,6 +154,8 @@ export function adaptDfineSegOnnxOutput(
     const x2 = Math.max(0, Math.min(1, Math.max(raw[0]!, raw[2]!) / inputWidth));
     const y2 = Math.max(0, Math.min(1, Math.max(raw[1]!, raw[3]!) / inputHeight));
     if (x2 - x1 < 0.01 || y2 - y1 < 0.01) continue;
+    // The model input is a stretched square, so judge shape in source-image pixels.
+    if (containerRule && ((y2 - y1) * imageHeight) / ((x2 - x1) * imageWidth) < containerRule.minAspect) continue;
     candidates.push({ index, label, score, x1, y1, x2, y2, bounds: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 } });
   }
 
