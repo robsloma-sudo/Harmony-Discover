@@ -145,6 +145,11 @@ function WebLiveCamera(props: NativeProps) {
     const emptyFrameRetryMs = 5_000;
     let nextLabelBatchAt = Date.now() + 2200;
     const labelReadsByTrack = new Map<number, LabelBatchRead>();
+    // Cloud and local trackers each allocate small numeric IDs starting at 1.
+    // Namespace local IDs before sending label crops so a cloud read can never
+    // be attached to an unrelated local bottle with the same numeric ID.
+    const labelBatchTrackId = (source: 'cloud' | 'local', trackId: number) =>
+      source === 'local' ? 1_000_000_000 + trackId : trackId;
     const lastLabelReadAt = new Map<number, number>();
     let segmentationRunner: SegmentationRunner | null = null;
     let segmentationLoading: Promise<void> | null = null;
@@ -360,7 +365,7 @@ function WebLiveCamera(props: NativeProps) {
         const matchingCloud = webTracks.find(track =>
           isConfirmedWebBottleTrack(track) && isCrossSourceSameBottle(track, candidate)
         );
-        const read = labelReadsByTrack.get(candidate.trackId);
+        const read = labelReadsByTrack.get(labelBatchTrackId('local', candidate.trackId));
         if (!read) return matchingCloud?.bottle ? { ...candidate, bottle: matchingCloud.bottle } : candidate;
         const bottle: BottleRead = {
           box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
@@ -541,13 +546,13 @@ function WebLiveCamera(props: NativeProps) {
         && !isVerifiedRead(labelReadsByTrack.get(track.id)));
       const candidates = [
         ...activeCloudTracks.map(track => ({
-          trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
+          trackId: labelBatchTrackId('cloud', track.id), x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence,
           bottle: track.bottle,
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
           .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
-          .map(candidate => ({ ...candidate, bottle: labelReadsByTrack.get(candidate.trackId) })),
+          .map(candidate => ({ ...candidate, trackId: labelBatchTrackId('local', candidate.trackId), bottle: labelReadsByTrack.get(labelBatchTrackId('local', candidate.trackId)) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
       const crops: Array<{ trackId: number; image: string }> = [];
