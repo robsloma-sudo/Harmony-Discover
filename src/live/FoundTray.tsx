@@ -5,11 +5,14 @@ import type { FoundItem } from './foundTray';
 export type FoundFlight = { id: string; key: string; name: string; from: { x: number; y: number }; to: { x: number; y: number } };
 
 /** Thin strip at the top of the scanner: one chip per identified product, newest on the left. */
-export function FoundTray({ items, hiddenKeys, top, onSelect, onClear }: {
+export function FoundTray({ items, hiddenKeys, unseenKeys, selectedKey, top, onSelect, onClear }: {
   items: FoundItem[];
   hiddenKeys: ReadonlySet<string>;
+  /** Chips with facts added since they were last opened get a small dot. */
+  unseenKeys: ReadonlySet<string>;
+  selectedKey: string | null;
   top: number;
-  onSelect: (item: FoundItem) => void;
+  onSelect: (item: FoundItem, from: { x: number; y: number }) => void;
   onClear: () => void;
 }) {
   const scroll = useRef<ScrollView>(null);
@@ -24,10 +27,11 @@ export function FoundTray({ items, hiddenKeys, top, onSelect, onClear }: {
             key={item.key}
             accessibilityRole="button"
             accessibilityLabel={`Open ${item.name}`}
-            onPress={() => onSelect(item)}
-            style={[s.chip, hiddenKeys.has(item.key) && { opacity: 0 }]}
+            onPress={event => onSelect(item, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY })}
+            style={[s.chip, item.key === selectedKey && s.chipSelected, hiddenKeys.has(item.key) && { opacity: 0 }]}
           >
             <Text numberOfLines={1} style={s.chipText}>{item.name}</Text>
+            {unseenKeys.has(item.key) && <View style={s.dot} />}
           </Pressable>
         ))}
       </ScrollView>
@@ -64,6 +68,8 @@ const s = StyleSheet.create({
   scroll: { flex: 1 },
   row: { alignItems: 'center', gap: 6, paddingRight: 4 },
   chip: { height: 22, maxWidth: 170, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 11, backgroundColor: 'rgba(5,15,16,0.9)', borderWidth: 1, borderColor: 'rgba(119,229,181,0.85)' },
+  chipSelected: { borderColor: '#C6A36A', backgroundColor: 'rgba(40,32,18,0.95)' },
+  dot: { position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 4, backgroundColor: '#C6A36A', borderWidth: 1, borderColor: '#05100F' },
   chipText: { color: '#E9FFF5', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.2 },
   count: { height: 22, marginLeft: 6, paddingHorizontal: 7, borderRadius: 11, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(8,10,13,0.75)', borderWidth: 1, borderColor: 'rgba(153,163,174,0.3)' },
   countText: { color: '#77E5B5', fontSize: 9.5, fontWeight: '900' },

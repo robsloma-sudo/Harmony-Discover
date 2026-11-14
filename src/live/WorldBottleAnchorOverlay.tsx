@@ -152,7 +152,8 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
     return rect ? [{ id: track.physicalObjectId, rect, ...metadata, state: track.state }] : [];
   });
 
-  return <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+  // Without onSelectBottle the anchors are display-only and never take taps.
+  return <View pointerEvents={onSelectBottle ? "box-none" : "none"} style={StyleSheet.absoluteFill}>
     {anchors.map(anchor => (
       <Pressable
         key={anchor.id}

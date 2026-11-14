@@ -29,3 +29,15 @@ describe('found strip', () => {
     expect(mergeFound(a.list, [cand(4, bottle)], 2).list).toBe(a.list as FoundItem[]);
   });
 });
+
+describe('found strip new-data version', () => {
+  it('goes up only when a later read adds facts', () => {
+    const a = mergeFound([], [cand(1, read('E.H. Taylor', 'Barrel Proof'))], 1);
+    expect(a.list[0].version).toBe(1);
+    const same = mergeFound(a.list, [cand(2, read('E.H. Taylor', 'Barrel Proof'))], 2);
+    expect(same.list[0].version).toBe(1);
+    const richer = { ...read('E.H. Taylor', 'Barrel Proof'), proof: '127.3 Proof', details: { batch: 'Batch 16' } } as BottleRead;
+    const more = mergeFound(same.list, [cand(2, richer)], 3);
+    expect(more.list[0].version).toBe(2);
+  });
+});

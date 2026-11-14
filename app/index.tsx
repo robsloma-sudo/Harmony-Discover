@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView, Animated, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
-import { WorldBottleAnchorOverlay, type WorldBottleCandidate } from '../src/live/WorldBottleAnchorOverlay';
+import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse, BottleIntelligenceProfile } from '../src/services/discoverLiveApi';
 import { loadBottleIntelligenceProfile } from '../src/services/discoverLiveApi';
@@ -89,20 +89,29 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     }
   }, [liveCandidates, screenWidth, screenHeight, foundTrayTop]);
   const foundKeysInFlight = new Set(foundFlights.map(flight => flight.key));
-  const openFoundItem = (item: FoundItem) => {
-    // Static view: the panel shows this saved read and does not follow a live box.
-    setSelectedTrackId(null);
-    setSelectedBottle(item.bottle);
+  // Profile card for a chip in the found strip. It follows that chip's entry,
+  // so new label reads fill in while it is open, and research is re-checked
+  // every 8 s. It grows out of the chip that was tapped.
+  const [selectedFoundKey, setSelectedFoundKey] = useState<string | null>(null);
+  const [selectedFrom, setSelectedFrom] = useState<{ x: number; y: number } | null>(null);
+  const [seenVersions, setSeenVersions] = useState<Record<string, number>>({});
+  const selectedFound = selectedFoundKey ? foundItems.find(item => item.key === selectedFoundKey) ?? null : null;
+  const selectedBottle: BottleRead | null = selectedFound?.bottle ?? null;
+  useEffect(() => {
+    if (!selectedFound) return;
+    setSeenVersions(seen => seen[selectedFound.key] === selectedFound.version ? seen : { ...seen, [selectedFound.key]: selectedFound.version });
+  }, [selectedFound?.key, selectedFound?.version]);
+  const unseenFoundKeys = new Set(foundItems.filter(item => item.key !== selectedFoundKey && item.version > (seenVersions[item.key] ?? 1)).map(item => item.key));
+  const openFoundItem = (item: FoundItem, from: { x: number; y: number }) => {
+    setSelectedFrom(from);
+    setSelectedFoundKey(item.key);
   };
-  const [selectedBottle, setSelectedBottle] = useState<BottleRead | null>(null);
   const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
   const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
-  const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
-  useEffect(() => {
-    if (selectedTrackId === null) return;
-    const trackedBottle = liveCandidates.find(candidate => candidate.trackId === selectedTrackId)?.bottle;
-    if (trackedBottle) setSelectedBottle(trackedBottle);
-  }, [liveCandidates, selectedTrackId]);
+  const closeProfile = () => {
+    setSelectedFoundKey(null);
+    setSelectedBottleIntelligence(null);
+  };
   const selectedBottleBrand = selectedBottle?.match?.brand || selectedBottle?.brand || '';
   const selectedBottleProduct = selectedBottle?.match?.product || selectedBottle?.product || '';
   const selectedBottleCategory = selectedBottle?.category || 'other';
@@ -115,38 +124,26 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     }
     setSelectedBottleIntelligence(null);
     setSelectedBottleIntelligenceLoading(true);
-    void loadBottleIntelligenceProfile({
+    const load = (first: boolean) => loadBottleIntelligenceProfile({
       brand: selectedBottleBrand,
       product: selectedBottleProduct,
       category: selectedBottleCategory,
     })
-      .then(profile => { if (!cancelled) setSelectedBottleIntelligence(profile); })
-      .catch(() => { if (!cancelled) setSelectedBottleIntelligence(null); })
-      .finally(() => { if (!cancelled) setSelectedBottleIntelligenceLoading(false); });
-    return () => { cancelled = true; };
+      // A later check only replaces what is shown when it found something.
+      .then(profile => { if (!cancelled && (first || profile)) setSelectedBottleIntelligence(profile); })
+      .catch(() => { if (!cancelled && first) setSelectedBottleIntelligence(null); })
+      .finally(() => { if (!cancelled && first) setSelectedBottleIntelligenceLoading(false); });
+    void load(true);
+    // Research runs in the background after a bottle is saved: keep checking while the card is open.
+    const refresh = setInterval(() => { void load(false); }, 8_000);
+    return () => { cancelled = true; clearInterval(refresh); };
   }, [selectedBottleBrand, selectedBottleProduct, selectedBottleCategory]);
-  const openBottleProfile = (candidate: WorldBottleCandidate) => {
-    const bottle = candidate.bottle;
-    const profileBottle: BottleRead = bottle || {
-      box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
-      words: [],
-      brand: '',
-      product: 'Bottle detected · label reading pending',
-      category: 'other',
-      proof: '',
-      size: '',
-      origin: '',
-      confidence: 0,
-      detectionConfidence: candidate.confidence,
-      fieldConfidence: {},
-      researchSources: [],
-      details: {},
-      match: null,
-      state: 'unsure',
-    };
-    setSelectedBottle(profileBottle);
-    setSelectedTrackId(candidate.trackId);
-  };
+  const profileGrow = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!selectedFoundKey) return;
+    profileGrow.setValue(0);
+    Animated.timing(profileGrow, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [selectedFoundKey, profileGrow]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
@@ -291,14 +288,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               setLiveDepthFrame(null);
               setLiveCameraPose(null);
               setAnchorSessionKey(value => value + 1);
-              setSelectedTrackId(null);
             }
           }}
           onARReady={event => {
             if (event.nativeEvent.state === 'starting') {
               // A new camera session may reuse numeric track IDs. Keep an open
               // profile as a snapshot, but detach it from the previous session.
-              setSelectedTrackId(null);
               setAnchorSessionKey(value => value + 1);
               setLiveCandidates([]);
               setLiveDepthFrame(null);
@@ -377,8 +372,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               height: ((trackedHeight * 100) + '%') as `${number}%`,
             };
             if (bottle) {
-              // Identified: its chip is in the strip at the top, so the box stays
-              // thin with a small tag and lets taps through to bottles behind it.
+              // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
               return (
                 <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                   <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
@@ -387,26 +381,23 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                 </View>
               );
             }
+            // Boxes only show what the scanner sees; they are not tappable.
+            // Identified bottles are opened from the found strip at the top.
             return (
-              <View key={tracked.trackId} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Open detected bottle profile"
-                  onPress={() => openBottleProfile(tracked)}
-                  style={[s.liveDetectionBox, boxStyle]}
-                >
+              <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
+                <View style={[s.liveDetectionBox, boxStyle]}>
                   <View style={s.liveDetectionLabel}>
                     <Text numberOfLines={1} style={s.liveDetectionName}>{name || 'BOTTLE DETECTED'}</Text>
-                    <Text style={s.liveDetectionConfidence}>{identifying ? `${provisional ? 'CHECKING' : 'READING LABEL'} · ${Math.round(tracked.identifying! * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
+                    <Text style={s.liveDetectionConfidence}>{identifying ? `${provisional ? 'CHECKING' : 'READING LABEL'} · ${Math.round(tracked.identifying! * 100)}%` : `BOTTLE · ${Math.round(tracked.confidence * 100)}%`}</Text>
                   </View>
-                </Pressable>
+                </View>
               </View>
             );
           })}
         </View>
       )}
-      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
-      {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); }} />}
+      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} />}
+      {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} unseenKeys={unseenFoundKeys} selectedKey={selectedFoundKey} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); closeProfile(); }} />}
       {foundFlights.map(flight => <FoundFlightLabel key={flight.id} flight={flight} onDone={done => setFoundFlights(flights => flights.filter(f => f.id !== done.id))} />)}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
@@ -451,17 +442,30 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           </>}
         </View>
       </>}
-      {selectedBottle && (
+      {selectedBottle && (() => {
+        const cardBottom = Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + 76;
+        const cardHeight = Math.min(screenHeight * 0.62, 620);
+        const from = selectedFrom ?? { x: screenWidth / 2, y: foundTrayTop };
+        // Grows out of the tapped chip: start centred on the chip, small, then settle in place.
+        const startX = from.x - screenWidth / 2;
+        const startY = from.y - (screenHeight - cardBottom - cardHeight / 2);
+        return (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <View
+          <Animated.View
             pointerEvents="box-none"
             style={{
+              opacity: profileGrow.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 0.9, 1] }),
+              transform: [
+                { translateX: profileGrow.interpolate({ inputRange: [0, 1], outputRange: [startX, 0] }) },
+                { translateY: profileGrow.interpolate({ inputRange: [0, 1], outputRange: [startY, 0] }) },
+                { scale: profileGrow.interpolate({ inputRange: [0, 1], outputRange: [0.08, 1] }) },
+              ],
               position:'absolute',
               zIndex:69,
               left:8,
               right:8,
-              bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,
-              height:Math.min(screenHeight*0.62,620),
+              bottom:cardBottom,
+              height:cardHeight,
               borderRadius:18,
               overflow:'hidden',
               borderWidth:1,
@@ -473,15 +477,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               bottle={selectedBottle}
               intelligence={selectedBottleIntelligence}
               intelligenceLoading={selectedBottleIntelligenceLoading}
-              onClose={() => {
-                setSelectedBottle(null);
-                setSelectedTrackId(null);
-                setSelectedBottleIntelligence(null);
-              }}
+              onClose={closeProfile}
             />
-          </View>
+          </Animated.View>
         </View>
-      )}
+        );
+      })()}
       {activeJourney && <JourneyPlayerOverlay item={activeJourney} onClose={()=>setActiveJourney(null)}/>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />

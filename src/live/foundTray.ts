@@ -8,12 +8,25 @@ export type FoundItem = {
   bottle: BottleRead;
   trackIds: number[];
   firstSeenAt: number;
+  /** Goes up each time a later read adds or changes facts (drives the "new data" dot). */
+  version: number;
 };
 
 export type FoundCandidate = {
   trackId: number; x: number; y: number; width: number; height: number;
   bottle?: BottleRead;
 };
+
+/** What the bottle's facts are, so a re-read that adds nothing does not count as new data. */
+export function foundFacts(bottle: BottleRead): string {
+  const details = bottle.details && typeof bottle.details === 'object' ? bottle.details : {};
+  const filled = Object.keys(details).filter(key => {
+    const value = (details as Record<string, unknown>)[key];
+    return Array.isArray(value) ? value.length > 0 : !!String(value ?? '').trim();
+  }).sort();
+  return [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product, bottle.proof, bottle.size, bottle.origin, bottle.category,
+    ...filled.map(key => key + '=' + String((details as Record<string, unknown>)[key]))].map(v => String(v ?? '').trim().toLowerCase()).join('|');
+}
 
 export const foundName = (bottle: BottleRead) =>
   [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
@@ -42,14 +55,15 @@ export function mergeFound(
     if (index >= 0) {
       const existing = next[index];
       if (existing.bottle === bottle && existing.trackIds.includes(candidate.trackId)) continue;
+      const changed = foundFacts(existing.bottle) !== foundFacts(bottle);
       const updated: FoundItem = {
-        ...existing, bottle, name,
+        ...existing, bottle, name, version: existing.version + (changed ? 1 : 0),
         trackIds: existing.trackIds.includes(candidate.trackId) ? existing.trackIds : [...existing.trackIds, candidate.trackId].slice(-8),
       };
       next = next.map((item, i) => (i === index ? updated : item));
       continue;
     }
-    const item: FoundItem = { key, name, bottle, trackIds: [candidate.trackId], firstSeenAt: now };
+    const item: FoundItem = { key, name, bottle, trackIds: [candidate.trackId], firstSeenAt: now, version: 1 };
     next = [item, ...next].slice(0, maximum);
     added.push({ item, candidate });
   }
