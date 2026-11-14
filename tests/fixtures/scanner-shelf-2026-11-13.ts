@@ -18,6 +18,8 @@ export type ShelfFrameAnnotation = {
   objects: ShelfObjectAnnotation[];
 };
 
+export const shelfScanCoordinateSpace = 'full-screen-recording' as const;
+
 export const shelfScanAnnotations: ShelfFrameAnnotation[] = [
   {
     timestampSeconds: 5,
