@@ -1,17 +1,25 @@
-// Harmony Discover DEV — discover-live-read v0.3.0 (11 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.4.1 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
 // - save:  the bottles the person kept become rows in public.bottle_sightings (the shared sightings ledger).
 // Guards: signed-in Discover user (anonymous users included), exact-origin allow-list, DEV project only,
 // 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
+// v0.4.1: label and frame reads use Claude Sonnet 5.5 (Rob, 14 Nov 2026). Sonnet 5.5 does not accept a
+// forced tool choice, so it gets tool_choice auto with low effort (fast); save-time research stays on Haiku.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const PROJECT = "lqqmwqrffelgnbngrkep";
-const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
-const FALLBACK = "claude-haiku-4-5";
+const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-sonnet-5-5";
+const FALLBACK = "claude-haiku-5-5";
+const RESEARCH_MODEL = Deno.env.get("DISCOVER_RESEARCH_MODEL") || "claude-haiku-5-5";
+// Newer adaptive-thinking models reject a forced tool choice: ask for the tool instead, and keep thinking low for speed.
+const ADAPTIVE_MODEL = (model: string) => /sonnet-5|opus-5|fable|mythos/.test(model);
+const toolChoice = (model: string, name: string) => ADAPTIVE_MODEL(model)
+  ? { tool_choice: { type: "auto" }, output_config: { effort: "low" } }
+  : { tool_choice: { type: "tool", name } };
 const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
 const USER_SAVES_PER_DAY = 20, PROJECT_SAVES_PER_DAY = 500;
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
@@ -91,15 +99,6 @@ function headers(origin: string | null): Headers {
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
-function hasUnmodeledSkuDifferentiator(b: Record<string, unknown>): boolean {
-  const details = (b.details && typeof b.details === "object" ? b.details : b) as Record<string, unknown>;
-  const keys = ["vintage", "package_size", "sku", "barcode", "upc_ean", "batch", "lot_code",
-    "age_statement", "cask_finish", "cask_type", "barrel_number", "flavor", "style",
-    "appellation", "appellation_level", "classification", "dosage", "residual_sugar"];
-  return [...keys.map((key) => details[key]), b.size, b.proof]
-    .some((value) => value !== null && value !== undefined && clean(value, 80).length > 0);
-}
-
 
 type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
 function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
@@ -229,9 +228,9 @@ async function readFrame(key: string, model: string, b64: string, focus: string 
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({ model, max_tokens: finePrint ? 2600 : 4000, system: finePrint
-      ? "You are a careful beverage-label transcription engine. This is a close crop, so prioritize exact OCR rather than bottle detection, geometry, visual description, or product guessing. Never invent or complete obscured text. Use the label_read tool and return only directly observed text."
+      ? "You are a careful beverage-label transcription engine. This is a close crop, so prioritize exact OCR rather than bottle detection, geometry, visual description, or product guessing. Never invent or complete obscured text. Always answer by calling the label_read tool exactly once and return only directly observed text."
       : SYSTEM,
-      tools: [selectedTool], tool_choice: { type: "tool", name: selectedToolName },
+      tools: [selectedTool], ...toolChoice(model, selectedToolName),
       messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] }),
   });
   const j = await r.json().catch(() => ({}));
@@ -254,8 +253,8 @@ async function readLabelBatch(key: string, model: string, crops: Array<{track_id
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
       model, max_tokens: 4000,
-      system: "You are a precise beverage-label OCR engine. Each image is a separate crop and is associated with the immediately preceding track ID. Do not mix facts between crops. Read exact brand, product expression, category, ABV/proof, volume, origin and any legible technical details. Do not guess. Use the label_reads tool.",
-      tools: [LABEL_BATCH_TOOL], tool_choice: { type: "tool", name: "label_reads" },
+      system: "You are a precise beverage-label OCR engine. Each image is a separate crop and is associated with the immediately preceding track ID. Do not mix facts between crops. Read exact brand, product expression, category, ABV/proof, volume, origin and any legible technical details. Do not guess. Always answer by calling the label_reads tool exactly once.",
+      tools: [LABEL_BATCH_TOOL], ...toolChoice(model, "label_reads"),
       messages: [{ role: "user", content }]
     })
   });
@@ -451,6 +450,7 @@ Deno.serve(async (req: Request) => {
     const providerStartedAt = Date.now();
     let model = MODEL, r = await readLabelBatch(anthropicKey, model, crops);
     if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) {
+      console.log(JSON.stringify({ evt: "bottle_model_fallback", from: model, status: r.status, msg: clean(r.j?.error?.message, 160) }));
       model = FALLBACK; r = await readLabelBatch(anthropicKey, model, crops);
     }
     const usage = r.j?.usage || {};
@@ -502,7 +502,7 @@ Deno.serve(async (req: Request) => {
     const providerStartedAt = Date.now();
     const focus = body.focus === "fine_print" ? "fine_print" : "standard";
     let model = MODEL, r = await readFrame(anthropicKey, model, image, focus);
-    if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { model = FALLBACK; r = await readFrame(anthropicKey, model, image, focus); }
+    if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { console.log(JSON.stringify({ evt: "bottle_model_fallback", from: model, status: r.status, msg: clean(r.j?.error?.message, 160) })); model = FALLBACK; r = await readFrame(anthropicKey, model, image, focus); }
     const usage = r.j?.usage || {};
     await db.rpc("discover_bottle_scan_tokens", { p_subject: subject, p_in: usage.input_tokens || 0, p_out: usage.output_tokens || 0 });
     if (!r.ok) { console.log(JSON.stringify({ evt: "bottle_read_error", status: r.status, msg: clean(r.j?.error?.message, 160) })); return reply({ error: "vision_provider_error" }, 502, origin); }
@@ -538,7 +538,7 @@ Deno.serve(async (req: Request) => {
           }
           for (const key of ["brand", "product", "category", "proof", "size", "origin", ...DETAIL_KEYS]) {
             const value = key === "brand" ? b.brand : key === "product" ? b.product : key === "category" ? b.category : key === "proof" ? b.proof : key === "size" ? b.size : key === "origin" ? b.origin : (pickDetails(b)[key]);
-            if (value && out[key] === undefined && key !== "brand" && key !== "product") out[key] = unit(b.confidence);
+            if (value && out[key] === undefined) out[key] = unit(b.confidence);
           }
           return out;
         })(),
@@ -546,22 +546,17 @@ Deno.serve(async (req: Request) => {
     }).filter((b) => b.box.x1 > b.box.x0 && b.box.y1 > b.box.y0);
     const queries = list.map((b) => clean(`${b.brand} ${b.product}`, 120) || b.words.slice(0, 3).join(" "));
     const found = queries.length ? await match(queries) : [];
-    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/g, " ").trim();
+    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const fieldConfidence = b.fieldConfidence as Record<string, number>;
-      const brandReadIsStrong = !!b.brand && (fieldConfidence.brand ?? 0) >= 0.90;
-      const productReadIsStrong = !!b.product && (fieldConfidence.product ?? 0) >= 0.90;
-      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
-      const sameExpression = !!m?.product && normalizeIdentity(m.product) === normalizeIdentity(b.product);
-      // Keep variant-specific sightings unresolved until the catalogue can verify their SKU facts.
-      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
-      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong &&
-        sameBrand && sameExpression && !!m?.id && !!m.category && (m.score ?? 0) >= 0.90
+      // A fuzzy result is not an identity proof. Require the returned catalogue brand
+      // to agree with the printed brand and require a real product/SKU row.
+      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
-      const state = !brandReadIsStrong || !productReadIsStrong ? "unsure" : hit ? "matched" : "reported";
-      return { ...b, match: hit, state, research: null };
+      const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
+      return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
     });
     const labelRead = focus === "fine_print" && input ? (() => {
       const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
@@ -629,7 +624,7 @@ Deno.serve(async (req: Request) => {
     const enriched = await Promise.all(incoming.map(async (b, index) => {
       if (index >= 5 || !b.brand) return b;
       try {
-        const research = await researchBottle(anthropicKey, MODEL, b);
+        const research = await researchBottle(anthropicKey, RESEARCH_MODEL, b);
         return {
           ...b,
           details: { ...b.details, ...research.details },
@@ -647,15 +642,8 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/g, " ").trim();
-      const fieldConfidence = (b.field_confidence && typeof b.field_confidence === "object" ? b.field_confidence : {}) as Record<string, unknown>;
-      const brandReadIsStrong = !!b.brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
-      const productReadIsStrong = !!b.product && Number(fieldConfidence.product ?? 0) >= 0.90;
-      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
-      const sameExpression = !!m?.product && normalizeIdentity(m.product) === normalizeIdentity(b.product);
-      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
-      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong &&
-        sameBrand && sameExpression && !!m?.id && !!m.category && (m.score ?? 0) >= 0.90;
+      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",
