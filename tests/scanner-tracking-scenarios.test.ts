@@ -40,17 +40,13 @@ describe('scanner physical tracking scenarios', () => {
     expect(returned.map(item => item.trackId)).toEqual(first.map(item => item.trackId));
   });
 
-  it('characterizes the current stale-track reuse after a bottle leaves and another enters the same position', () => {
+  it('assigns a new track ID after a bottle leaves and another enters the same position', () => {
     const tracker = new LocalBottleTracker();
     const original = tracker.update([proposal(0.35)], 1000)[0]!;
     tracker.update([], 5000);
     tracker.update([], 10000);
 
-    // Current implementation retains internal tracks for 30s and can assign
-    // the old ID to a new physical bottle at the same location. This is a
-    // known lifecycle defect; the expectation should be inverted when a
-    // generation-aware retirement policy is implemented.
     const replacement = tracker.update([proposal(0.35)], 11000)[0]!;
-    expect(replacement.trackId).toBe(original.trackId);
+    expect(replacement.trackId).not.toBe(original.trackId);
   });
 });

@@ -33,7 +33,6 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
   const [liveReadConsent, setLiveReadConsent] = useState(false);
-  const [liveReadNoticeDismissed, setLiveReadNoticeDismissed] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captureRequestId, setCaptureRequestId] = useState(0);
   const pendingCapture = useRef<'scan'|'menu_page'|null>(null);
@@ -254,8 +253,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const tracking = event.nativeEvent;
             setLiveTracking(tracking);
             if (tracking.state === 'paused' || tracking.state === 'interrupted' || tracking.state === 'not_available') {
-              // Keep the open profile as a snapshot, but don't let a reused
-              // track ID from a new camera session overwrite its identity.
+              // A camera lifecycle transition ends the visible candidate epoch.
+              // Keep an open profile as a snapshot, but clear all overlays and
+              // force world anchors to start a fresh session.
+              setLiveCandidates([]);
+              setLiveSpatialObservationFrame(null);
+              setLiveDepthFrame(null);
+              setLiveCameraPose(null);
+              setAnchorSessionKey(value => value + 1);
               setSelectedTrackId(null);
             }
           }}
@@ -277,6 +282,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           onCameraPose={event => setLiveCameraPose(event.nativeEvent)}
           onVisualCandidates={event => {
             const value = event.nativeEvent;
+            if (!value.candidates.length) {
+              setLiveCandidates([]);
+              setLiveSpatialObservationFrame(null);
+              setAnchorSessionKey(session => session + 1);
+              return;
+            }
             setLiveCandidates(attachBottleReadsToCandidates(value.candidates, liveBottles).map(candidate => ({
               ...candidate,
               source: candidate.source ?? value.source ?? (value.depthFrame?.unit === 'meters' ? 'cloud' : undefined),
@@ -346,22 +357,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
-      {permission.granted && !scanPhotos && !liveReadConsent && !liveReadNoticeDismissed && <View style={{position:'absolute',zIndex:25,top:Math.max(insets.top,Platform.OS==='ios'?12:8)+70,left:14,right:14,padding:12,borderRadius:12,backgroundColor:'rgba(8,11,15,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.72)'}}>
-        <Text style={{color:C.brass,fontSize:9,fontWeight:'900',letterSpacing:1.2,marginBottom:5}}>OPTIONAL LIVE RECOGNITION</Text>
-        <Text style={{color:C.ivory,fontSize:11,lineHeight:16}}>When enabled, cropped camera frames are sent to Discover's backend and Anthropic to read bottles and menus. Discover does not save these live-read images. Bottle sightings are saved only when you choose to save them. Anthropic's data-handling terms also apply.</Text>
-        <View style={{flexDirection:'row',alignItems:'center',gap:9,marginTop:9}}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Enable live bottle and menu recognition" onPress={()=>{setLiveReadConsent(true);setLiveReadNoticeDismissed(true);}} style={{paddingHorizontal:13,paddingVertical:9,borderRadius:8,backgroundColor:C.brass}}>
-            <Text style={{color:'#111',fontSize:9,fontWeight:'900',letterSpacing:0.8}}>ENABLE LIVE RECOGNITION</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Not now, keep live recognition off" onPress={()=>setLiveReadNoticeDismissed(true)} style={{paddingHorizontal:11,paddingVertical:9,borderRadius:8,borderWidth:1,borderColor:C.line}}>
-            <Text style={{color:C.muted,fontSize:9,fontWeight:'800',letterSpacing:0.6}}>NOT NOW</Text>
-          </Pressable>
-        </View>
-      </View>}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
-        <View style={s.topActions}><Pressable accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>{if(liveReadConsent){setLiveReadConsent(false);setLiveReadNoticeDismissed(false);}else{setLiveReadNoticeDismissed(false);}}} style={s.livePill}><View style={[s.liveDot,{backgroundColor:liveReadConsent?'#77E5B5':'#B75D55'}]}/><Text style={s.liveText}>{liveReadConsent ? (liveReadAt ? 'LIVE READING' : 'LIVE STARTING') : 'LIVE READ OFF'}</Text></Pressable><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
+        <View style={s.topActions}><Pressable style={s.profileButton} onPress={() => setActivePanel('favorites')}><Ionicons name="person-outline" size={19} color={C.ivory} /></Pressable></View>
       </View>
       <View style={[s.centerHint, { top: Math.max(insets.top, 24) + 112, bottom: Math.max(insets.bottom, 12) + (screenHeight < 750 ? 218 : 238) }]} pointerEvents="none">
         <View style={[s.corner, s.tl]} /><View style={[s.corner, s.tr]} /><View style={[s.corner, s.bl]} /><View style={[s.corner, s.br]} />
@@ -443,7 +442,6 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Screen orientation is automatic. Rotate your device to change the layout.')}><Ionicons name="phone-portrait-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Screen orientation</Text><Text style={s.menuDesc}>Automatic · portrait and landscape</Text></View><Text style={s.menuValue}>AUTO</Text></Pressable>
           <Pressable style={s.menuRow} onPress={async()=>{const p=permission?.granted?permission:await requestPermission();setCameraMessage(p.granted?'Camera access is enabled.':'Camera access was not granted. Check iOS Settings.');}}><Ionicons name="camera-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Camera access</Text><Text style={s.menuDesc}>Manage camera permission</Text></View><Text style={s.menuValue}>{permission.granted?'ON':'CHECK'}</Text></Pressable>
-          <Pressable style={s.menuRow} onPress={()=>{setLiveReadConsent(value=>!value);setLiveReadNoticeDismissed(true);}}><Ionicons name="scan-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live recognition uploads</Text><Text style={s.menuDesc}>Allow or pause automatic frame processing</Text></View><Text style={s.menuValue}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
           <Pressable style={s.menuRow} onPress={()=>setCameraMessage('Photos are processed only after you select or capture them.')}><Ionicons name="images-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Photo processing</Text><Text style={s.menuDesc}>Review selected photos before processing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('privacy');}}><Ionicons name="shield-checkmark-outline" size={17} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Measure & contribution permissions</Text><Text style={s.menuDesc}>Optional research and measurement sharing</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <View style={{height:1,backgroundColor:C.line,marginVertical:8}}/>
@@ -451,7 +449,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable style={s.menuRow} onPress={startMenuScan}><Ionicons name="document-text-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Read a menu</Text><Text style={s.menuDesc}>Capture menu pages, review extracted items and corrections</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={startBottleScan}><Ionicons name="wine-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Scan a bottle</Text><Text style={s.menuDesc}>Identify labels, products, SKUs, vintages and research details</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
-          <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('lidar');}}><Ionicons name="cube-outline" size={18} color="#4F8BFF"/><View style={{flex:1}}><Text style={s.menuTitle}>Live 3D / LiDAR Scanner</Text><Text style={s.menuDesc}>ARKit depth and world-tracking test · capability dependent</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
+          <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>setLiveReadConsent(value=>!value)}><Ionicons name="scan-outline" size={18} color={liveReadConsent?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live Recognition</Text><Text style={s.menuDesc}>Send cropped live frames to Discover and Anthropic for bottle and menu reading. Images are not saved; sightings save only when you choose.</Text></View><Text style={[s.menuValue,{color:liveReadConsent?'#77E5B5':C.muted}]}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
           </ScrollView>
         </View>
       </>}
