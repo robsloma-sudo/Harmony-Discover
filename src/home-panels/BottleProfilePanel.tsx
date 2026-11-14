@@ -24,6 +24,14 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
     label_text: bottle.words?.join(" · "),
     certifications: details.certifications,
   };
+  // Facts found by the shared product record fill the same categories.
+  for (const attribute of intelligence?.attributes ?? []) {
+    const value = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
+    if (value && !asText(fields[attribute.attribute_code]).trim()) fields[attribute.attribute_code] = value;
+  }
+  const shownKeys = new Set(sections.flatMap(section => section.fields.map(item => item.key)));
+  const extraAttributes = (intelligence?.attributes ?? []).filter(attribute => !shownKeys.has(attribute.attribute_code)
+    && (attribute.value_text || attribute.value_numeric !== null || asText(attribute.value_json)));
   const sources = bottle.researchSources || [];
   return (
     <View style={styles.root}>
@@ -39,80 +47,53 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
         <View style={styles.confidenceRow}>
           <Text style={styles.confidenceLabel}>SCAN CONFIDENCE</Text>
           <Text style={styles.confidenceValue}>{Math.round((bottle.confidence || 0) * 100)}%</Text>
-          <Text style={styles.confidenceNote}>Label confidence · not proof of every researched fact</Text>
         </View>
-        {sections.map(section => {
-          const present = section.fields.filter(item => asText(fields[item.key]).trim());
-          const missing = section.fields.filter(item => !asText(fields[item.key]).trim());
-          return (
-            <View key={section.id} style={styles.section}>
-              <Text style={styles.sectionTitle}>{section.title}</Text>
-              <Text style={styles.sectionDescription}>{section.description}</Text>
-              {present.length ? present.map(item => (
+        {sections.map(section => (
+          // Every category is listed; one without a value says "No data" (no internal descriptions).
+          <View key={section.id} style={styles.section}>
+            <Text style={styles.sectionTitle}>{section.title}</Text>
+            {section.fields.map(item => {
+              const value = asText(fields[item.key]).trim();
+              return (
                 <View key={item.key} style={styles.field}>
                   <Text style={styles.fieldLabel}>{item.label.toUpperCase()}</Text>
-                  <Text style={styles.fieldValue}>{asText(fields[item.key])}</Text>
-                  <Text style={styles.fieldDescription}>{item.description}</Text>
+                  <Text style={value ? styles.fieldValue : styles.noData}>{value || "No data"}</Text>
                 </View>
-              )) : null}
-              {missing.length > 0 && <Text style={styles.missing}>{missing.map(item => item.label).join(" · ")} · not yet verified</Text>}
-            </View>
-          );
-        })}
+              );
+            })}
+          </View>
+        ))}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Shared product intelligence</Text>
-          <Text style={styles.sectionDescription}>A background lookup checks the shared Discover product record after this profile opens. Only exact product matches are shown.</Text>
-          {intelligenceLoading ? <Text style={styles.missing}>Checking the shared product record…</Text> : null}
-          {!intelligenceLoading && !intelligence ? <Text style={styles.missing}>No exact shared product record found yet. This bottle remains available as a local scan profile.</Text> : null}
-          {intelligence ? (
-            <>
-              <Text style={styles.sourceMeta}>PRODUCT RECORD · {intelligence.product.status.toUpperCase()} · {intelligence.sightings.total} SIGHTINGS · {intelligence.sightings.confirmed} CONFIRMED · {intelligence.attributes.length} ATTRIBUTES</Text>
-              {intelligence.packages.map((pkg, index) => {
-                const values = [
-                  pkg.package_size_ml ? String(pkg.package_size_ml) + " mL" : "",
-                  pkg.abv_percent ? String(pkg.abv_percent) + "% ABV" : "",
-                  asText(pkg.package_type),
-                  asText(pkg.container_material),
-                ].filter(Boolean);
-                return values.length ? <Text key={String(index)} style={styles.fieldValue}>{values.join(" · ")}</Text> : null;
-              })}
-              {intelligence.attributes.map(attribute => {
-                const raw = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
-                return (
-                  <View key={attribute.attribute_code} style={styles.field}>
-                    <Text style={styles.fieldLabel}>{attribute.attribute_code.replace(/_/g, " ").toUpperCase()}</Text>
-                    <Text style={styles.fieldValue}>{raw || attribute.state.replace(/_/g, " ")}</Text>
-                    <Text style={styles.fieldDescription}>{attribute.state.replace(/_/g, " ")}{attribute.confidence !== null ? " · " + Math.round(attribute.confidence * 100) + "% confidence" : ""}</Text>
-                  </View>
-                );
-              })}
-              {intelligence.evidence.map((evidence, index) => {
-                const observed = asText(evidence.observed_value)
-                  || (evidence.observed_value && typeof evidence.observed_value === "object" ? JSON.stringify(evidence.observed_value) : "");
-                return (
-                  <View key={String(index) + evidence.source_type + (evidence.source_url || "")} style={styles.source}>
-                    <Text style={styles.sourceTitle}>{evidence.source_name || evidence.source_type.replace(/_/g, " ")}</Text>
-                    <Text style={styles.sourceMeta}>{evidence.attribute_code || "PRODUCT EVIDENCE"} · {evidence.verification_state.replace(/_/g, " ")}{evidence.confidence !== null ? " · " + Math.round(evidence.confidence * 100) + "%" : ""}</Text>
-                    {observed ? <Text style={styles.fieldValue}>{observed.slice(0, 240)}</Text> : null}
-                    {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
-                  </View>
-                );
-              })}
-            </>
-          ) : null}
+          <Text style={styles.sectionTitle}>More facts</Text>
+          {intelligenceLoading && !extraAttributes.length ? <Text style={styles.noData}>Looking up…</Text> : null}
+          {!intelligenceLoading && !extraAttributes.length ? <Text style={styles.noData}>No data</Text> : null}
+          {extraAttributes.map(attribute => {
+            const raw = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
+            return (
+              <View key={attribute.attribute_code} style={styles.field}>
+                <Text style={styles.fieldLabel}>{attribute.attribute_code.replace(/_/g, " ").toUpperCase()}</Text>
+                <Text style={styles.fieldValue}>{raw}</Text>
+              </View>
+            );
+          })}
         </View>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Research & shared evidence</Text>
-          <Text style={styles.sectionDescription}>Research sources attached to this scan. Shared sightings should be corroborated before becoming established product facts.</Text>
-          {sources.length ? sources.map((source, index) => (
-            <View key={source.url + index} style={styles.source}>
-              <Text style={styles.sourceTitle}>{source.title || source.source_type || "Research source"}</Text>
-              <Text style={styles.sourceMeta}>{source.source_type || "SOURCE"} · SUPPORTS: {(source.supports || []).join(", ") || "not specified"}</Text>
+          <Text style={styles.sectionTitle}>Sources</Text>
+          {(intelligence?.evidence ?? []).filter(evidence => evidence.source_url || evidence.source_name).map((evidence, index) => (
+            <View key={"e" + index + (evidence.source_url || "")} style={styles.source}>
+              <Text style={styles.sourceTitle}>{evidence.source_name || "Source"}</Text>
+              {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
+            </View>
+          ))}
+          {sources.map((source, index) => (
+            <View key={"r" + index + source.url} style={styles.source}>
+              <Text style={styles.sourceTitle}>{source.title || "Source"}</Text>
               <Text style={styles.sourceUrl}>{source.url}</Text>
             </View>
-          )) : <Text style={styles.missing}>No product research sources attached yet.</Text>}
+          ))}
+          {!sources.length && !(intelligence?.evidence ?? []).some(evidence => evidence.source_url || evidence.source_name)
+            ? <Text style={styles.noData}>{intelligenceLoading ? "Looking up…" : "No data"}</Text> : null}
         </View>
-        <Text style={styles.footer}>Missing information is intentionally left blank until supported by a label, producer, appellation authority or corroborated evidence.</Text>
       </ScrollView>
     </View>
   );
@@ -138,7 +119,7 @@ const styles = StyleSheet.create({
   fieldLabel:{color:C.brass,fontSize:8,fontWeight:"900",letterSpacing:0.8},
   fieldValue:{color:C.ivory,fontSize:12,fontWeight:"700",lineHeight:17,marginTop:3},
   fieldDescription:{color:C.muted,fontSize:8,lineHeight:12,marginTop:2},
-  missing:{color:"#68727D",fontSize:8,lineHeight:13,marginTop:6},
+  noData:{color:"#68727D",fontSize:12,fontWeight:"600",lineHeight:17,marginTop:3},
   source:{paddingVertical:8,borderTopWidth:1,borderTopColor:"rgba(153,163,174,0.10)"},
   sourceTitle:{color:C.ivory,fontSize:10,fontWeight:"800"},
   sourceMeta:{color:C.brass,fontSize:8,marginTop:3},
