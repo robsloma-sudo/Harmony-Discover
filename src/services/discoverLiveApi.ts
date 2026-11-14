@@ -33,10 +33,14 @@ export class BottleReadError extends Error {
   constructor(message: string, status: number) { super(message); this.status = status; }
 }
 
-async function call(body: Record<string, unknown>) {
+const autosaveFunction = /^[a-z0-9-]+$/.test(process.env.EXPO_PUBLIC_DISCOVER_AUTOSAVE_FUNCTION || '')
+  ? process.env.EXPO_PUBLIC_DISCOVER_AUTOSAVE_FUNCTION!
+  : 'discover-live-autosave';
+
+async function call(body: Record<string, unknown>, functionName = liveReadFunction) {
   if (!base || !publishableKey) throw new BottleReadError('not_configured', 0);
   const session = await ensureDiscoverSession();
-  const response = await fetch(`${base}/functions/v1/${liveReadFunction}`, {
+  const response = await fetch(`${base}/functions/v1/${functionName}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}`, apikey: publishableKey },
     body: JSON.stringify(body),
@@ -185,4 +189,36 @@ export function bottleErrorMessage(error: unknown): string {
   if (code === 'origin_not_allowed') return "This address isn't allowed to scan yet.";
   if (code === 'unauthorized') return 'Your session expired. Reload the page.';
   return "Couldn't read that view. Trying again.";
+}
+
+
+export type LiveSightingInput = {
+  brand: string; product: string; category: string; proof: string; size: string; origin: string;
+  words: string[]; confidence: number; agreeingReads: number;
+  details: Record<string, string | string[]>; fieldConfidence: Record<string, number>;
+};
+export type LiveSightingResult = { brand: string; product: string; status: 'saved' | 'already_saved' | 'failed'; productId: string | null; newProduct: boolean };
+
+/**
+ * Saves bottles the live scanner is sure of (reads agreed on the name) as
+ * sightings. The server links each to a Discover product (creating a new
+ * candidate if needed) and queues background web research for missing facts.
+ * Nothing about the image is sent.
+ */
+export async function saveLiveSightings(scanSessionId: string, bottles: LiveSightingInput[]): Promise<LiveSightingResult[]> {
+  if (!bottles.length) return [];
+  const result = await call({
+    scan_session_id: scanSessionId,
+    bottles: bottles.slice(0, 8).map(b => ({
+      brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, origin: b.origin,
+      words: b.words, confidence: b.confidence, agreeing_reads: b.agreeingReads,
+      details: b.details, field_confidence: b.fieldConfidence,
+    })),
+  }, autosaveFunction);
+  return (Array.isArray(result.results) ? result.results : []).map((r: Record<string, unknown>) => ({
+    brand: String(r.brand || ''), product: String(r.product || ''),
+    status: r.status === 'saved' || r.status === 'already_saved' ? r.status : 'failed',
+    productId: typeof r.product_id === 'string' ? r.product_id : null,
+    newProduct: r.new_product === true,
+  }));
 }

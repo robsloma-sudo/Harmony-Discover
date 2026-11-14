@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
-import { readLiveFrame, readLiveLabelBatch, type BottleRead, type LabelBatchRead } from '../services/discoverLiveApi';
+import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
@@ -21,7 +21,7 @@ import {
 } from './cameraMotion';
 import { computeAppearanceSignature } from './appearanceSignature';
 import { checkPreviousScannerExit, markScannerRunning, markScannerStopped } from './scannerHealth';
-import { TrackEvidence } from './trackEvidence';
+import { TrackEvidence, identityKey } from './trackEvidence';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -165,6 +165,71 @@ function WebLiveCamera(props: NativeProps) {
     // once reads agree; it stays with the bottle while it is off screen.
     const evidence = new TrackEvidence<BottleRead>();
     const lastHitsByLocalTrack = new Map<number, number>();
+    // Automatic saving: once a bottle's name is reliable, it is saved once per
+    // scan session as a sighting (Live Recognition consent covers this). The
+    // server links it to a product and queues background web research.
+    const newScanSessionId = () => {
+      const cryptoApi = globalThis.crypto as Crypto & { randomUUID?: () => string };
+      if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
+      const bytes = new Uint8Array(16);
+      cryptoApi.getRandomValues(bytes);
+      bytes[6] = (bytes[6]! & 0x0f) | 0x40; bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    };
+    let scanSessionId = newScanSessionId();
+    const saveState = new Map<string, 'queued' | 'saving' | 'saved'>();
+    let saveQueue: Array<{ key: string; input: LiveSightingInput }> = [];
+    let saveBusy = false;
+    let saveRetryAt = 0;
+    const resetAutoSave = () => {
+      scanSessionId = newScanSessionId();
+      saveState.clear();
+      saveQueue = [];
+      saveRetryAt = 0;
+    };
+    const queueAutoSave = (read: BottleRead, identityConfidence: number, agreeingReads: number) => {
+      const key = identityKey(read);
+      if (!key || saveState.has(key) || !read.brand) return;
+      // Agreement between independent reads is the evidence: carry it into the
+      // brand/product confidence the server uses for matching and research.
+      const fieldConfidence: Record<string, number> = { ...(read.fieldConfidence ?? {}) };
+      fieldConfidence.brand = Math.max(fieldConfidence.brand ?? 0, identityConfidence);
+      if (read.product) fieldConfidence.product = Math.max(fieldConfidence.product ?? 0, identityConfidence);
+      saveState.set(key, 'queued');
+      saveQueue.push({ key, input: {
+        brand: read.match?.brand || read.brand, product: read.match?.product || read.product || '',
+        category: read.category || 'other', proof: read.proof || '', size: read.size || '', origin: read.origin || '',
+        words: read.words ?? [], confidence: Math.max(read.confidence ?? 0, identityConfidence), agreeingReads,
+        details: read.details ?? {}, fieldConfidence,
+      } });
+    };
+    const flushAutoSave = async () => {
+      if (disposed || saveBusy || !saveQueue.length || Date.now() < saveRetryAt || !callbacksRef.current.recognitionEnabled) return;
+      const batch = saveQueue.slice(0, 8);
+      const session = scanSessionId;
+      saveBusy = true;
+      batch.forEach(item => saveState.set(item.key, 'saving'));
+      try {
+        const results = await saveLiveSightings(session, batch.map(item => item.input));
+        if (session !== scanSessionId) return;
+        saveQueue = saveQueue.filter(item => !batch.includes(item));
+        batch.forEach((item, index) => {
+          const status = results[index]?.status;
+          if (status === 'saved' || status === 'already_saved') saveState.set(item.key, 'saved');
+          else saveState.delete(item.key); // not saved: may be queued again later
+        });
+        publishVisibleCandidates();
+      } catch (error) {
+        if (session !== scanSessionId) return;
+        batch.forEach(item => saveState.set(item.key, 'queued'));
+        const status = (error as { status?: number }).status ?? 0;
+        saveRetryAt = Date.now() + (status === 429 ? 60_000 : 10_000);
+      } finally {
+        saveBusy = false;
+      }
+    };
+    const autoSaveTimer = window.setInterval(() => { void flushAutoSave(); }, 2_500);
     const labelReadToBottle = (read: LabelBatchRead): BottleRead => ({
       box: { x0: 0, y0: 0, x1: 0, y1: 0 }, label_box: null, edgePaths: [], words: read.words,
       brand: read.brand, product: read.product, category: read.category,
@@ -210,6 +275,7 @@ function WebLiveCamera(props: NativeProps) {
         lastLabelReadAt.clear();
         evidence.clear();
         lastHitsByLocalTrack.clear();
+        resetAutoSave();
         reverifyTracks.clear();
         nextWebTrackId = 1;
         lastSentFrameSignature = null;
@@ -471,7 +537,11 @@ function WebLiveCamera(props: NativeProps) {
       const withEvidence = <C extends { trackId: number; confidence: number }>(candidate: C) => {
         const identity = evidence.identity(candidate.trackId);
         const confidence = evidence.detection(candidate.trackId) || candidate.confidence;
-        if (identity?.reliable) return { ...candidate, confidence, bottle: identity.read, identityConfidence: identity.confidence };
+        if (identity?.reliable) {
+          queueAutoSave(identity.read, identity.confidence, identity.agreeingReads);
+          const key = identityKey(identity.read);
+          return { ...candidate, confidence, bottle: identity.read, identityConfidence: identity.confidence, saved: !!key && saveState.get(key) === 'saved' };
+        }
         return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined };
       };
       const cloudCandidates = webTracks
@@ -501,8 +571,9 @@ function WebLiveCamera(props: NativeProps) {
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
-        const shown = candidate as { identityConfidence?: number; identifying?: number };
+        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean };
         return [
+          shown.saved ? 'S' : '',
           Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
           candidate.trackId,
           Math.round(candidate.x * 2000), Math.round(candidate.y * 2000),
@@ -1058,6 +1129,7 @@ function WebLiveCamera(props: NativeProps) {
         localBottleTracker.reset();
         evidence.clear();
         lastHitsByLocalTrack.clear();
+        resetAutoSave();
         reverifyTracks.clear();
         nextWebTrackId = 1;
         resetCameraMotion();
@@ -1087,6 +1159,8 @@ function WebLiveCamera(props: NativeProps) {
       liquidHistoryByTrack.clear();
       evidence.clear();
       lastHitsByLocalTrack.clear();
+      resetAutoSave();
+      window.clearInterval(autoSaveTimer);
       reverifyTracks.clear();
       nextWebTrackId = 1;
       lastSentFrameSignature = null;
