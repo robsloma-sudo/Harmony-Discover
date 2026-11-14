@@ -26,6 +26,7 @@ import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
+import { LiquidTrackGuard } from './liquidTrackGuard';
 import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
 import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
 import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
@@ -273,6 +274,7 @@ function WebLiveCamera(props: NativeProps) {
         localDetectionTimer = 0;
         localBottleTracker.reset();
         liquidHistoryByTrack.clear();
+        liquidGuard.clear();
         latestLocalCandidates = [];
         webTracks = [];
         labelReadsByTrack.clear();
@@ -399,7 +401,9 @@ function WebLiveCamera(props: NativeProps) {
       return canvas;
     };
     // Liquid evidence is kept per local bottle track and never blocks cloud label recognition.
-    const liquidHistoryByTrack = new Map<number, { observations: LiquidLineObservation[]; updatedAt: number }>();
+    const liquidHistoryByTrack = new Map<number, { observations: LiquidLineObservation[]; updatedAt: number; calibrationKey: string | null }>();
+    // Late worker results only count if the track has not been re-found, merged or renamed since the frame was sent.
+    const liquidGuard = new LiquidTrackGuard();
     let bottleVolumeProfiles: Record<string, import('../services/bottleVolumeCalibration').BottleVolumeProfile> = {};
     void loadBottleVolumeProfiles().then(registry => { if (!disposed) bottleVolumeProfiles = registry.profiles; });
     let nextWebTrackId = 1;
@@ -526,6 +530,9 @@ function WebLiveCamera(props: NativeProps) {
         labelReadsByTrack.delete(source);
         lastLabelReadAt.delete(source);
         liquidHistoryByTrack.delete(source);
+        liquidHistoryByTrack.delete(target);
+        liquidGuard.bump(source);
+        liquidGuard.bump(target);
         if (reverifyTracks.delete(source)) reverifyTracks.add(target);
       }
     };
@@ -708,24 +715,27 @@ function WebLiveCamera(props: NativeProps) {
       for (const item of results) {
         const current = latestLocalCandidates.find(candidate => candidate.trackId === item.trackId);
         if (!current) continue; // Track disappeared while the worker was busy.
+        if (!liquidGuard.accepts(timestamp, item.trackId)) continue; // Track changed while the worker was busy.
         if (item.optical.status !== 'observable' || item.optical.score < 0.55) {
           liquidHistoryByTrack.delete(item.trackId);
           continue;
         }
         if (item.result.status !== 'candidate' || item.result.confidence < 0.7 || item.result.boundaryShape === 'irregular') continue;
+        const labelRead = labelReadsByTrack.get(item.trackId);
+        const readKey = labelRead ? identityKey(labelRead) : null;
+        const calibrationKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size, readKey ? resolvedByKey.get(readKey) : undefined);
         const previous = liquidHistoryByTrack.get(item.trackId);
-        const history = previous && timestamp - previous.updatedAt <= 2200 ? previous.observations : [];
+        // A new or changed identity starts a fresh fill reading: never mix bottles.
+        const history = previous && timestamp - previous.updatedAt <= 2200 && previous.calibrationKey === calibrationKey ? previous.observations : [];
+        if (previous && previous.calibrationKey !== calibrationKey) current.liquidLevel = undefined;
         const observations = [...history, {
           frameId: String(timestamp),
           normalizedHeight: item.result.normalizedHeight,
           confidence: item.result.confidence,
         }].slice(-5);
-        liquidHistoryByTrack.set(item.trackId, { observations, updatedAt: timestamp });
+        liquidHistoryByTrack.set(item.trackId, { observations, updatedAt: timestamp, calibrationKey });
         const consensus = assessLiquidInterface(observations);
         if (consensus.status === 'visible') {
-          const labelRead = labelReadsByTrack.get(item.trackId);
-          const readKey = labelRead ? identityKey(labelRead) : null;
-          const calibrationKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size, readKey ? resolvedByKey.get(readKey) : undefined);
           const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? bottleVolumeProfiles[calibrationKey]) : undefined;
           const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
@@ -910,7 +920,15 @@ function WebLiveCamera(props: NativeProps) {
           };
         }), now, { countMisses });
         migrateLocalTrackIds(localBottleTracker.takeMergedTrackIds());
-        for (const trackId of localBottleTracker.takeReacquiredTrackIds()) reverifyTracks.add(-Math.abs(trackId));
+        for (const trackId of localBottleTracker.takeReacquiredTrackIds()) {
+          const id = -Math.abs(trackId);
+          reverifyTracks.add(id);
+          // Same spot is not proof of the same bottle: its fill reading starts again.
+          liquidGuard.bump(id);
+          liquidHistoryByTrack.delete(id);
+          const shown = latestLocalCandidates.find(candidate => candidate.trackId === id);
+          if (shown) shown.liquidLevel = undefined;
+        }
         for (const local of localTracks) {
           if ((lastHitsByLocalTrack.get(local.trackId) ?? 0) < local.hits) evidence.observeDetection(-Math.abs(local.trackId), local.confidence);
           lastHitsByLocalTrack.set(local.trackId, local.hits);
@@ -919,6 +937,7 @@ function WebLiveCamera(props: NativeProps) {
         latestLocalCandidates = toLocalCandidates(localTracks, now);
         // Transfer this frame's pixel buffer to the liquid worker (capture-time
         // geometry). Neither detection nor recognition waits for its result.
+        liquidGuard.stamp(frameTimestamp, latestLocalCandidates.map(local => local.trackId));
         liquidAnalysisQueue.submit(frame, frameTimestamp, latestLocalCandidates.map(local => {
           const back = clipBoxToFrame(applyMotionToBox({ x: local.x, y: local.y, width: local.width, height: local.height }, invertCameraMotion(motion)));
           return {
@@ -1175,6 +1194,7 @@ function WebLiveCamera(props: NativeProps) {
         labelReadsByTrack.clear();
         lastLabelReadAt.clear();
         liquidHistoryByTrack.clear();
+        liquidGuard.clear();
         localBottleTracker.reset();
         evidence.clear();
         lastHitsByLocalTrack.clear();
@@ -1206,6 +1226,7 @@ function WebLiveCamera(props: NativeProps) {
       labelReadsByTrack.clear();
       lastLabelReadAt.clear();
       liquidHistoryByTrack.clear();
+        liquidGuard.clear();
       evidence.clear();
       lastHitsByLocalTrack.clear();
       resetAutoSave();
@@ -1228,6 +1249,7 @@ function WebLiveCamera(props: NativeProps) {
       localBottleTracker.reset();
       liquidAnalysisQueue.dispose();
       liquidHistoryByTrack.clear();
+        liquidGuard.clear();
       if (segmentationRunner) void segmentationRunner.dispose();
       depthEstimator?.dispose();
       if (stream) stream.getTracks().forEach(track => track.stop());
