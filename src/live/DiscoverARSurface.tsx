@@ -180,7 +180,7 @@ function WebLiveCamera(props: NativeProps) {
         segmentationRunner = new SegmentationRunner(provider, {
           // Target 10Hz local detection. The runner remains single-flight; if inference
           // exceeds 100ms, the busy guard naturally caps throughput to device speed.
-          minimumIntervalMs: 100,
+          minimumIntervalMs: 350,
           maximumFrameAgeMs: 700,
           maximumTracksPerFrame: 8,
         });
@@ -393,7 +393,7 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
         const video = videoRef.current;
-        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 16.67 && video.currentTime !== lastOpticalVideoTime) {
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
           lastOpticalFlowAt = time;
           lastOpticalVideoTime = video.currentTime;
           const displayWidth = video.clientWidth || video.videoWidth;
@@ -682,7 +682,7 @@ function WebLiveCamera(props: NativeProps) {
       void Promise.resolve(ensureSegmentationRunner()).then(() => {
         if (disposed || !pageVisible || localDetectionTimer || !callbacksRef.current.recognitionEnabled || !segmentationRunner) return;
         void runLocalDetection();
-        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 100);
+        localDetectionTimer = window.setInterval(() => { void runLocalDetection(); }, 350);
       });
     };
 
