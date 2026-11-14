@@ -51,14 +51,30 @@ describe('shelf-scan visual annotation fixture', () => {
     expect(secondCandidates.length).toBeGreaterThanOrEqual(3);
     expect(new Set(secondCandidates.map(candidate => candidate.trackId)).size).toBe(secondCandidates.length);
 
-    // Annotation order is stable across these two reviewed frames. Verify
-    // that each physical object keeps its own track rather than merely
-    // checking that the tracker returns some non-duplicate IDs.
-    expect(firstCandidates).toHaveLength(first.objects.length);
-    expect(secondCandidates).toHaveLength(second.objects.length);
-    for (let index = 0; index < first.objects.length; index += 1) {
-      expect(first.objects[index]!.objectId).toBe(second.objects[index]!.objectId);
-      expect(secondCandidates[index]!.trackId).toBe(firstCandidates[index]!.trackId);
+    // Tracker output order is area-sorted and may change between frames.
+    // Associate each annotation with its nearest returned candidate by box
+    // center instead of relying on array position.
+    const trackByObject = (frame: typeof first, candidates: typeof firstCandidates) => {
+      expect(candidates).toHaveLength(frame.objects.length);
+      return new Map(frame.objects.map(object => {
+        const center = {
+          x: object.bounds.x + object.bounds.width / 2,
+          y: object.bounds.y + object.bounds.height / 2,
+        };
+        const nearest = [...candidates].sort((a, b) => {
+          const distance = (candidate: typeof a) => Math.hypot(
+            candidate.bounds.x + candidate.bounds.width / 2 - center.x,
+            candidate.bounds.y + candidate.bounds.height / 2 - center.y,
+          );
+          return distance(a) - distance(b);
+        })[0]!;
+        return [object.objectId, nearest.trackId] as const;
+      }));
+    };
+    const firstTracks = trackByObject(first, firstCandidates);
+    const secondTracks = trackByObject(second, secondCandidates);
+    for (const object of first.objects) {
+      expect(secondTracks.get(object.objectId)).toBe(firstTracks.get(object.objectId));
     }
   });
 });
