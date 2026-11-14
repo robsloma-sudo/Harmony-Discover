@@ -10,11 +10,10 @@ type BottleIdentity = {
   match?: { brand?: string | null; product?: string | null } | null;
 };
 
-const identityKey = (bottle: BottleIdentity): string =>
-  [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product]
-    .map(value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
-    .filter(Boolean)
-    .join(' ');
+const normalizedIdentity = (bottle: BottleIdentity): { brand: string; product: string } => ({
+  brand: String(bottle.match?.brand || bottle.brand || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
+  product: String(bottle.match?.product || bottle.product || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
+});
 
 /** A geometry track is visible after repeat confirmation, or one strong read. */
 export function isConfirmedWebBottleTrack(track: WebBottleTrackState): boolean {
@@ -28,7 +27,13 @@ export function isConfirmedWebBottleTrack(track: WebBottleTrackState): boolean {
 
 /** True only when both observations carry complete, contradictory product identities. */
 export function hasBottleIdentityConflict(previous: BottleIdentity, next: BottleIdentity): boolean {
-  const previousKey = identityKey(previous);
-  const nextKey = identityKey(next);
-  return !!previousKey && !!nextKey && previousKey !== nextKey;
+  const previousIdentity = normalizedIdentity(previous);
+  const nextIdentity = normalizedIdentity(next);
+  // A brand-only or product-only read is not enough evidence to overwrite
+  // an established identity. Compare only complete brand + product pairs.
+  if (!previousIdentity.brand || !previousIdentity.product || !nextIdentity.brand || !nextIdentity.product) {
+    return false;
+  }
+  return previousIdentity.brand !== nextIdentity.brand
+    || previousIdentity.product !== nextIdentity.product;
 }
