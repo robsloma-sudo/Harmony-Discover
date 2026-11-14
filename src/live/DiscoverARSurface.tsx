@@ -12,7 +12,7 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates } from './labelBatch';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
-import { isConfirmedWebBottleTrack } from './webTrackPolicy';
+import { hasBottleIdentityConflict, isConfirmedWebBottleTrack } from './webTrackPolicy';
 import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -161,7 +161,16 @@ function WebLiveCamera(props: NativeProps) {
         localBottleTracker.reset();
         liquidHistoryByTrack.clear();
         latestLocalCandidates = [];
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, source: 'local', candidates: [] } });
+        webTracks = [];
+        labelReadsByTrack.clear();
+        lastLabelReadAt.clear();
+        nextWebTrackId = 1;
+        lastSentFrameSignature = null;
+        lastLiveReadAt = 0;
+        lastLiveBottleCount = 0;
+        previousOpticalGray = null;
+        previousOpticalSize = '';
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
         callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
       } else if (callbacksRef.current.recognitionEnabled) {
         scheduleRecognition(250);
@@ -291,20 +300,16 @@ function WebLiveCamera(props: NativeProps) {
           const score = overlap >= 0.08 ? overlap : (distance <= 0.20 ? 0.08 * (1 - distance / 0.20) : 0);
           if (score > bestScore) { bestScore = score; bestIndex = index; }
         });
-        // If the camera was turned away and returns at a different framing,
-        // reconnect a uniquely identified product to its retained track ID.
-        const identityOf = (bottle: BottleRead) => [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product]
-          .map(value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter(Boolean).join(' ');
-        if (bestIndex < 0) {
-          const identity = identityOf(detection.bottle);
-          if (identity) {
-            const matchingPrior = webTracks.map((track, index) => ({ track, index }))
-              .filter(item => !used.has(item.index) && identityOf(item.track.bottle) === identity);
-            const matchingCurrent = detections.filter(item => identityOf(item.bottle) === identity).length;
-            if (matchingPrior.length === 1 && matchingCurrent === 1) bestIndex = matchingPrior[0]!.index;
-          }
-        }
+        // Spatial continuity, not a repeated product name, determines physical
+        // track identity. Two bottles can share a SKU; never resurrect a stale
+        // track solely because its old OCR result matches this detection.
         const previous = bestIndex >= 0 ? webTracks[bestIndex] : null;
+        if (previous && hasBottleIdentityConflict(previous.bottle, detection.bottle)) {
+          // A changed product identity invalidates all OCR/catalogue enrichment
+          // cached under this physical track. The new observation is authoritative.
+          labelReadsByTrack.delete(previous.id);
+          lastLabelReadAt.delete(previous.id);
+        }
         if (bestIndex >= 0) used.add(bestIndex);
         // Weight the newest observation more heavily so boxes catch up during camera movement.
         const blend = previous ? 0.58 : 1;
@@ -455,7 +460,11 @@ function WebLiveCamera(props: NativeProps) {
                     const next = updates.get('cloud:' + track.id);
                     if (!next) return track;
                     const dx = next.x - track.x, dy = next.y - track.y;
-                    return { ...track, x: next.x, y: next.y, timestamp: now, lastSeenAt: now,
+                    // Optical flow estimates motion between detector reads; it
+                    // is not a new recognition observation. Do not refresh the
+                    // source timestamp or lastSeenAt, or a drifting ghost can
+                    // keep itself alive indefinitely.
+                    return { ...track, x: next.x, y: next.y,
                       contour: track.contour?.map(point => ({ x: point.x + dx, y: point.y + dy })) };
                   });
                   publishVisibleCandidates();
@@ -591,8 +600,12 @@ function WebLiveCamera(props: NativeProps) {
               confidence: Math.max(previous.confidence, read.confidence),
               fieldConfidence: { ...previous.fieldConfidence, ...read.fieldConfidence },
               details: { ...previous.details, ...read.details },
-              match: read.match || previous.match,
-              state: read.state === 'matched' ? 'matched' : read.brand ? read.state : previous.state,
+              match: hasBottleIdentityConflict(previous, read)
+                ? (read.state === 'matched' ? read.match : undefined)
+                : (read.match || previous.match),
+              state: hasBottleIdentityConflict(previous, read)
+                ? (read.state === 'matched' ? 'matched' : read.state)
+                : (read.state === 'matched' ? 'matched' : read.brand ? read.state : previous.state),
             };
           }
         }
@@ -845,6 +858,18 @@ function WebLiveCamera(props: NativeProps) {
 
     return () => {
       recognitionSchedulerRef.current = null;
+      // Clear the rendered overlay before the camera element is torn down so
+      // no candidates from this session survive a close/reopen transition.
+      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
+      webTracks = [];
+      latestLocalCandidates = [];
+      labelReadsByTrack.clear();
+      lastLabelReadAt.clear();
+      liquidHistoryByTrack.clear();
+      nextWebTrackId = 1;
+      lastSentFrameSignature = null;
+      lastLiveReadAt = 0;
+      lastLiveBottleCount = 0;
       disposed = true;
       if (frameCheck) window.cancelAnimationFrame(frameCheck);
       if (recognitionTimer) window.clearTimeout(recognitionTimer);
