@@ -14,6 +14,7 @@ import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIde
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { hasBottleIdentityConflict, isConfirmedWebBottleTrack } from './webTrackPolicy';
 import { rgbaToGrayscale, trackBoxesWithOpticalFlow } from './browserOpticalFlow';
+import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
@@ -398,13 +399,13 @@ function WebLiveCamera(props: NativeProps) {
         const video = videoRef.current;
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
           lastOpticalFlowAt = time;
-          const displayWidth = video.clientWidth || video.videoWidth;
-          const displayHeight = video.clientHeight || video.videoHeight;
-          const displayAspect = displayWidth / displayHeight;
-          const sourceAspect = video.videoWidth / video.videoHeight;
-          let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-          if (sourceAspect > displayAspect) { sw = video.videoHeight * displayAspect; sx = (video.videoWidth - sw) / 2; }
-          else if (sourceAspect < displayAspect) { sh = video.videoWidth / displayAspect; sy = (video.videoHeight - sh) / 2; }
+          const crop = getObjectFitCoverCrop(
+            video.videoWidth, video.videoHeight,
+            video.clientWidth || video.videoWidth,
+            video.clientHeight || video.videoHeight,
+          );
+          if (!crop) { previousOpticalGray = null; return; }
+          const { x: sx, y: sy, width: sw, height: sh } = crop;
           const scale = Math.min(1, 320 / Math.max(sw, sh));
           const width = Math.max(24, Math.round(sw * scale));
           const height = Math.max(24, Math.round(sh * scale));
@@ -628,13 +629,13 @@ function WebLiveCamera(props: NativeProps) {
       const localFrameStartedAt = performance.now();
       const frameTimestamp = Date.now();
       try {
-        const displayWidth = video.clientWidth || video.videoWidth;
-        const displayHeight = video.clientHeight || video.videoHeight;
-        const displayAspect = displayWidth / displayHeight;
-        const sourceAspect = video.videoWidth / video.videoHeight;
-        let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-        if (sourceAspect > displayAspect) { sw = video.videoHeight * displayAspect; sx = (video.videoWidth - sw) / 2; }
-        else if (sourceAspect < displayAspect) { sh = video.videoWidth / displayAspect; sy = (video.videoHeight - sh) / 2; }
+        const crop = getObjectFitCoverCrop(
+          video.videoWidth, video.videoHeight,
+          video.clientWidth || video.videoWidth,
+          video.clientHeight || video.videoHeight,
+        );
+        if (!crop) return;
+        const { x: sx, y: sy, width: sw, height: sh } = crop;
         const scale = Math.min(1, 640 / Math.max(sw, sh));
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.round(sw * scale));
@@ -718,18 +719,13 @@ function WebLiveCamera(props: NativeProps) {
         // Match the crop the user actually sees (object-fit: cover). On a
         // portrait phone the camera stream may be landscape; sending the full
         // uncropped frame makes the label much smaller than it appears on-screen.
-        const displayWidth = video.clientWidth || video.videoWidth;
-        const displayHeight = video.clientHeight || video.videoHeight;
-        const displayAspect = displayWidth / displayHeight;
-        const sourceAspect = video.videoWidth / video.videoHeight;
-        let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-        if (sourceAspect > displayAspect) {
-          sw = video.videoHeight * displayAspect;
-          sx = (video.videoWidth - sw) / 2;
-        } else if (sourceAspect < displayAspect) {
-          sh = video.videoWidth / displayAspect;
-          sy = (video.videoHeight - sh) / 2;
-        }
+        const crop = getObjectFitCoverCrop(
+          video.videoWidth, video.videoHeight,
+          video.clientWidth || video.videoWidth,
+          video.clientHeight || video.videoHeight,
+        );
+        if (!crop) return;
+        const { x: sx, y: sy, width: sw, height: sh } = crop;
         const scale = Math.min(1, 960 / Math.max(sw, sh));
         canvas.width = Math.max(1, Math.round(sw * scale));
         canvas.height = Math.max(1, Math.round(sh * scale));
