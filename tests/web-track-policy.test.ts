@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isConfirmedWebBottleTrack } from '../src/live/webTrackPolicy';
+import { isConfirmedWebBottleTrack, shouldAssociateWebBottleTrack } from '../src/live/webTrackPolicy';
 
 describe('web bottle track visibility policy', () => {
   it('promotes a strong first-frame geometry detection immediately', () => {
@@ -20,5 +20,22 @@ describe('web bottle track visibility policy', () => {
   it('rejects low-confidence and invalid values', () => {
     expect(isConfirmedWebBottleTrack({ hits: 3, misses: 0, confidence: 0.44 })).toBe(false);
     expect(isConfirmedWebBottleTrack({ hits: Number.NaN, misses: 0, confidence: 0.9 })).toBe(false);
+  });
+});
+
+
+describe('web bottle track association policy', () => {
+  it('associates boxes with meaningful overlap', () => {
+    expect(shouldAssociateWebBottleTrack(0.12, 0.18, 5)).toBe(true);
+  });
+  it('associates close boxes only when their sizes are reasonably similar', () => {
+    expect(shouldAssociateWebBottleTrack(0, 0.05, 2)).toBe(true);
+    expect(shouldAssociateWebBottleTrack(0, 0.05, 4)).toBe(false);
+  });
+  it('does not attach a nearby different bottle across a wide camera shift', () => {
+    expect(shouldAssociateWebBottleTrack(0, 0.16, 1)).toBe(false);
+  });
+  it('rejects invalid geometry metrics', () => {
+    expect(shouldAssociateWebBottleTrack(Number.NaN, 0, 1)).toBe(false);
   });
 });
