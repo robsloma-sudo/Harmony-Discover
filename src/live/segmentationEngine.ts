@@ -161,7 +161,9 @@ export class SegmentationRunner {
 
   constructor(private readonly provider: SegmentationProvider, options: SegmentationRunnerOptions = {}) {
     this.now = options.now ?? (() => Date.now());
-    this.minimumIntervalMs = Math.max(250, options.minimumIntervalMs ?? 1000);
+    // Allow a 100ms cadence for the 10Hz scanner target; single-flight inference
+    // still prevents overlapping model runs on slower devices.
+    this.minimumIntervalMs = Math.max(50, options.minimumIntervalMs ?? 1000);
     this.maximumFrameAgeMs = Math.max(50, options.maximumFrameAgeMs ?? 400);
     this.maximumTracksPerFrame = Math.max(1, Math.min(8, options.maximumTracksPerFrame ?? 8));
   }

@@ -106,6 +106,22 @@ describe('segmentation runner lifecycle', () => {
     await runner.dispose();
   });
 
+  it('allows a 100ms minimum cadence for the 10Hz detector target', async () => {
+    let now = 2000;
+    const provider: SegmentationProvider = {
+      modelId: 'test-10hz',
+      infer: vi.fn(async (_frame, timestamp) => [instance({ sourceTimestampMs: timestamp })]),
+    };
+    const runner = new SegmentationRunner(provider, { now: () => now, minimumIntervalMs: 100, maximumFrameAgeMs: 400 });
+    expect(await runner.runInference(frame, now)).toHaveLength(1);
+    now += 99;
+    expect(await runner.runInference(frame, now)).toEqual([]);
+    now += 1;
+    expect(await runner.runInference(frame, now)).toHaveLength(1);
+    expect(provider.infer).toHaveBeenCalledTimes(2);
+    await runner.dispose();
+  });
+
   it('supports the convenience runFrame association path', async () => {
     const provider: SegmentationProvider = {
       modelId: 'test',
