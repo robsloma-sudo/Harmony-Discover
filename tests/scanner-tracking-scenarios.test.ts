@@ -29,6 +29,17 @@ describe('scanner physical tracking scenarios', () => {
     expect(panned.map(item => item.trackId)).toEqual(first.map(item => item.trackId));
   });
 
+  it('recovers a temporarily occluded bottle without changing its track ID', () => {
+    const tracker = new LocalBottleTracker();
+    const first = tracker.update([proposal(0.20), proposal(0.60)], 1000);
+    const partiallyOccluded = tracker.update([proposal(0.22)], 1200);
+    expect(partiallyOccluded).toHaveLength(2);
+
+    const returned = tracker.update([proposal(0.23), proposal(0.60)], 1400);
+    expect(returned).toHaveLength(2);
+    expect(returned.map(item => item.trackId)).toEqual(first.map(item => item.trackId));
+  });
+
   it('characterizes the current stale-track reuse after a bottle leaves and another enters the same position', () => {
     const tracker = new LocalBottleTracker();
     const original = tracker.update([proposal(0.35)], 1000)[0]!;
