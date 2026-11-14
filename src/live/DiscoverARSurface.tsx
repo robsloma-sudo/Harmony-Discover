@@ -31,6 +31,9 @@ import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibrat
 import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
 import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
 
+/** Smallest label crop (longest side, in camera pixels) worth sending to the label reader. */
+export const MIN_READABLE_LABEL_PX = 200;
+
 export type ARTrackingUpdate = {
   state: 'normal' | 'limited' | 'not_available' | 'paused' | 'interrupted';
   reason: string;
@@ -827,6 +830,9 @@ function WebLiveCamera(props: NativeProps) {
         };
         const crop = calculateLabelCrop(labelBox, frameCanvas.width, frameCanvas.height, { maxLongEdge: 896, maxUpscale: 1.5 });
         if (!crop) continue;
+        // Too few real pixels to read: enlarging adds nothing, so do not pay for a read.
+        // The bottle is read once it is closer (or the camera moves in).
+        if (Math.max(crop.sw, crop.sh) < MIN_READABLE_LABEL_PX || Math.min(crop.sw, crop.sh) < MIN_READABLE_LABEL_PX / 3) continue;
         const cropCanvas = labelCropCanvas ??= document.createElement('canvas');
         cropCanvas.width = crop.outputWidth;
         cropCanvas.height = crop.outputHeight;
@@ -1155,8 +1161,10 @@ function WebLiveCamera(props: NativeProps) {
           audio: false,
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            // Labels are read from crops of this stream: at 1280x720 a bottle a few
+            // feet away gave a ~150x300 px label, too small for any reader.
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
         });
 

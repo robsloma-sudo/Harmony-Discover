@@ -22,6 +22,8 @@ import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
+import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
+import { mergeFound, type FoundItem } from '../src/live/foundTray';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -64,6 +66,34 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     return () => clearInterval(expiry);
   }, [liveCandidates]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
+  // Found strip: every fully recognised product flies up from its green box
+  // into a thin strip at the top; tapping a chip opens a static profile.
+  const [foundItems, setFoundItems] = useState<FoundItem[]>([]);
+  const [foundFlights, setFoundFlights] = useState<FoundFlight[]>([]);
+  const foundTrayTop = Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 50;
+  const foundRef = useRef<FoundItem[]>([]);
+  useEffect(() => {
+    if (!liveCandidates.some(candidate => candidate.bottle)) return;
+    const { list, added } = mergeFound(foundRef.current, liveCandidates, Date.now());
+    if (list === foundRef.current) return;
+    foundRef.current = list;
+    setFoundItems(list);
+    if (added.length) {
+      setFoundFlights(flights => [...flights, ...added.map(({ item, candidate }, index) => ({
+        id: item.key + ':' + item.firstSeenAt,
+        key: item.key,
+        name: item.name,
+        from: { x: Math.max(4, Math.min(screenWidth - 120, candidate.x * screenWidth)), y: Math.max(foundTrayTop, candidate.y * screenHeight - 29) },
+        to: { x: 8 + index * 4, y: foundTrayTop + 2 },
+      }))]);
+    }
+  }, [liveCandidates, screenWidth, screenHeight, foundTrayTop]);
+  const foundKeysInFlight = new Set(foundFlights.map(flight => flight.key));
+  const openFoundItem = (item: FoundItem) => {
+    // Static view: the panel shows this saved read and does not follow a live box.
+    setSelectedTrackId(null);
+    setSelectedBottle(item.bottle);
+  };
   const [selectedBottle, setSelectedBottle] = useState<BottleRead | null>(null);
   const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
   const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
@@ -327,7 +357,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
         <View pointerEvents="box-none" style={s.liveDetectionLayer}>
-          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)).map(tracked => {
+          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp))
+            // Draw big boxes first so a smaller (nearer or front) bottle's box sits on top and can be tapped.
+            .slice().sort((a, b) => b.width * b.height - a.width * a.height)
+            .map(tracked => {
             const bottle = tracked.bottle;
             const left = Math.max(0, Math.min(1, tracked.x));
             const top = Math.max(0, Math.min(1, tracked.y));
@@ -343,17 +376,28 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               width: ((trackedWidth * 100) + '%') as `${number}%`,
               height: ((trackedHeight * 100) + '%') as `${number}%`,
             };
+            if (bottle) {
+              // Identified: its chip is in the strip at the top, so the box stays
+              // thin with a small tag and lets taps through to bottles behind it.
+              return (
+                <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
+                    <View style={s.liveFoundTag}><Text numberOfLines={1} style={s.liveFoundTagText}>✓ {name}</Text></View>
+                  </View>
+                </View>
+              );
+            }
             return (
               <View key={tracked.trackId} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={bottle ? `Open bottle profile for ${name}` : 'Open detected bottle profile'}
+                  accessibilityLabel="Open detected bottle profile"
                   onPress={() => openBottleProfile(tracked)}
                   style={[s.liveDetectionBox, boxStyle]}
                 >
                   <View style={s.liveDetectionLabel}>
-                    <Text numberOfLines={1} style={s.liveDetectionName}>{name || (bottle ? bottle.category.replace(/_/g, ' ').toUpperCase() : 'BOTTLE DETECTED')}</Text>
-                    <Text style={s.liveDetectionConfidence}>{bottle ? `TAP FOR PROFILE · ${Math.round((tracked.identityConfidence ?? bottle.confidence) * 100)}%${tracked.saved ? ' · ✓ SAVED' : ''}` : identifying ? `${provisional ? 'CHECKING' : 'READING LABEL'} · ${Math.round(tracked.identifying! * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
+                    <Text numberOfLines={1} style={s.liveDetectionName}>{name || 'BOTTLE DETECTED'}</Text>
+                    <Text style={s.liveDetectionConfidence}>{identifying ? `${provisional ? 'CHECKING' : 'READING LABEL'} · ${Math.round(tracked.identifying! * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
                   </View>
                 </Pressable>
               </View>
@@ -362,6 +406,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
+      {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); }} />}
+      {foundFlights.map(flight => <FoundFlightLabel key={flight.id} flight={flight} onDone={done => setFoundFlights(flights => flights.filter(f => f.id !== done.id))} />)}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
@@ -464,7 +510,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 const s = StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg},menuRow:{minHeight:48,flexDirection:'row',alignItems:'center',gap:11,paddingVertical:7,borderBottomWidth:1,borderBottomColor:'rgba(153,163,174,0.12)'},menuTitle:{color:C.ivory,fontSize:11,fontWeight:'800'},menuDesc:{color:C.muted,fontSize:9,marginTop:3},menuValue:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:1},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
  permissionFallback:{backgroundColor:'#090B0F',alignItems:'center',justifyContent:'center'},permissionCard:{position:'absolute',left:28,right:28,top:'35%',padding:22,borderRadius:18,backgroundColor:'rgba(9,11,14,0.92)',borderWidth:1,borderColor:C.line},permissionTitle:{color:C.ivory,fontSize:23,fontWeight:'700',marginTop:12},permissionBody:{color:C.muted,fontSize:13,lineHeight:20,marginTop:7},permissionButton:{backgroundColor:C.brass,padding:14,borderRadius:10,alignItems:'center',marginTop:18},permissionButtonText:{color:'#111',fontSize:11,fontWeight:'900',letterSpacing:1.5},
- viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:-1,top:-29,maxWidth:210,minWidth:96,paddingHorizontal:8,paddingVertical:4,borderTopLeftRadius:6,borderTopRightRadius:6,borderBottomRightRadius:6,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionName:{color:'#E9FFF5',fontSize:9,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:7,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
+ viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:-1,top:-29,maxWidth:210,minWidth:96,paddingHorizontal:8,paddingVertical:4,borderTopLeftRadius:6,borderTopRightRadius:6,borderBottomRightRadius:6,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{borderWidth:1,borderColor:'rgba(119,229,181,0.55)',backgroundColor:'transparent'},liveFoundTag:{position:'absolute',left:-1,top:-15,maxWidth:150,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7.5,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:9,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:7,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
  centerHint:{position:'absolute',left:26,right:26,justifyContent:'center',alignItems:'center'},centerHintText:{color:'rgba(240,241,242,0.68)',fontSize:9,letterSpacing:2.4,fontWeight:'700'},corner:{position:'absolute',width:25,height:25,borderColor:'rgba(198,163,106,0.8)'},tl:{top:0,left:0,borderTopWidth:1,borderLeftWidth:1},tr:{top:0,right:0,borderTopWidth:1,borderRightWidth:1},bl:{bottom:0,left:0,borderBottomWidth:1,borderLeftWidth:1},br:{bottom:0,right:0,borderBottomWidth:1,borderRightWidth:1},
  bottomArea:{position:'absolute',bottom:0,backgroundColor:'rgba(7,9,12,0.92)',borderTopWidth:1,borderColor:C.line,borderTopLeftRadius:20,borderTopRightRadius:20,paddingHorizontal:8},controls:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:4},utilityControl:{alignItems:'center',justifyContent:'center',gap:5,minWidth:42,paddingVertical:7},utilityLabel:{color:C.ivory,fontSize:7,fontWeight:'800',letterSpacing:0.7},centerControls:{flexDirection:'row',alignItems:'center',gap:8},primaryControl:{width:36,height:36,borderRadius:18,borderWidth:1,borderColor:C.line,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(20,24,30,0.9)'},primaryControlHalf:{width:30,height:30},primaryControlActive:{borderColor:C.brass},shutterOuter:{width:66,height:66,borderRadius:33,borderWidth:2,borderColor:C.ivory,alignItems:'center',justifyContent:'center'},shutterOuterCompact:{width:58,height:58},shutterInner:{width:52,height:52,borderRadius:26,backgroundColor:C.ivory},shutterInnerCompact:{width:44,height:44},shutterBusy:{opacity:0.55},shutterBusyText:{color:'#111',textAlign:'center',fontSize:20,fontWeight:'900',lineHeight:50}
 });

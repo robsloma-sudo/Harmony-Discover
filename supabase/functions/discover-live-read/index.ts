@@ -1,4 +1,4 @@
-// Harmony Discover DEV — discover-live-read v0.5.0 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.1 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
@@ -11,10 +11,11 @@
 // and label crops). A label read that looks like a guess (no brand, low confidence, or a brand/product not
 // backed by the words it actually transcribed) is marked needs_second_look and downgraded to unsure; the app
 // then sends only those crops back with tier "escalate", which Sonnet 5.5 reads. Easy bottles never wait.
+// v0.5.1: logs each batch's label crop sizes (pixels only, no image or text) to check readability.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -113,6 +114,23 @@ function backedByWords(value: string, words: string[]): boolean {
   const said = foldText(words.join(" ")), squashed = said.replace(/ /g, "");
   const hits = tokens.filter((t) => (" " + said + " ").includes(" " + t + " ") || squashed.includes(t)).length;
   return hits >= Math.ceil(tokens.length * 0.6);
+}
+// Width and height from a JPEG header (base64), or null. Only the first few KB are decoded.
+function jpegSize(b64: string): { w: number; h: number } | null {
+  try {
+    const bin = atob(b64.slice(0, 8000).replace(/=+$/, "").slice(0, 7996));
+    let i = 2;
+    while (i + 9 < bin.length) {
+      if (bin.charCodeAt(i) !== 0xff) { i++; continue; }
+      const marker = bin.charCodeAt(i + 1);
+      const len = (bin.charCodeAt(i + 2) << 8) | bin.charCodeAt(i + 3);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { h: (bin.charCodeAt(i + 5) << 8) | bin.charCodeAt(i + 6), w: (bin.charCodeAt(i + 7) << 8) | bin.charCodeAt(i + 8) };
+      }
+      i += 2 + len;
+    }
+  } catch { /* not a readable header */ }
+  return null;
 }
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
@@ -511,8 +529,10 @@ Deno.serve(async (req: Request) => {
       return { ...read, confidence: guessed ? Math.min(read.confidence, 0.5) : read.confidence, match: guessed ? null : matched,
         state: unsure ? "unsure" : matched ? "matched" : "reported", needs_second_look: needsSecondLook, tier: escalate ? "escalate" : "base" };
     });
+    const sizes = crops.map((c) => jpegSize(c.image)).filter((x): x is { w: number; h: number } => !!x);
+    const shortSides = sizes.map((x) => Math.min(x.w, x.h)).sort((a, b) => a - b);
     const secondLook = matchedReads.filter((r) => r.needs_second_look).length + (escalate ? 0 : crops.length - matchedReads.length);
-    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, tier: escalate ? "escalate" : "base", provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, reads_confident: matchedReads.filter((r) => r.state !== "unsure").length, guessed: matchedReads.filter((r) => r.state === "unsure" && !!r.brand).length, second_look_wanted: secondLook, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
+    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, tier: escalate ? "escalate" : "base", provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, reads_confident: matchedReads.filter((r) => r.state !== "unsure").length, guessed: matchedReads.filter((r) => r.state === "unsure" && !!r.brand).length, second_look_wanted: secondLook, brand_empty: matchedReads.filter((r) => !r.brand).length, crop_short_side_min: shortSides[0] ?? 0, crop_short_side_median: shortSides[Math.floor(shortSides.length / 2)] ?? 0, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
     return reply({ ok: true, version: VERSION, model, tier: escalate ? "escalate" : "base", reads: matchedReads, diagnostics: { provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, second_look_wanted: secondLook } }, 200, origin);
   }
 
