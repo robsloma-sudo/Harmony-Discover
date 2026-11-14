@@ -50,5 +50,15 @@ describe('shelf-scan visual annotation fixture', () => {
     expect(firstCandidates.length).toBeGreaterThanOrEqual(3);
     expect(secondCandidates.length).toBeGreaterThanOrEqual(3);
     expect(new Set(secondCandidates.map(candidate => candidate.trackId)).size).toBe(secondCandidates.length);
+
+    // Annotation order is stable across these two reviewed frames. Verify
+    // that each physical object keeps its own track rather than merely
+    // checking that the tracker returns some non-duplicate IDs.
+    expect(firstCandidates).toHaveLength(first.objects.length);
+    expect(secondCandidates).toHaveLength(second.objects.length);
+    for (let index = 0; index < first.objects.length; index += 1) {
+      expect(first.objects[index]!.objectId).toBe(second.objects[index]!.objectId);
+      expect(secondCandidates[index]!.trackId).toBe(firstCandidates[index]!.trackId);
+    }
   });
 });
