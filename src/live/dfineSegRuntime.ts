@@ -80,6 +80,7 @@ async function loadVerifiedModel(): Promise<Uint8Array> {
 /** Load the pinned, checksum-verified D-FINE model using the app's same-origin WASM assets. */
 export async function loadDfineSegOnnxProvider(
   options: DfineOnnxProviderOptions = {},
+  _runtimeOptions: { allowGpu?: boolean } = {},
 ): Promise<DfineSegOnnxProvider> {
   const [runtime, model] = await Promise.all([loadRuntime(), loadVerifiedModel()]);
   return createDfineSegOnnxProvider(runtime, model, { containerClassRules: UPRIGHT_CONTAINER_CLASS_RULES, ...options });

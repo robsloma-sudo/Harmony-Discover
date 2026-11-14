@@ -71,8 +71,8 @@ export type WorkerProviderOptions = DfineOnnxProviderOptions & {
   modelUrl: string;
   sha256: string;
   backend?: DetectorBackendPreference;
-  /** Upgrade to the GPU only when its warm run is at most this fraction of the CPU's. */
-  gpuSpeedupRatio?: number;
+  /** Use the GPU only when its warm run is at most this long (ms). */
+  maxGpuWarmMs?: number;
   gpuTrialTimeoutMs?: number;
 };
 
@@ -81,10 +81,10 @@ export type WorkerProviderOptions = DfineOnnxProviderOptions & {
  * frame and turns the few returned detections into boxes, so optical flow and
  * drawing never wait for the model.
  *
- * Detection starts on WASM straight away. Where the browser has WebGPU, a
- * second worker tries the GPU in the background; if it gives the CPU's
- * numbers and is clearly faster, new frames move to it and the WASM worker is
- * closed. Otherwise the trial worker is closed and WASM continues.
+ * Only one ONNX Runtime is ever alive at a time (phones kill the page when
+ * memory runs out): where WebGPU exists and has not crashed before, a GPU
+ * worker is tried first and kept only if it gives the CPU's numbers and is
+ * fast; otherwise it is closed before the WASM worker starts.
  */
 export class DfineSegWorkerProvider implements SegmentationProvider {
   readonly modelId = 'dfine-seg-coco-instance-onnx';
@@ -96,15 +96,12 @@ export class DfineSegWorkerProvider implements SegmentationProvider {
   private worker: WorkerLike;
   backend: DetectorBackend;
   lastInferenceMs = 0;
-  /** Settles when the background GPU trial has finished (either way). */
-  gpuTrial: Promise<void> = Promise.resolve();
   gpuTrialResult = 'not tried';
 
   private constructor(
     worker: WorkerLike,
     backend: DetectorBackend,
     private readonly options: WorkerProviderOptions,
-    private readonly baselineWarmMs: number,
   ) {
     this.worker = worker;
     this.backend = backend;
@@ -121,47 +118,31 @@ export class DfineSegWorkerProvider implements SegmentationProvider {
 
   static async create(options: WorkerProviderOptions, workerFactory: WorkerFactory = defaultWorkerFactory): Promise<DfineSegWorkerProvider> {
     const preference = options.backend ?? 'auto';
+    let gpuTrialResult = 'not tried';
+    if (preference !== 'wasm' && hasWebGpu()) {
+      try {
+        const { worker, reply } = await startWorker(workerFactory, 'webgpu', options.modelUrl, options.sha256, options.gpuTrialTimeoutMs ?? 25_000);
+        const warmMs = reply.type === 'ready' ? reply.warmMs ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+        if (reply.type === 'ready' && (preference === 'webgpu' || warmMs <= (options.maxGpuWarmMs ?? 450))) {
+          const provider = new DfineSegWorkerProvider(worker, 'webgpu', options);
+          provider.gpuTrialResult = `webgpu (${Math.round(warmMs)} ms)`;
+          return provider;
+        }
+        gpuTrialResult = reply.type === 'fallback' ? 'rejected: ' + reply.reason
+          : reply.type === 'ready' ? `too slow (${Math.round(warmMs)} ms)` : 'failed';
+        worker.terminate();
+      } catch (error) {
+        gpuTrialResult = 'failed: ' + (error instanceof Error ? error.message : String(error));
+      }
+    }
     const { worker, reply } = await startWorker(workerFactory, 'wasm', options.modelUrl, options.sha256, 120_000);
     if (reply.type !== 'ready') {
       worker.terminate();
       throw new Error(reply.type === 'error' ? reply.message : 'The bottle detector worker did not become ready.');
     }
-    const provider = new DfineSegWorkerProvider(worker, 'wasm', options, reply.warmMs ?? Number.POSITIVE_INFINITY);
-    if (preference !== 'wasm' && hasWebGpu()) provider.gpuTrial = provider.tryGpu(workerFactory, preference === 'webgpu');
+    const provider = new DfineSegWorkerProvider(worker, 'wasm', options);
+    provider.gpuTrialResult = gpuTrialResult;
     return provider;
-  }
-
-  private async tryGpu(workerFactory: WorkerFactory, forced: boolean): Promise<void> {
-    let trial: { worker: WorkerLike; reply: WorkerReply } | null = null;
-    try {
-      trial = await startWorker(workerFactory, 'webgpu', this.options.modelUrl, this.options.sha256, this.options.gpuTrialTimeoutMs ?? 30_000);
-    } catch (error) {
-      this.gpuTrialResult = 'failed: ' + (error instanceof Error ? error.message : String(error));
-      return;
-    }
-    const { worker, reply } = trial;
-    const faster = reply.type === 'ready'
-      && (forced || (reply.warmMs ?? Number.POSITIVE_INFINITY) <= this.baselineWarmMs * (this.options.gpuSpeedupRatio ?? 0.7));
-    if (this.disposed || reply.type !== 'ready' || !faster) {
-      this.gpuTrialResult = reply.type === 'fallback' ? 'rejected: ' + reply.reason
-        : reply.type === 'ready' ? `kept wasm (gpu ${Math.round(reply.warmMs ?? 0)} ms vs cpu ${Math.round(this.baselineWarmMs)} ms)`
-          : 'failed';
-      worker.terminate();
-      return;
-    }
-    // Swap: new frames go to the GPU worker; the CPU worker finishes its
-    // in-flight frame, then closes.
-    const previous = this.worker;
-    this.worker = worker;
-    this.backend = 'webgpu';
-    this.attach(worker);
-    this.gpuTrialResult = `webgpu (${Math.round(reply.warmMs ?? 0)} ms vs cpu ${Math.round(this.baselineWarmMs)} ms)`;
-    this.retire(previous);
-  }
-
-  private retire(worker: WorkerLike): void {
-    if (![...this.pending.values()].some(waiter => waiter.worker === worker)) worker.terminate();
-    else this.retired.push(worker);
   }
 
   private receive(reply: WorkerReply): void {

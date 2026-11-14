@@ -91,8 +91,8 @@ export function trackBoxesWithOpticalFlow(
   });
 }
 
-export function rgbaToGrayscale(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): Uint8Array {
-  const gray = new Uint8Array(width * height);
+export function rgbaToGrayscale(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number, target?: Uint8Array | null): Uint8Array {
+  const gray = target && target.length === width * height ? target : new Uint8Array(width * height);
   for (let i = 0, pixel = 0; pixel < gray.length; pixel++, i += 4) {
     gray[pixel] = Math.round(rgba[i]! * 0.299 + rgba[i + 1]! * 0.587 + rgba[i + 2]! * 0.114);
   }

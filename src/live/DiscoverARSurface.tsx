@@ -20,6 +20,7 @@ import {
   estimateCameraMotion, invertMotion as invertCameraMotion, refineBoxMotion, visibleFraction, type CameraMotion, type GrayPyramid,
 } from './cameraMotion';
 import { computeAppearanceSignature } from './appearanceSignature';
+import { checkPreviousScannerExit, markScannerRunning, markScannerStopped } from './scannerHealth';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -142,6 +143,11 @@ function WebLiveCamera(props: NativeProps) {
     let opticalFlowCanvas: HTMLCanvasElement | null = null;
     let opticalFlowContext: CanvasRenderingContext2D | null = null;
     let previousPyramid: GrayPyramid | null = null;
+    let sparePyramid: GrayPyramid | null = null;
+    // If the last scanner session crashed the page (out of memory), step down:
+    // no GPU, then a lighter detection rate.
+    const scannerMode = checkPreviousScannerExit();
+    const flowIntervalMs = scannerMode.lite ? 50 : 30;
     let previousOpticalSize = '';
     let lastOpticalFlowAt = 0;
     let lastPublishAt = 0;
@@ -199,18 +205,24 @@ function WebLiveCamera(props: NativeProps) {
         lastLiveBottleCount = 0;
         resetCameraMotion();
         lastPublishedSignature = '';
+        markScannerStopped();
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
         callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
-      } else if (callbacksRef.current.recognitionEnabled) {
+      } else {
+        if (detectorProvider) markScannerRunning(detectorProvider.backend ?? 'main-thread');
+        if (!callbacksRef.current.recognitionEnabled) return;
         scheduleRecognition(250);
         startLocalDetectionLoop();
         startOpticalFlow();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    const handlePageHide = () => markScannerStopped();
+    window.addEventListener('pagehide', handlePageHide);
     function resetCameraMotion() {
       cameraMotionHistory.reset();
       previousPyramid = null;
+      sparePyramid = null;
       previousOpticalSize = '';
       lastCameraMotion = IDENTITY_MOTION;
       lostMotionFrames = 0;
@@ -219,14 +231,20 @@ function WebLiveCamera(props: NativeProps) {
     let detectorProvider: { backend?: string; gpuTrialResult?: string } | null = null;
     const ensureSegmentationRunner = () => {
       if (segmentationRunner || segmentationLoading || segmentationLoadFailed || disposed) return segmentationLoading;
-      segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5, nmsIoUThreshold: 0.45 }).then(provider => {
+      const gpuPossible = scannerMode.allowGpu && typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
+      // Recorded before loading: a crash while the GPU is being tried counts against the GPU.
+      markScannerRunning(gpuPossible ? 'webgpu' : 'wasm');
+      segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5, nmsIoUThreshold: 0.45 }, { allowGpu: scannerMode.allowGpu }).then(provider => {
         if (disposed) { void provider.dispose?.(); return; }
         detectorProvider = provider as { backend?: string; gpuTrialResult?: string };
+        const backend = detectorProvider.backend ?? 'main-thread';
+        if (pageVisible) markScannerRunning(backend);
         segmentationRunner = new SegmentationRunner(provider, {
           // Run as often as the device allows: the worker keeps the camera view
           // smooth, and camera motion moves late results to the current view,
-          // so slow phones are no longer forced to throw results away.
-          minimumIntervalMs: 100,
+          // so slow phones are no longer forced to throw results away. The GPU
+          // is paced (heat, memory); after a crash, a lighter rate is used.
+          minimumIntervalMs: scannerMode.lite ? 700 : backend === 'webgpu' ? 150 : 100,
           maximumFrameAgeMs: 4_000,
           maximumTracksPerFrame: 8,
         });
@@ -503,7 +521,7 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
         const video = videoRef.current;
-        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 30) {
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= flowIntervalMs) {
           const elapsedMs = lastOpticalFlowAt ? time - lastOpticalFlowAt : 33;
           lastOpticalFlowAt = time;
           const crop = getObjectFitCoverCrop(
@@ -525,10 +543,13 @@ function WebLiveCamera(props: NativeProps) {
               opticalFlowCanvas.width = width;
               opticalFlowCanvas.height = height;
               previousPyramid = null;
+              sparePyramid = null;
             }
             opticalFlowContext.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
-            const gray = rgbaToGrayscale(opticalFlowContext.getImageData(0, 0, width, height).data, width, height);
-            const pyramid = buildGrayPyramid(gray, width, height, 4);
+            // Reuse the pyramid from two frames ago: no per-frame buffer garbage.
+            const recycle = sparePyramid;
+            const gray = rgbaToGrayscale(opticalFlowContext.getImageData(0, 0, width, height).data, width, height, recycle?.[0]?.data);
+            const pyramid = buildGrayPyramid(gray, width, height, 4, recycle);
             const sizeKey = width + 'x' + height;
             const now = Date.now();
             if (previousPyramid && previousOpticalSize === sizeKey && pyramid.length) {
@@ -568,6 +589,7 @@ function WebLiveCamera(props: NativeProps) {
                 cameraMotionHistory.record(now, IDENTITY_MOTION, elapsedMs);
               }
             }
+            sparePyramid = previousPyramid;
             previousPyramid = pyramid.length ? pyramid : null;
             previousOpticalSize = sizeKey;
             latestLocalCandidates = toLocalCandidates(localBottleTracker.visible(now), now);
@@ -1028,6 +1050,7 @@ function WebLiveCamera(props: NativeProps) {
         callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
         return;
       }
+      if (detectorProvider) markScannerRunning(detectorProvider.backend ?? 'main-thread');
       scheduleRecognition(0);
       startLocalDetectionLoop();
       startOpticalFlow();
@@ -1057,6 +1080,8 @@ function WebLiveCamera(props: NativeProps) {
       if (opticalFlowFrame) window.cancelAnimationFrame(opticalFlowFrame);
       resetCameraMotion();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      markScannerStopped();
       if (depthTimer) window.clearInterval(depthTimer);
       localBottleTracker.reset();
       liquidAnalysisQueue.dispose();

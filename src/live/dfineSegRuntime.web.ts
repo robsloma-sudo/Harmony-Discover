@@ -73,6 +73,7 @@ async function loadMainThreadProvider(options: DfineOnnxProviderOptions): Promis
  */
 export async function loadDfineSegOnnxProvider(
   options: DfineOnnxProviderOptions = {},
+  runtimeOptions: { allowGpu?: boolean } = {},
 ): Promise<(DfineSegWorkerProvider | DfineSegOnnxProvider) & { backend?: string }> {
   const resolved = { bottleClassIds: [39], containerClassRules: UPRIGHT_CONTAINER_CLASS_RULES, minimumScore: 0.5, maskThreshold: 0.5, ...options };
   if (typeof Worker !== "undefined") {
@@ -81,7 +82,12 @@ export async function loadDfineSegOnnxProvider(
         ...resolved,
         modelUrl: DFINE_SEG_MODEL_URL,
         sha256: DFINE_SEG_MODEL_SHA256,
-        backend: detectorBackendPreference(),
+        // An explicit ?detector= / localStorage choice wins; otherwise a past
+        // GPU crash keeps this device on WASM.
+        backend: (() => {
+          const preference = detectorBackendPreference();
+          return preference === 'auto' && runtimeOptions.allowGpu === false ? 'wasm' : preference;
+        })(),
       });
     } catch {
       // Older browsers without module workers: run on the main thread.

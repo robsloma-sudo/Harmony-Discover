@@ -98,30 +98,27 @@ describe('bottle detector worker provider', () => {
   };
   const ready = (backend: string, warmMs: number) => ({ type: 'ready', id: 0, backend, warmMs });
 
-  it('starts on WASM and moves to the GPU when it is verified and faster', () => withGpu(async () => {
+  it('uses the GPU alone when it is verified and fast, without starting WASM', () => withGpu(async () => {
     const { factory, created } = fakeWorkers((message, reply) => {
       if (message.type === 'init') reply(message.backend === 'webgpu' ? ready('webgpu', 90) : ready('wasm', 700));
     });
     const provider = await DfineSegWorkerProvider.create(options, factory);
-    expect(provider.backend).toBe('wasm');
-    await provider.gpuTrial;
     expect(provider.backend).toBe('webgpu');
-    expect(created).toHaveLength(2);
-    expect(created[0]!.terminated).toBe(true);
-    expect(created[1]!.terminated).toBe(false);
+    expect(created).toHaveLength(1);
     await provider.dispose();
   }));
 
-  it('keeps WASM when the GPU fails its accuracy check or is not faster', () => withGpu(async () => {
+  it('closes the GPU worker before starting WASM when the GPU fails or is slow', () => withGpu(async () => {
     for (const gpuReply of [{ type: 'fallback', id: 0, reason: 'mismatch' }, ready('webgpu', 650)]) {
-      const { factory, created } = fakeWorkers((message, reply) => {
-        if (message.type === 'init') reply(message.backend === 'webgpu' ? gpuReply : ready('wasm', 700));
+      const order: string[] = [];
+      const { factory, created } = fakeWorkers((message, reply, index) => {
+        if (message.type !== 'init') return;
+        order.push('init ' + message.backend + ' (gpu closed: ' + (index > 0 ? created[0]!.terminated : 'n/a') + ')');
+        reply(message.backend === 'webgpu' ? gpuReply : ready('wasm', 700));
       });
       const provider = await DfineSegWorkerProvider.create(options, factory);
-      await provider.gpuTrial;
       expect(provider.backend).toBe('wasm');
-      expect(created[0]!.terminated).toBe(false);
-      expect(created[1]!.terminated).toBe(true);
+      expect(order).toEqual(['init webgpu (gpu closed: n/a)', 'init wasm (gpu closed: true)']);
       await provider.dispose();
     }
   }));
@@ -131,8 +128,8 @@ describe('bottle detector worker provider', () => {
       if (message.type === 'init') reply(ready(String(message.backend), 500));
     });
     const provider = await DfineSegWorkerProvider.create({ ...options, backend: 'wasm' }, factory);
-    await provider.gpuTrial;
     expect(created).toHaveLength(1);
+    expect(provider.backend).toBe('wasm');
     await provider.dispose();
   }));
 

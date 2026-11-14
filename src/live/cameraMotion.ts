@@ -30,9 +30,11 @@ export const IDENTITY_MOTION: CameraMotion = Object.freeze({ tx: 0, ty: 0, scale
 
 export type Box = { x: number; y: number; width: number; height: number };
 
-function gradients(data: Uint8Array, width: number, height: number): { gx: Float32Array; gy: Float32Array } {
-  const gx = new Float32Array(width * height);
-  const gy = new Float32Array(width * height);
+function gradients(data: Uint8Array, width: number, height: number, reuse?: GrayLevel): { gx: Float32Array; gy: Float32Array } {
+  // Reused buffers keep the per-frame garbage near zero (phones kill pages
+  // that churn memory); borders stay zero as in a fresh buffer.
+  const gx = reuse && reuse.gx.length === width * height ? reuse.gx : new Float32Array(width * height);
+  const gy = reuse && reuse.gy.length === width * height ? reuse.gy : new Float32Array(width * height);
   for (let y = 1; y < height - 1; y++) {
     const row = y * width;
     for (let x = 1; x < width - 1; x++) {
@@ -44,15 +46,20 @@ function gradients(data: Uint8Array, width: number, height: number): { gx: Float
   return { gx, gy };
 }
 
-/** Builds a gray image pyramid (level 0 = full size, each next level half size). */
-export function buildGrayPyramid(gray: Uint8Array, width: number, height: number, maxLevels = 4): GrayPyramid {
+/**
+ * Builds a gray image pyramid (level 0 = full size, each next level half size).
+ * Pass a no-longer-needed pyramid of the same size as `recycle` to reuse its memory.
+ */
+export function buildGrayPyramid(gray: Uint8Array, width: number, height: number, maxLevels = 4, recycle?: GrayPyramid | null): GrayPyramid {
   if (gray.length !== width * height || width < 8 || height < 8) return [];
-  const levels: GrayPyramid = [{ data: gray, width, height, ...gradients(gray, width, height) }];
+  const reuse = recycle && recycle[0]?.width === width && recycle[0]?.height === height ? recycle : null;
+  const levels: GrayPyramid = [{ data: gray, width, height, ...gradients(gray, width, height, reuse?.[0]) }];
   while (levels.length < maxLevels) {
     const previous = levels[levels.length - 1]!;
     const w = previous.width >> 1, h = previous.height >> 1;
     if (w < 20 || h < 20) break;
-    const data = new Uint8Array(w * h);
+    const old = reuse?.[levels.length];
+    const data = old && old.data.length === w * h ? old.data : new Uint8Array(w * h);
     for (let y = 0; y < h; y++) {
       const r0 = (y * 2) * previous.width, r1 = r0 + previous.width;
       for (let x = 0; x < w; x++) {
@@ -60,7 +67,7 @@ export function buildGrayPyramid(gray: Uint8Array, width: number, height: number
         data[y * w + x] = (previous.data[r0 + c]! + previous.data[r0 + c + 1]! + previous.data[r1 + c]! + previous.data[r1 + c + 1]! + 2) >> 2;
       }
     }
-    levels.push({ data, width: w, height: h, ...gradients(data, w, h) });
+    levels.push({ data, width: w, height: h, ...gradients(data, w, h, old) });
   }
   return levels;
 }
@@ -76,6 +83,10 @@ function bilinear(image: Uint8Array | Float32Array, width: number, height: numbe
 
 const WINDOW_RADIUS = 3;
 const WINDOW_SIZE = (WINDOW_RADIUS * 2 + 1) ** 2;
+// Scratch buffers (single-threaded use) so tracking allocates nothing per point.
+const TEMPLATE = new Float32Array(WINDOW_SIZE);
+const TEMPLATE_GX = new Float32Array(WINDOW_SIZE);
+const TEMPLATE_GY = new Float32Array(WINDOW_SIZE);
 
 /**
  * Tracks one point from `previous` to `current`, starting from a guessed
@@ -92,9 +103,7 @@ export function trackPointPyramidal(
 ): { dx: number; dy: number; error: number } | null {
   const levels = Math.min(previous.length, current.length);
   if (!levels) return null;
-  const template = new Float32Array(WINDOW_SIZE);
-  const tgx = new Float32Array(WINDOW_SIZE);
-  const tgy = new Float32Array(WINDOW_SIZE);
+  const template = TEMPLATE, tgx = TEMPLATE_GX, tgy = TEMPLATE_GY;
   let dx = guessDx / 2 ** (levels - 1);
   let dy = guessDy / 2 ** (levels - 1);
   let finalError = 0;
