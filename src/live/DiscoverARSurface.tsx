@@ -819,6 +819,12 @@ function WebLiveCamera(props: NativeProps) {
         video.muted = true;
         video.playsInline = true;
         await video.play();
+        // The camera may have been closed while play() was pending. Do not
+        // allocate depth workers or schedule frame checks for a dead session.
+        if (disposed) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
 
         // The relative-depth transformer is a large additional WASM/WebGPU
         // allocation. Mobile browsers have a much tighter camera-process memory
