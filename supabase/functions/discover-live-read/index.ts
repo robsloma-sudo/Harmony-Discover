@@ -1,4 +1,4 @@
-// Harmony Discover DEV — discover-live-read v0.5.1 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.2 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
@@ -12,10 +12,12 @@
 // backed by the words it actually transcribed) is marked needs_second_look and downgraded to unsure; the app
 // then sends only those crops back with tier "escalate", which Sonnet 5.5 reads. Easy bottles never wait.
 // v0.5.1: logs each batch's label crop sizes (pixels only, no image or text) to check readability.
+// v0.5.2: the guess check ignores generic words (Domaine, Rosé, Bourbon...) and needs only half the
+// distinctive words to be on the label; second looks (Sonnet) are trusted and never capped as guesses.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.1";
+const VERSION = "0.5.2";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -106,14 +108,17 @@ function headers(origin: string | null): Headers {
 }
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
 const foldText = (v: unknown) => String(v ?? "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-// True when most meaningful words of a value appear in the words the model itself transcribed.
-// A brand or product it "knows" but did not transcribe is treated as a guess.
+// Words that say what kind of drink or producer it is, not which one; a reader may add them
+// from what it sees (a pink wine is "Rosé") without that being a guess at the name.
+const GENERIC_WORDS = new Set(["the","de","del","della","di","du","des","la","le","les","el","los","and","of","co","company","domaine","chateau","bodega","bodegas","cantina","weingut","estate","estates","winery","wines","wine","vineyard","vineyards","cellars","cellar","distillery","distilling","distillers","brewing","brewery","colonel","jr","sr","rose","red","white","blanc","rouge","tinto","bianco","rosso","sparkling","bourbon","whiskey","whisky","straight","kentucky","vodka","gin","rum","tequila","mezcal","liqueur","beer","ale","lager","cider"]);
+// True when at least half of the distinctive words of a value appear in the words the model itself
+// transcribed. A brand or product it "knows" but did not transcribe is treated as a guess.
 function backedByWords(value: string, words: string[]): boolean {
-  const tokens = foldText(value).split(" ").filter((t) => t.length >= 3 || /\d/.test(t));
+  const tokens = foldText(value).split(" ").filter((t) => (t.length >= 3 || /\d/.test(t)) && !GENERIC_WORDS.has(t));
   if (!tokens.length) return true;
   const said = foldText(words.join(" ")), squashed = said.replace(/ /g, "");
   const hits = tokens.filter((t) => (" " + said + " ").includes(" " + t + " ") || squashed.includes(t)).length;
-  return hits >= Math.ceil(tokens.length * 0.6);
+  return hits >= Math.max(1, Math.ceil(tokens.length * 0.5));
 }
 // Width and height from a JPEG header (base64), or null. Only the first few KB are decoded.
 function jpegSize(b64: string): { w: number; h: number } | null {
@@ -521,7 +526,8 @@ Deno.serve(async (req: Request) => {
       const matched = sameBrand && hit?.id && hit.product && (hit.score ?? 0) >= 0.72
         ? { id: hit.id, brand: hit.brand, product: hit.product, score: Math.round((hit.score ?? 0) * 100) / 100 }
         : null;
-      const guessed = !!read.brand && (!backedByWords(read.brand, read.words) || (!!read.product && !backedByWords(read.product, read.words)));
+      // Only first (Haiku) reads are checked for guessing; the careful second look is trusted.
+      const guessed = !escalate && !!read.brand && (!backedByWords(read.brand, read.words) || (!!read.product && !backedByWords(read.product, read.words)));
       const weakProduct = !!read.product && (read.fieldConfidence.product ?? read.confidence) < MIN_LABEL_CONFIDENCE;
       const unsure = !read.brand || read.confidence < MIN_LABEL_CONFIDENCE || guessed;
       // Only first (Haiku) reads ask for a second look; a second look is final.

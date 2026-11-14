@@ -14,12 +14,12 @@ describe('evidence that builds up while scanning', () => {
     expect(shown[shown.length - 1]!).toBeGreaterThan(0.9);
   });
 
-  it('does not show a name from a single read; shows it once reads agree', () => {
+  it('does not confirm a name from one weaker read; confirms it once reads agree', () => {
     const evidence = new TrackEvidence();
-    evidence.observeIdentity(-1, read('Taylor'), 'frame:1');
+    evidence.observeIdentity(-1, read('Taylor', 0.8), 'frame:1');
     const first = evidence.identity(-1)!;
     expect(first.reliable).toBe(false);
-    evidence.observeIdentity(-1, read('Taylor'), 'frame:1'); // same read again: counted once
+    evidence.observeIdentity(-1, read('Taylor', 0.8), 'frame:1'); // same read again: counted once
     expect(evidence.identity(-1)!.confidence).toBe(first.confidence);
     evidence.observeIdentity(-1, read('Taylor', 0.88), 'label:2');
     const second = evidence.identity(-1)!;
@@ -88,5 +88,33 @@ describe('identity builds up across reads', () => {
     expect(read.size).toBe('750ml');
     expect(read.words).toEqual(['PROOF', 'BARREL']);
     expect(read.details?.lot_code).toBe('L25295');
+  });
+
+  it('confirms a name from one clear read (90%+)', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(5, read('Giuliano Rosati', 0.95), 'label:1');
+    const shown = evidence.identity(5)!;
+    expect(shown.reliable).toBe(true);
+    expect(shown.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('a confirmed name and its number stick while the bottle is tracked', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(7, read('Taylor', 0.95), 'a');
+    const confirmed = evidence.identity(7)!;
+    expect(confirmed.reliable).toBe(true);
+    // A single odd read of something else does not undo it or lower the number.
+    evidence.observeIdentity(7, read('Weller', 0.7), 'b');
+    const after = evidence.identity(7)!;
+    expect(after.reliable).toBe(true);
+    expect(after.read.brand).toBe('Taylor');
+    expect(after.confidence).toBeGreaterThanOrEqual(confirmed.confidence);
+  });
+
+  it('the shown number only climbs while the same name leads', () => {
+    const evidence = new TrackEvidence();
+    const values: number[] = [];
+    [0.7, 0.4, 0.6].forEach((c, i) => { evidence.observeIdentity(9, read('Mescladis', c, false), 'r' + i); values.push(evidence.identity(9)!.confidence); });
+    for (let i = 1; i < values.length; i++) expect(values[i]!).toBeGreaterThanOrEqual(values[i - 1]!);
   });
 });

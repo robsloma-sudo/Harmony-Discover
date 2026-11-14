@@ -24,8 +24,18 @@ export type TrackIdentity<T extends IdentityRead> = {
   agreeingReads: number;
 };
 
-type Vote<T> = { read: T; weight: number; reads: number; evidence: number };
-type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<string> };
+type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number };
+/**
+ * locked: the vote key once a name has been confirmed. A confirmed bottle keeps
+ * its name (and its number never goes down) while it stays the same tracked
+ * bottle; only a clear majority of later, different reads can replace it.
+ * peak: highest confidence shown for the current leading name, so the number
+ * on screen only climbs while reads agree.
+ */
+type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<string>; locked?: string; peak: number; peakKey?: string };
+
+/** One clear read is enough to confirm a name (no second read needed). */
+export const CONFIDENT_SINGLE_READ = 0.9;
 
 /** Show a name only when agreeing reads reach this confidence and clearly beat any rival. */
 export const RELIABLE_IDENTITY = 0.75;
@@ -87,7 +97,7 @@ export class TrackEvidence<T extends IdentityRead> {
 
   private entry(trackId: number): Entry<T> {
     let entry = this.entries.get(trackId);
-    if (!entry) { entry = { detection: 0, votes: new Map(), seen: new Set() }; this.entries.set(trackId, entry); }
+    if (!entry) { entry = { detection: 0, votes: new Map(), seen: new Set(), peak: 0 }; this.entries.set(trackId, entry); }
     return entry;
   }
 
@@ -115,7 +125,7 @@ export class TrackEvidence<T extends IdentityRead> {
     const key = [...entry.votes.keys()].find(existing => sameBottleIdentity(entry.votes.get(existing)!.read, read)) ?? own;
     const matched = read.state === 'matched' && (read.match?.score ?? 0) >= 0.9;
     const strength = clamp(read.confidence) * (matched ? 0.8 : 0.7);
-    const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0 };
+    const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0, best: 0 };
     // Show the most informative read: catalogue match first, then a read with
     // an expression, then the most legible.
     const rank = (r: T) => (r.match?.id ? 2 : 0) + (clean(r.product) ? 1 : 0) + clamp(r.confidence) * 0.5;
@@ -124,6 +134,7 @@ export class TrackEvidence<T extends IdentityRead> {
     vote.read = vote.reads === 0 ? read : rank(read) >= rank(vote.read) ? mergeReads(read, vote.read) : mergeReads(vote.read, read);
     vote.weight += clamp(read.confidence);
     vote.reads += 1;
+    if (read.state !== 'unsure') vote.best = Math.max(vote.best, clamp(read.confidence));
     vote.evidence = 1 - (1 - vote.evidence) * (1 - strength);
     entry.votes.set(key, vote);
   }
@@ -135,20 +146,30 @@ export class TrackEvidence<T extends IdentityRead> {
   identity(trackId: number): TrackIdentity<T> | null {
     const entry = this.entries.get(trackId);
     if (!entry || !entry.votes.size) return null;
-    let top: Vote<T> | null = null, total = 0;
-    for (const vote of entry.votes.values()) {
+    let topKey = '', top: Vote<T> | null = null, total = 0;
+    for (const [key, vote] of entry.votes) {
       total += vote.weight;
-      if (!top || vote.evidence > top.evidence) top = vote;
+      if (!top || vote.evidence > top.evidence) { top = vote; topKey = key; }
+    }
+    // A confirmed name stays unless a different name clearly takes over.
+    const locked = entry.locked ? entry.votes.get(entry.locked) : undefined;
+    if (locked && entry.locked !== topKey) {
+      const challengerShare = total > 0 ? top!.weight / total : 0;
+      if (challengerShare >= 0.85 && top!.reads >= 2) { entry.locked = undefined; entry.peak = 0; }
+      else { top = locked; topKey = entry.locked!; }
     }
     const share = total > 0 ? top!.weight / total : 0;
     // A clear majority (85%+) counts fully; closer contests lower the confidence.
-    const confidence = top!.evidence * Math.min(1, share / 0.85);
-    return {
-      read: top!.read,
-      confidence,
-      reliable: confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2,
-      agreeingReads: top!.reads,
-    };
+    let confidence = top!.evidence * Math.min(1, share / 0.85);
+    const strongSingle = top!.best >= CONFIDENT_SINGLE_READ && share >= RELIABLE_SHARE;
+    let reliable = (confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2) || strongSingle;
+    if (strongSingle) confidence = Math.max(confidence, top!.best);
+    if (entry.locked === topKey) reliable = true;
+    else if (reliable) entry.locked = topKey;
+    // The number shown never drops while the same name leads.
+    if (entry.peakKey !== topKey) { entry.peakKey = topKey; entry.peak = 0; }
+    entry.peak = Math.max(entry.peak, confidence);
+    return { read: top!.read, confidence: entry.peak, reliable, agreeingReads: top!.reads };
   }
 
   /** Evidence follows a bottle whose track merged into another. */
@@ -157,10 +178,14 @@ export class TrackEvidence<T extends IdentityRead> {
     if (!source) return;
     const target = this.entry(to);
     target.detection = Math.max(target.detection, source.detection);
+    if (!target.locked && source.locked) target.locked = source.locked;
+    target.peak = Math.max(target.peak, source.peak);
+    if (!target.peakKey) target.peakKey = source.peakKey;
     for (const [key, vote] of source.votes) {
       const existing = target.votes.get(key);
       if (!existing) target.votes.set(key, { ...vote });
       else {
+        existing.best = Math.max(existing.best, vote.best);
         existing.weight += vote.weight;
         existing.reads += vote.reads;
         existing.evidence = 1 - (1 - existing.evidence) * (1 - vote.evidence);

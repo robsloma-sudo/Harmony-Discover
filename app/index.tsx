@@ -397,7 +397,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                 <View style={[s.liveDetectionBox, boxStyle]}>
                   <View style={s.liveDetectionLabel}>
                     <Text numberOfLines={1} style={s.liveDetectionName}>{name || 'BOTTLE DETECTED'}</Text>
-                    <Text style={s.liveDetectionConfidence}>{identifying ? `${provisional ? 'CHECKING' : 'READING LABEL'} · ${Math.round(tracked.identifying! * 100)}%` : `BOTTLE · ${Math.round(tracked.confidence * 100)}%`}</Text>
+                    <Text style={s.liveDetectionConfidence}>{/* Two separate numbers so the bottle % never seems to drop when name-checking starts. */}
+                    {identifying ? `BOTTLE ${Math.round(tracked.confidence * 100)}% · NAME ${Math.round(tracked.identifying! * 100)}%` : `BOTTLE · ${Math.round(tracked.confidence * 100)}%`}</Text>
                   </View>
                 </View>
               </View>
