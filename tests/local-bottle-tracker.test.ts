@@ -92,14 +92,15 @@ describe('independent local bottle tracks', () => {
     expect(removeNestedBottleProposals([left, right])).toHaveLength(2);
   });
 
-  it('retains a bottle identity long enough to reconnect after the camera returns', () => {
+  it('assigns a new track ID when a bottle returns after a long absence', () => {
     const tracker = new LocalBottleTracker();
     const first = tracker.update([proposal()], 1000)[0];
     expect(first).toBeDefined();
     tracker.update([], 5000);
     tracker.update([], 12000);
     const returned = tracker.update([proposal(0.21)], 18000)[0];
-    expect(returned?.trackId).toBe(first?.trackId);
+    expect(returned).toBeDefined();
+    expect(returned?.trackId).not.toBe(first?.trackId);
   });
 
   it('keeps up to 24 spatially distinct bottles visible from one strong shelf observation', () => {
