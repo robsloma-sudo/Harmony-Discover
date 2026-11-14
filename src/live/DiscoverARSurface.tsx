@@ -127,6 +127,7 @@ function WebLiveCamera(props: NativeProps) {
     let disposed = false;
     // Invalidates async recognition work when the user pauses recognition or the page hides.
     let recognitionGeneration = 0;
+    let recognitionEpochStartedAt = 0;
     let stream: MediaStream | null = null;
     let frameCheck = 0;
     let recognitionTimer = 0;
@@ -159,6 +160,7 @@ function WebLiveCamera(props: NativeProps) {
       pageVisible = document.visibilityState === 'visible';
       if (!pageVisible) {
         recognitionGeneration += 1;
+        recognitionEpochStartedAt = Date.now();
         if (recognitionTimer) window.clearTimeout(recognitionTimer);
         if (localDetectionTimer) window.clearInterval(localDetectionTimer);
         recognitionTimer = 0;
@@ -491,7 +493,7 @@ function WebLiveCamera(props: NativeProps) {
     let lastSegmentationMs = 0;
     let lastLocalFrameMs = 0;
     const liquidAnalysisQueue = new LiquidAnalysisQueue((timestamp, results) => {
-      if (disposed || !pageVisible || Date.now() - timestamp > 1400) return;
+      if (disposed || !pageVisible || timestamp < recognitionEpochStartedAt || Date.now() - timestamp > 1400) return;
       let changed = false;
       for (const item of results) {
         const current = latestLocalCandidates.find(candidate => candidate.trackId === item.trackId);
@@ -866,6 +868,7 @@ function WebLiveCamera(props: NativeProps) {
     recognitionSchedulerRef.current = () => {
       if (!callbacksRef.current.recognitionEnabled) {
         recognitionGeneration += 1;
+        recognitionEpochStartedAt = Date.now();
         // Turning recognition off ends the current visual-tracking epoch.
         // Do not allow old candidates or cached OCR to return on the next toggle.
         webTracks = [];
