@@ -9,6 +9,22 @@ const liveReadFunction = /^[a-z0-9-]+$/.test(process.env.EXPO_PUBLIC_DISCOVER_LI
   : 'discover-live-read';
 
 export type BottleState = 'matched' | 'reported' | 'unsure';
+/**
+ * The server's brand + line + release + size identity for a saved bottle.
+ * shapeKey (brand|line|size) is what a liquid-level volume calibration belongs to;
+ * it is null when the line or size is unknown or the barcode disagrees with the label words.
+ */
+export type ResolvedIdentity = {
+  status: 'matched' | 'ambiguous' | 'new_release_candidate' | 'line_unknown' | string;
+  identityKey: string | null;
+  brand: string | null;
+  line: string | null;
+  releaseKey: string | null;
+  releaseLabel: string | null;
+  sizeMl: number | null;
+  flags: string[];
+  shapeKey: string | null;
+};
 export type BottleEdgePath = {
   kind: 'hard' | 'label' | 'print';
   points: Array<{ x: number; y: number }>;
@@ -27,6 +43,8 @@ export type BottleRead = {
   details: Record<string, string | string[]>;
   match: { id: string; brand: string | null; product: string | null; score: number } | null;
   state: BottleState;
+  /** Set once the bottle is saved and the server has resolved its identity. */
+  resolved?: ResolvedIdentity;
 };
 export class BottleReadError extends Error {
   status: number;
@@ -197,7 +215,22 @@ export type LiveSightingInput = {
   words: string[]; confidence: number; agreeingReads: number;
   details: Record<string, string | string[]>; fieldConfidence: Record<string, number>;
 };
-export type LiveSightingResult = { brand: string; product: string; status: 'saved' | 'already_saved' | 'failed'; productId: string | null; newProduct: boolean };
+export type LiveSightingResult = { brand: string; product: string; status: 'saved' | 'already_saved' | 'failed'; productId: string | null; newProduct: boolean; identity: ResolvedIdentity | null };
+
+function toResolvedIdentity(raw: unknown): ResolvedIdentity | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+  const size = Number(r.size_ml);
+  return {
+    status: String(r.status || 'line_unknown'),
+    identityKey: text(r.identity_key), brand: text(r.brand), line: text(r.line),
+    releaseKey: text(r.release_key), releaseLabel: text(r.release_label),
+    sizeMl: Number.isFinite(size) && size > 0 ? size : null,
+    flags: Array.isArray(r.flags) ? r.flags.map(String) : [],
+    shapeKey: text(r.shape_key),
+  };
+}
 
 /**
  * Saves bottles the live scanner is sure of (reads agreed on the name) as
@@ -220,5 +253,6 @@ export async function saveLiveSightings(scanSessionId: string, bottles: LiveSigh
     status: r.status === 'saved' || r.status === 'already_saved' ? r.status : 'failed',
     productId: typeof r.product_id === 'string' ? r.product_id : null,
     newProduct: r.new_product === true,
+    identity: toResolvedIdentity(r.identity),
   }));
 }

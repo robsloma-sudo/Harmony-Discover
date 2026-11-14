@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
-import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput } from '../services/discoverLiveApi';
+import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
@@ -179,6 +179,8 @@ function WebLiveCamera(props: NativeProps) {
     };
     let scanSessionId = newScanSessionId();
     const saveState = new Map<string, 'queued' | 'saving' | 'saved'>();
+    // Server-resolved identity per read key (brand + line + release + size); feeds liquid-level calibration.
+    const resolvedByKey = new Map<string, ResolvedIdentity>();
     let saveQueue: Array<{ key: string; input: LiveSightingInput }> = [];
     let saveBusy = false;
     let saveRetryAt = 0;
@@ -217,6 +219,8 @@ function WebLiveCamera(props: NativeProps) {
         batch.forEach((item, index) => {
           const status = results[index]?.status;
           if (status === 'saved' || status === 'already_saved') saveState.set(item.key, 'saved');
+          const resolved = results[index]?.identity;
+          if (resolved) resolvedByKey.set(item.key, resolved);
           else saveState.delete(item.key); // not saved: may be queued again later
         });
         publishVisibleCandidates();
@@ -540,7 +544,8 @@ function WebLiveCamera(props: NativeProps) {
         if (identity?.reliable) {
           queueAutoSave(identity.read, identity.confidence, identity.agreeingReads);
           const key = identityKey(identity.read);
-          return { ...candidate, confidence, bottle: identity.read, identityConfidence: identity.confidence, saved: !!key && saveState.get(key) === 'saved' };
+          const resolved = key ? resolvedByKey.get(key) : undefined;
+          return { ...candidate, confidence, bottle: resolved ? { ...identity.read, resolved } : identity.read, identityConfidence: identity.confidence, saved: !!key && saveState.get(key) === 'saved' };
         }
         return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined };
       };
@@ -707,8 +712,9 @@ function WebLiveCamera(props: NativeProps) {
         const consensus = assessLiquidInterface(observations);
         if (consensus.status === 'visible') {
           const labelRead = labelReadsByTrack.get(item.trackId);
-          const identityKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size);
-          const profile = identityKey ? (getCachedBottleVolumeProfile(identityKey) ?? bottleVolumeProfiles[identityKey]) : undefined;
+          const readKey = labelRead ? identityKey(labelRead) : null;
+          const calibrationKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size, readKey ? resolvedByKey.get(readKey) : undefined);
+          const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? bottleVolumeProfiles[calibrationKey]) : undefined;
           const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
             heightPercent: Math.round(consensus.normalizedHeight * 100),
@@ -1424,8 +1430,8 @@ export function DiscoverARSurface(props: NativeProps) {
               nativeLiquidHistory.current.set(item.trackId, { observations, updatedAt: frame.timestamp });
               const consensus = assessLiquidInterface(observations);
               if (consensus.status === 'visible') {
-                const identityKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size);
-                const profile = identityKey ? (getCachedBottleVolumeProfile(identityKey) ?? nativeVolumeProfiles.current[identityKey]) : undefined;
+                const calibrationKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size, current.bottle.resolved);
+                const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? nativeVolumeProfiles.current[calibrationKey]) : undefined;
                 const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
                 current.liquidLevel = {
                   heightPercent: Math.round(consensus.normalizedHeight * 100),
