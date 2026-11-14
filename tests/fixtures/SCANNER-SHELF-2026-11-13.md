@@ -11,6 +11,6 @@ The TypeScript fixture contains approximate manual bounds for selected visible p
 - The 18s frame contains additional visible objects whose identity/continuity is not asserted.
 
 ## Test scope
-The accompanying Vitest tests validate annotation integrity and replay the 5s/9s approximate geometry through the existing LocalBottleTracker. This is a deterministic geometry-policy test, not a full video/model replay: the app does not expose raw detector outputs for this screen recording, and the recording itself contains rendered overlays rather than raw camera frames.
+The accompanying Vitest tests validate annotation integrity and replay the 5s/9s approximate geometry through the existing LocalBottleTracker, asserting per-object track continuity. Additional synthetic scenarios cover adjacent identical-looking bottles, camera pan, temporary occlusion, and stale track-ID reuse. These are deterministic geometry-policy tests, not a full video/model replay: the app does not expose raw detector outputs for this screen recording, and the recording itself contains rendered overlays rather than raw camera frames.
 
 Next stage: replace approximate bounds with reviewed pixel-level annotations and add a captured detector-output replay adapter before using these tests to claim tracking accuracy.
