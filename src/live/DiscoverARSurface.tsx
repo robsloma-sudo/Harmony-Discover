@@ -551,7 +551,7 @@ function WebLiveCamera(props: NativeProps) {
         })),
         ...latestLocalCandidates
           .filter(local => !activeCloudTracks.some(cloud => isSameBottleBox(cloud, local)))
-          .filter(local => !isVerifiedRead(labelReadsByTrack.get(local.trackId)))
+          .filter(local => !isVerifiedRead(labelReadsByTrack.get(labelBatchTrackId('local', local.trackId))))
           .map(candidate => ({ ...candidate, trackId: labelBatchTrackId('local', candidate.trackId), bottle: labelReadsByTrack.get(labelBatchTrackId('local', candidate.trackId)) })),
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 15000);
