@@ -3,9 +3,10 @@
  *
  * Every detector pass and every label read about one bottle adds to what we
  * know, instead of each new frame replacing the last one's number. The
- * "is it a bottle" certainty only grows with repeat detections. A name is
- * shown only once reads agree on it (reliable); until then the bottle shows
- * how far identification has got.
+ * "is it a bottle" certainty only grows with repeat detections. The first
+ * read is shown straight away as a provisional name; it becomes the confirmed
+ * name (and is saved) once reads agree on it (reliable). Facts from every
+ * agreeing read are combined into one identity.
  */
 export type IdentityRead = {
   brand?: string | null;
@@ -57,6 +58,30 @@ export function sameBottleIdentity(a: IdentityRead, b: IdentityRead): boolean {
   return shared / smaller >= 0.6 || shared / (brandA.size + brandB.size - shared) >= 0.5;
 }
 
+const FILL_FIELDS = ['proof', 'size', 'origin', 'category'] as const;
+
+/** `primary` wins; empty fields, missing details and extra label words come from `other`. */
+export function mergeReads<T extends IdentityRead>(primary: T, other: T): T {
+  if (primary === other) return primary;
+  const a = primary as unknown as Record<string, unknown>, b = other as unknown as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...a };
+  for (const field of FILL_FIELDS) {
+    const mine = a[field];
+    if ((mine === undefined || mine === null || mine === '' || (field === 'category' && mine === 'other')) && typeof b[field] === 'string' && b[field]) merged[field] = b[field];
+  }
+  const da = a.details, db = b.details;
+  if (db && typeof db === 'object' && !Array.isArray(db)) merged.details = { ...(db as object), ...((da && typeof da === 'object') ? da as object : {}) };
+  if (Array.isArray(a.words) || Array.isArray(b.words)) {
+    const words: string[] = [];
+    for (const word of [...(Array.isArray(a.words) ? a.words : []), ...(Array.isArray(b.words) ? b.words : [])]) {
+      const w = String(word);
+      if (w && !words.some(existing => existing.toLowerCase() === w.toLowerCase())) words.push(w);
+    }
+    merged.words = words.slice(0, 16);
+  }
+  return merged as unknown as T;
+}
+
 export class TrackEvidence<T extends IdentityRead> {
   private entries = new Map<number, Entry<T>>();
 
@@ -94,7 +119,9 @@ export class TrackEvidence<T extends IdentityRead> {
     // Show the most informative read: catalogue match first, then a read with
     // an expression, then the most legible.
     const rank = (r: T) => (r.match?.id ? 2 : 0) + (clean(r.product) ? 1 : 0) + clamp(r.confidence) * 0.5;
-    if (vote.reads === 0 || rank(read) >= rank(vote.read)) vote.read = read;
+    // Each read can see a different part of the label: keep the best read and
+    // fill in what it missed (proof, size, origin, details, words) from the others.
+    vote.read = vote.reads === 0 ? read : rank(read) >= rank(vote.read) ? mergeReads(read, vote.read) : mergeReads(vote.read, read);
     vote.weight += clamp(read.confidence);
     vote.reads += 1;
     vote.evidence = 1 - (1 - vote.evidence) * (1 - strength);

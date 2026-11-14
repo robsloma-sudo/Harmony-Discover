@@ -44,7 +44,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;saved?:boolean;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -334,7 +334,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
             const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
             const identifying = !bottle && typeof tracked.identifying === 'number';
-            const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(' ').trim() : identifying ? 'IDENTIFYING…' : 'BOTTLE DETECTED';
+            const provisional = !bottle ? tracked.provisional : undefined;
+            const readName = (read?: BottleRead) => read ? [read.match?.brand || read.brand, read.match?.product || read.product].filter(Boolean).join(' ').trim() : '';
+            const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,
@@ -351,7 +353,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                 >
                   <View style={s.liveDetectionLabel}>
                     <Text numberOfLines={1} style={s.liveDetectionName}>{name || (bottle ? bottle.category.replace(/_/g, ' ').toUpperCase() : 'BOTTLE DETECTED')}</Text>
-                    <Text style={s.liveDetectionConfidence}>{bottle ? `TAP FOR PROFILE · ${Math.round((tracked.identityConfidence ?? bottle.confidence) * 100)}%${tracked.saved ? ' · ✓ SAVED' : ''}` : identifying ? `READING LABEL · ${Math.round(tracked.identifying! * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
+                    <Text style={s.liveDetectionConfidence}>{bottle ? `TAP FOR PROFILE · ${Math.round((tracked.identityConfidence ?? bottle.confidence) * 100)}%${tracked.saved ? ' · ✓ SAVED' : ''}` : identifying ? `${provisional ? 'CHECKING' : 'READING LABEL'} · ${Math.round(tracked.identifying! * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
                   </View>
                 </Pressable>
               </View>

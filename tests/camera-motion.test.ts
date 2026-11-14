@@ -125,3 +125,49 @@ describe('camera motion algebra and history', () => {
     expect(clipBoxToFrame({ x: 0.9, y: -0.1, width: 0.2, height: 0.3 })).toEqual({ x: 0.9, y: 0, width: 0.09999999999999998, height: 0.19999999999999998 });
   });
 });
+
+describe('a bottle carried by hand does not drag the other boxes', () => {
+  const width = 180, height = 320;
+  // Static shelf with a held bottle (its own texture) covering a big part of the frame.
+  const held = { x: 0.2, y: 0.15, width: 0.55, height: 0.6 };
+  const frame = (shiftX: number, shiftY: number) => {
+    const out = new Uint8Array(width * height);
+    const bx0 = (held.x * width) + shiftX, by0 = (held.y * height) + shiftY;
+    const bx1 = bx0 + held.width * width, by1 = by0 + held.height * height;
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const inside = x >= bx0 && x < bx1 && y >= by0 && y < by1;
+      out[y * width + x] = inside
+        ? Math.round(30 + noise(x - shiftX + 5000, y - shiftY, 9) * 190)
+        : Math.round(scene(x, y));
+    }
+    return out;
+  };
+  const shelfBottles = [
+    { x: 0.02, y: 0.8, width: 0.15, height: 0.18 },
+    { x: 0.8, y: 0.78, width: 0.17, height: 0.2 },
+    { x: 0.82, y: 0.05, width: 0.15, height: 0.2 },
+  ];
+
+  it('keeps the camera still and reports the held bottle as moving by itself', () => {
+    const before = buildGrayPyramid(frame(0, 0), width, height);
+    const after = buildGrayPyramid(frame(7, 4), width, height);
+    const motion = estimateCameraMotion(before, after, { objects: [held, ...shelfBottles] })!;
+    expect(motion).not.toBeNull();
+    expect(Math.abs(motion.tx * width)).toBeLessThan(1);
+    expect(Math.abs(motion.ty * height)).toBeLessThan(1);
+    const carried = motion.movingObjects?.find(item => item.index === 0);
+    expect(carried).toBeDefined();
+    expect(carried!.dx * width).toBeCloseTo(7, 0);
+    expect(carried!.dy * height).toBeCloseTo(4, 0);
+    expect(motion.movingObjects?.some(item => item.index > 0)).toBe(false);
+  });
+
+  it('still follows a real camera pan when bottles are tracked', () => {
+    const before = buildGrayPyramid(render(width, height), width, height);
+    const after = buildGrayPyramid(render(width, height, 5, -3), width, height);
+    const motion = estimateCameraMotion(before, after, { objects: [held, ...shelfBottles] })!;
+    expect(motion.tx * width).toBeCloseTo(5, 0);
+    expect(motion.ty * height).toBeCloseTo(-3, 0);
+    expect(motion.movingObjects).toEqual([]);
+  });
+});

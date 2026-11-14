@@ -24,7 +24,15 @@ export type CameraMotion = {
   scale: number;
 };
 
-export type CameraMotionEstimate = CameraMotion & { quality: number; inliers: number; tracked: number };
+export type CameraMotionEstimate = CameraMotion & {
+  quality: number; inliers: number; tracked: number;
+  /**
+   * Objects (by index into options.objects) that moved on their own, e.g. a
+   * bottle picked up and carried: their shift relative to the camera motion,
+   * in normalized units. Every other object moved with the camera.
+   */
+  movingObjects?: Array<{ index: number; dx: number; dy: number }>;
+};
 
 export const IDENTITY_MOTION: CameraMotion = Object.freeze({ tx: 0, ty: 0, scale: 1 });
 
@@ -187,35 +195,19 @@ export type CameraMotionOptions = {
   guess?: CameraMotion;
   columns?: number;
   rows?: number;
+  /**
+   * Bottles currently tracked (normalized boxes). Each one gets one vote, and
+   * so does the background, so a single bottle held close to the camera and
+   * carried around can no longer drag every other box with it.
+   */
+  objects?: Box[];
 };
 
-/**
- * Estimates one translation + zoom for the whole frame. Returns null when too
- * few points can be followed (textureless view, heavy blur, or a cut).
- */
-export function estimateCameraMotion(previous: GrayPyramid, current: GrayPyramid, options: CameraMotionOptions = {}): CameraMotionEstimate | null {
-  const base = previous[0], next = current[0];
-  if (!base || !next || base.width !== next.width || base.height !== next.height) return null;
-  const { width, height } = base;
-  const columns = options.columns ?? 8;
-  const rows = options.rows ?? Math.max(6, Math.round(columns * height / width));
-  const guess = options.guess ?? IDENTITY_MOTION;
-  const cx = width / 2, cy = height / 2;
-  const points: Correspondence[] = [];
-  let tracked = 0;
-  for (let row = 0; row < rows; row++) {
-    for (let column = 0; column < columns; column++) {
-      const x = width * (0.06 + 0.88 * (column + 0.5) / columns);
-      const y = height * (0.06 + 0.88 * (row + 0.5) / rows);
-      const gx = guess.scale * (x - cx) + cx + guess.tx * width - x;
-      const gy = guess.scale * (y - cy) + cy + guess.ty * height - y;
-      const result = trackPointPyramidal(previous, current, x, y, gx, gy);
-      if (!result) continue;
-      tracked++;
-      points.push({ x, y, dx: result.dx, dy: result.dy });
-    }
-  }
-  if (points.length < 8) return null;
+type GroupedPoint = Correspondence & { group: number };
+
+/** Robust translation + zoom fit (iterated outlier rejection). */
+function robustFit(points: Correspondence[], cx: number, cy: number): { model: { tx: number; ty: number; scale: number }; inliers: Correspondence[] } | null {
+  if (points.length < 6) return null;
   let model = { tx: median(points.map(p => p.dx)), ty: median(points.map(p => p.dy)), scale: 1 };
   let inliers = points;
   for (let pass = 0; pass < 3; pass++) {
@@ -228,10 +220,100 @@ export function estimateCameraMotion(previous: GrayPyramid, current: GrayPyramid
     if (inliers.length < 6) return null;
     model = fitTranslationScale(inliers, cx, cy);
   }
+  return { model, inliers };
+}
+
+/**
+ * Estimates one translation + zoom for the whole frame. Returns null when too
+ * few points can be followed (textureless view, heavy blur, or a cut).
+ */
+export function estimateCameraMotion(previous: GrayPyramid, current: GrayPyramid, options: CameraMotionOptions = {}): CameraMotionEstimate | null {
+  const base = previous[0], next = current[0];
+  if (!base || !next || base.width !== next.width || base.height !== next.height) return null;
+  const { width, height } = base;
+  const objects = (options.objects ?? []).filter(o => [o.x, o.y, o.width, o.height].every(Number.isFinite) && o.width > 0.02 && o.height > 0.02);
+  const columns = options.columns ?? (objects.length ? 10 : 8);
+  const rows = options.rows ?? Math.max(6, Math.round(columns * height / width));
+  const guess = options.guess ?? IDENTITY_MOTION;
+  const cx = width / 2, cy = height / 2;
+  // Smallest containing box wins, so a bottle in front of a big one keeps its own vote.
+  const groupOf = (x: number, y: number) => {
+    let best = -1, bestArea = Infinity;
+    objects.forEach((o, index) => {
+      const nx = x / width, ny = y / height;
+      if (nx >= o.x && nx <= o.x + o.width && ny >= o.y && ny <= o.y + o.height && o.width * o.height < bestArea) { best = index; bestArea = o.width * o.height; }
+    });
+    return best;
+  };
+  const points: GroupedPoint[] = [];
+  let tracked = 0;
+  const follow = (x: number, y: number) => {
+    const gx = guess.scale * (x - cx) + cx + guess.tx * width - x;
+    const gy = guess.scale * (y - cy) + cy + guess.ty * height - y;
+    const result = trackPointPyramidal(previous, current, x, y, gx, gy);
+    if (!result) return;
+    tracked++;
+    points.push({ x, y, dx: result.dx, dy: result.dy, group: objects.length ? groupOf(x, y) : -1 });
+  };
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      follow(width * (0.06 + 0.88 * (column + 0.5) / columns), height * (0.06 + 0.88 * (row + 0.5) / rows));
+    }
+  }
+  // Every tracked bottle gets a few points of its own, even a small one between grid points.
+  objects.forEach(o => {
+    for (const fy of [0.3, 0.55, 0.8]) for (const fx of [0.35, 0.65]) {
+      const x = (o.x + o.width * fx) * width, y = (o.y + o.height * fy) * height;
+      if (x >= 4 && y >= 4 && x <= width - 5 && y <= height - 5) follow(x, y);
+    }
+  });
+  if (points.length < 8) return null;
+
+  let pool: Correspondence[] = points;
+  let groupShift = new Map<number, { dx: number; dy: number }>();
+  if (objects.length) {
+    // One vote per object and one (double) vote for the background.
+    const byGroup = new Map<number, GroupedPoint[]>();
+    for (const p of points) { const list = byGroup.get(p.group) ?? []; list.push(p); byGroup.set(p.group, list); }
+    const shifts: Array<{ group: number; dx: number; dy: number; weight: number; count: number }> = [];
+    for (const [group, list] of byGroup) {
+      if (list.length < (group === -1 ? 6 : 3)) continue;
+      shifts.push({ group, dx: median(list.map(p => p.dx)), dy: median(list.map(p => p.dy)), weight: group === -1 ? 2 : 1, count: list.length });
+    }
+    if (!shifts.length) return null;
+    groupShift = new Map(shifts.map(s => [s.group, { dx: s.dx, dy: s.dy }]));
+    const tolerance = Math.max(1.2, 0.012 * Math.max(width, height));
+    const agree = (a: { dx: number; dy: number }, b: { dx: number; dy: number }) => Math.hypot(a.dx - b.dx, a.dy - b.dy) <= tolerance;
+    let best = shifts[0]!, bestVotes = -1, bestHasBackground = false;
+    for (const candidate of shifts) {
+      const supporters = shifts.filter(s => agree(s, candidate));
+      const votes = supporters.reduce((sum, s) => sum + s.weight, 0);
+      const hasBackground = supporters.some(s => s.group === -1);
+      if (votes > bestVotes || (votes === bestVotes && hasBackground && !bestHasBackground)) {
+        best = candidate; bestVotes = votes; bestHasBackground = hasBackground;
+      }
+    }
+    const agreeing = new Set(shifts.filter(s => agree(s, best)).map(s => s.group));
+    pool = points.filter(p => agreeing.has(p.group));
+  }
+
+  const fit = robustFit(pool, cx, cy);
+  if (!fit) return null;
+  const { model, inliers } = fit;
   if (!Number.isFinite(model.scale) || model.scale < 0.8 || model.scale > 1.25) return null;
   const quality = inliers.length / Math.max(1, columns * rows);
-  if (inliers.length < 8 || inliers.length / points.length < 0.4) return null;
-  return { tx: model.tx / width, ty: model.ty / height, scale: model.scale, quality, inliers: inliers.length, tracked };
+  if (inliers.length < 8 || inliers.length / pool.length < 0.4) return null;
+
+  const movingObjects: Array<{ index: number; dx: number; dy: number }> = [];
+  for (const [group, shift] of groupShift) {
+    if (group < 0) continue;
+    const o = objects[group]!;
+    const ox = (o.x + o.width / 2) * width, oy = (o.y + o.height / 2) * height;
+    const px = model.scale * (ox - cx) + cx + model.tx - ox, py = model.scale * (oy - cy) + cy + model.ty - oy;
+    const rx = shift.dx - px, ry = shift.dy - py;
+    if (Math.hypot(rx, ry) > Math.max(1.2, 0.012 * Math.max(width, height))) movingObjects.push({ index: group, dx: rx / width, dy: ry / height });
+  }
+  return { tx: model.tx / width, ty: model.ty / height, scale: model.scale, quality, inliers: inliers.length, tracked, ...(objects.length ? { movingObjects } : {}) };
 }
 
 /**

@@ -547,7 +547,9 @@ function WebLiveCamera(props: NativeProps) {
           const resolved = key ? resolvedByKey.get(key) : undefined;
           return { ...candidate, confidence, bottle: resolved ? { ...identity.read, resolved } : identity.read, identityConfidence: identity.confidence, saved: !!key && saveState.get(key) === 'saved' };
         }
-        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined };
+        // Instant reading: show the first read straight away as provisional; it
+        // updates as more reads arrive and is confirmed once they agree.
+        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined };
       };
       const cloudCandidates = webTracks
         .filter(isConfirmedWebBottleTrack)
@@ -638,7 +640,10 @@ function WebLiveCamera(props: NativeProps) {
             const sizeKey = width + 'x' + height;
             const now = Date.now();
             if (previousPyramid && previousOpticalSize === sizeKey && pyramid.length) {
-              const measured = estimateCameraMotion(previousPyramid, pyramid, { guess: lastCameraMotion });
+              // Each tracked bottle is its own vote: a bottle picked up and carried
+              // is seen as moving by itself instead of dragging every box with it.
+              const visibleLocals = localBottleTracker.visible(now);
+              const measured = estimateCameraMotion(previousPyramid, pyramid, { guess: lastCameraMotion, objects: visibleLocals.map(local => local.bounds) });
               let motion: CameraMotion | null = null;
               if (measured) {
                 motion = { tx: measured.tx, ty: measured.ty, scale: measured.scale };
@@ -654,8 +659,15 @@ function WebLiveCamera(props: NativeProps) {
               if (motion) {
                 // Parallax: near bottles move more than the shelf behind them.
                 // Measure each visible bottle's own shift before moving it.
+                // A bottle that moved on its own follows its own motion (the hand),
+                // not the camera's; the rest get the usual parallax refinement.
+                const carried = new Map((measured?.movingObjects ?? [])
+                  .filter(item => visibleLocals[item.index] && Math.abs(item.dx) <= 0.25 && Math.abs(item.dy) <= 0.25)
+                  .map(item => [visibleLocals[item.index]!.trackId, item]));
                 const nudges = measured
-                  ? localBottleTracker.visible(now).flatMap(local => {
+                  ? visibleLocals.flatMap(local => {
+                    const own = carried.get(local.trackId);
+                    if (own) return [{ trackId: local.trackId, dx: own.dx, dy: own.dy }];
                     const shift = refineBoxMotion(previousPyramid!, pyramid, local.bounds, motion!);
                     if (!shift || shift.quality < 0.5 || Math.abs(shift.dx) > 0.08 || Math.abs(shift.dy) > 0.08) return [];
                     return [{ trackId: local.trackId, dx: shift.dx, dy: shift.dy }];
@@ -739,10 +751,13 @@ function WebLiveCamera(props: NativeProps) {
     }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
     const readCandidateLabels = async () => {
-      if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
+      // Label reads no longer wait behind the slower whole-frame read: a new bottle gets its first name fast.
+      if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
       // Crop from a frame captured now: track boxes describe the current view,
       // and the cloud-read frame is 2-5 s old by the time this runs.
-      const frameCanvas = captureVisibleFrame(960);
+      // Crop labels from the camera's full resolution (up to 1920 px): a label
+      // cut from a shrunken frame and then enlarged was too soft to read.
+      const frameCanvas = captureVisibleFrame(1920);
       if (!frameCanvas) return;
       const generation = recognitionGeneration;
       const now = Date.now();
@@ -782,13 +797,15 @@ function WebLiveCamera(props: NativeProps) {
         const projectedLabel = capturedBottle?.label_box && capturedBottle.box
           ? projectLabelBox(capturedBottle.label_box, capturedBottle.box, { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })
           : null;
+        // No known label position yet: send the whole bottle body (brand names
+        // often sit high on the label or on the shoulder).
         const labelBox = projectedLabel || {
-          x0: candidate.x + candidate.width * 0.12,
-          y0: candidate.y + candidate.height * 0.30,
-          x1: candidate.x + candidate.width * 0.88,
-          y1: candidate.y + candidate.height * 0.74,
+          x0: candidate.x + candidate.width * 0.04,
+          y0: candidate.y + candidate.height * 0.12,
+          x1: candidate.x + candidate.width * 0.96,
+          y1: candidate.y + candidate.height * 0.92,
         };
-        const crop = calculateLabelCrop(labelBox, frameCanvas.width, frameCanvas.height, { maxLongEdge: 1024, maxUpscale: 1.5 });
+        const crop = calculateLabelCrop(labelBox, frameCanvas.width, frameCanvas.height, { maxLongEdge: 896, maxUpscale: 1.5 });
         if (!crop) continue;
         const cropCanvas = document.createElement('canvas');
         cropCanvas.width = crop.outputWidth;
@@ -796,14 +813,22 @@ function WebLiveCamera(props: NativeProps) {
         const cropContext = cropCanvas.getContext('2d');
         if (!cropContext) continue;
         cropContext.drawImage(frameCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.outputWidth, crop.outputHeight);
-        const image = cropCanvas.toDataURL('image/jpeg', 0.78);
-        if (image.length > 100000) continue;
+        // Best quality that fits this crop's share of the server's batch limit.
+        const budget = Math.min(99_000, Math.max(38_000, Math.floor(340_000 / Math.max(1, eligible.length))));
+        let image = '';
+        for (const quality of [0.86, 0.78, 0.7, 0.6]) {
+          image = cropCanvas.toDataURL('image/jpeg', quality);
+          if (image.length <= budget) break;
+        }
+        if (image.length > budget) continue;
         crops.push({ trackId: candidate.trackId, image });
       }
-      nextLabelBatchAt = now + 4400;
+      // A bottle that has never been read is read again soon, so a name shows
+      // within about a second; after that, reads come at the normal pace.
+      const unreadWaiting = candidates.some(candidate => !lastLabelReadAt.has(candidate.trackId) && !crops.some(crop => crop.trackId === candidate.trackId));
+      nextLabelBatchAt = now + (unreadWaiting ? 1500 : 4000);
       if (!crops.length) return;
       labelBatchBusy = true;
-      recognitionBusy = true;
       crops.forEach(crop => lastLabelReadAt.set(crop.trackId, now));
       try {
         const reads = await readLiveLabelBatch(crops);
@@ -825,7 +850,6 @@ function WebLiveCamera(props: NativeProps) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'label_batch_failed: ' + error.message : 'label_batch_failed' } });
       } finally {
         labelBatchBusy = false;
-        recognitionBusy = false;
       }
     };
 
@@ -958,7 +982,8 @@ function WebLiveCamera(props: NativeProps) {
     };
     const recognizeFrame = async () => {
       if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled) return;
-      if (recognitionBusy) { scheduleRecognition(500); return; }
+      // A label read in flight goes first; the whole-frame read waits for it.
+      if (recognitionBusy || labelBatchBusy) { scheduleRecognition(500); return; }
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;

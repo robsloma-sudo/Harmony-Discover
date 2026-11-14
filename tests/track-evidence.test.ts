@@ -76,3 +76,17 @@ describe('reads that word the same bottle differently', () => {
     expect(evidence.identity(-1)!.reliable).toBe(false);
   });
 });
+
+describe('identity builds up across reads', () => {
+  it('fills what the best read missed from the other reads of the same bottle', async () => {
+    const { TrackEvidence } = await import('../src/live/trackEvidence');
+    const evidence = new TrackEvidence<{ brand: string; product: string; confidence: number; proof?: string; size?: string; words?: string[]; details?: Record<string, string> }>();
+    evidence.observeIdentity(7, { brand: 'E.H. Taylor', product: 'Barrel Proof', confidence: 0.9, proof: '', size: '750ml', words: ['BARREL'] }, 'a');
+    evidence.observeIdentity(7, { brand: 'E.H. Taylor', product: 'Barrel Proof', confidence: 0.92, proof: '127.3', size: '', words: ['PROOF'], details: { lot_code: 'L25295' } }, 'b');
+    const read = evidence.identity(7)!.read;
+    expect(read.proof).toBe('127.3');
+    expect(read.size).toBe('750ml');
+    expect(read.words).toEqual(['PROOF', 'BARREL']);
+    expect(read.details?.lot_code).toBe('L25295');
+  });
+});
