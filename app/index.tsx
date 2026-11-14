@@ -24,6 +24,7 @@ import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
 import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
+import { clientLog, installClientLog } from '../src/services/clientLog';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -76,10 +77,21 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
   // Found strip: every fully recognised product flies up from its green box
   // into a thin strip at the top; tapping a chip opens a static profile.
-  const [foundItems, setFoundItems] = useState<FoundItem[]>([]);
+  // Found chips survive a page reload in this tab (iPhone browsers can reload a busy camera page).
+  const [foundItems, setFoundItems] = useState<FoundItem[]>(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? window.sessionStorage?.getItem('discover.found') : null;
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.slice(-40) : [];
+    } catch { return []; }
+  });
+  useEffect(() => { installClientLog(); }, []);
+  useEffect(() => {
+    try { if (typeof window !== 'undefined') window.sessionStorage?.setItem('discover.found', JSON.stringify(foundItems.slice(-40))); } catch { /* storage full or private mode */ }
+  }, [foundItems]);
   const [foundFlights, setFoundFlights] = useState<FoundFlight[]>([]);
   const foundTrayTop = Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 50;
-  const foundRef = useRef<FoundItem[]>([]);
+  const foundRef = useRef<FoundItem[]>(foundItems);
   useEffect(() => {
     if (!liveCandidates.some(candidate => candidate.bottle)) return;
     const { list, added } = mergeFound(foundRef.current, liveCandidates, Date.now());
@@ -87,6 +99,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     foundRef.current = list;
     setFoundItems(list);
     if (added.length) {
+      clientLog({ evt: 'found_added', chips: list.length, conf: (added[0]!.candidate as { identityConfidence?: number }).identityConfidence });
       setFoundFlights(flights => [...flights, ...added.map(({ item, candidate }, index) => ({
         id: item.key + ':' + item.firstSeenAt,
         key: item.key,

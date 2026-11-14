@@ -42,7 +42,9 @@ export function sameFoundProduct(a: BottleRead, b: BottleRead): boolean {
   const brandWords = new Set([...words(a.match?.brand || a.brand), ...words(b.match?.brand || b.brand)]);
   const expression = (r: BottleRead) => new Set(words(r.match?.product || r.product).filter(w => !brandWords.has(w) && !GENERIC.has(w)));
   const x = expression(a), y = expression(b);
-  if (!x.size || !y.size) return x.size === y.size;
+  // A read without an expression ("Mescladís") is the same product as one with it
+  // ("Mescladís Pic Saint Loup"): one chip, which takes the fuller name.
+  if (!x.size || !y.size) return true;
   const [small, large] = x.size <= y.size ? [x, y] : [y, x];
   return [...small].every(w => large.has(w));
 }
@@ -84,10 +86,13 @@ export function mergeFound(
       const existing = next[index];
       if (existing.bottle === bottle && existing.trackIds.includes(candidate.trackId)) continue;
       const changed = foundFacts(existing.bottle) !== foundFacts(bottle);
-      // Keep the cleaner, shorter name once the product is known.
-      const betterName = name.length < existing.name.length ? name : existing.name;
+      // Prefer the name that includes the expression; otherwise keep the cleaner, shorter one.
+      const hasExpression = (n: string, b: BottleRead) => foldWords(n) !== foldWords(b.match?.brand || b.brand);
+      const newFuller = hasExpression(name, bottle) && !hasExpression(existing.name, existing.bottle);
+      const oldFuller = hasExpression(existing.name, existing.bottle) && !hasExpression(name, bottle);
+      const betterName = newFuller ? name : oldFuller ? existing.name : name.length < existing.name.length ? name : existing.name;
       const updated: FoundItem = {
-        ...existing, bottle, name: betterName, version: existing.version + (changed ? 1 : 0),
+        ...existing, bottle: oldFuller ? existing.bottle : bottle, name: betterName, version: existing.version + (changed ? 1 : 0),
         trackIds: existing.trackIds.includes(candidate.trackId) ? existing.trackIds : [...existing.trackIds, candidate.trackId].slice(-8),
       };
       next = next.map((item, i) => (i === index ? updated : item));

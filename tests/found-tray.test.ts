@@ -72,3 +72,16 @@ describe('names with accents', () => {
     expect(displayName('Mescladís', 'Pic Saint Loup')).toBe('Mescladís Pic Saint Loup');
   });
 });
+
+describe('one chip per wine', () => {
+  it('"Mescladís" and "Mescladís Pic Saint Loup" share one chip with the fuller name', () => {
+    const a = mergeFound([], [{ trackId: 1, x: 0, y: 0, width: 0.1, height: 0.3, bottle: read('Mescladís', '') }], 1);
+    const b = mergeFound(a.list, [{ trackId: 2, x: 0, y: 0, width: 0.1, height: 0.3, bottle: read('Mescladís', 'Pic Saint Loup') }], 2);
+    expect(b.list.length).toBe(1);
+    expect(b.list[0]!.name).toBe('Mescladís Pic Saint Loup');
+    const c = mergeFound(b.list, [{ trackId: 3, x: 0, y: 0, width: 0.1, height: 0.3, bottle: read('Mescladís', '') }], 3);
+    expect(c.list.length).toBe(1);
+    expect(c.list[0]!.name).toBe('Mescladís Pic Saint Loup');
+    expect(c.list[0]!.bottle.product).toBe('Pic Saint Loup');
+  });
+});
