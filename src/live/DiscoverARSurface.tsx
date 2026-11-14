@@ -392,6 +392,23 @@ function WebLiveCamera(props: NativeProps) {
         const video = videoRef.current;
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= 66) {
           lastOpticalFlowAt = time;
+          // Do not read and grayscale camera pixels when there are no bottle
+          // tracks to follow. The previous loop did this continuously on
+          // mobile Safari, consuming main-thread time before any box existed.
+          const now = Date.now();
+          const freshLocal = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 1200);
+          const activeCloud = webTracks.filter(track => isConfirmedWebBottleTrack(track)
+            && !freshLocal.some(local => isCrossSourceSameBottle(track, local)));
+          const targets = [
+            ...freshLocal.map(candidate => ({ source: 'local' as const, id: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })),
+            ...activeCloud.map(track => ({ source: 'cloud' as const, id: track.id, x: track.x, y: track.y, width: track.width, height: track.height })),
+          ];
+          if (!targets.length) {
+            previousOpticalGray = null;
+            previousOpticalSize = '';
+            opticalFlowFrame = window.requestAnimationFrame(tick);
+            return;
+          }
           const displayWidth = video.clientWidth || video.videoWidth;
           const displayHeight = video.clientHeight || video.videoHeight;
           const displayAspect = displayWidth / displayHeight;
@@ -416,15 +433,6 @@ function WebLiveCamera(props: NativeProps) {
             const gray = rgbaToGrayscale(opticalFlowContext.getImageData(0, 0, width, height).data, width, height);
             const sizeKey = width + 'x' + height;
             if (previousOpticalGray && previousOpticalSize === sizeKey) {
-              const now = Date.now();
-              const freshLocal = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 1200);
-              const activeCloud = webTracks.filter(track => isConfirmedWebBottleTrack(track)
-                && !freshLocal.some(local => isCrossSourceSameBottle(track, local)));
-              const targets = [
-                ...freshLocal.map(candidate => ({ source: 'local' as const, id: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })),
-                ...activeCloud.map(track => ({ source: 'cloud' as const, id: track.id, x: track.x, y: track.y, width: track.width, height: track.height })),
-              ];
-              if (targets.length) {
                 const results = trackBoxesWithOpticalFlow(previousOpticalGray, gray, width, height, targets);
                 let moved = false;
                 const updates = new Map<string, { x: number; y: number }>();
@@ -460,7 +468,6 @@ function WebLiveCamera(props: NativeProps) {
                   });
                   publishVisibleCandidates();
                 }
-              }
             }
             previousOpticalGray = gray;
             previousOpticalSize = sizeKey;
