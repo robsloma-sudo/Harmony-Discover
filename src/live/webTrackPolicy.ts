@@ -5,16 +5,19 @@ export type WebBottleTrackState = {
 };
 
 /**
- * A cloud-derived box is only promoted to the visible stream after a second
- * observation. Fast local D-FINE tracks already provide the immediate
- * provisional box, so this gate prevents one-frame cloud flashes without
- * delaying the first visible local detection.
+ * Cloud detections are visible after two observations, except for a strong
+ * first-frame geometry detection. This keeps provisional boxes responsive on
+ * mobile browsers when camera movement prevents the same bottle from being
+ * observed twice within the sparse cloud-read cadence.
+ *
+ * Confidence here is detection_confidence (physical bottle + box geometry),
+ * not label/OCR confidence or catalogue-match confidence. Identity can remain
+ * unresolved while the user still gets immediate visual feedback.
  */
 export function isConfirmedWebBottleTrack(track: WebBottleTrackState): boolean {
-  return Number.isFinite(track.hits)
-    && track.hits >= 2
-    && track.misses >= 0
-    && track.misses <= 1
-    && Number.isFinite(track.confidence)
-    && track.confidence >= 0.45;
+  if (!Number.isFinite(track.hits) || !Number.isFinite(track.misses) ||
+      !Number.isFinite(track.confidence) || track.hits < 1 ||
+      track.misses < 0 || track.misses > 1 || track.confidence < 0.45) return false;
+
+  return track.hits >= 2 || (track.hits === 1 && track.confidence >= 0.78);
 }
