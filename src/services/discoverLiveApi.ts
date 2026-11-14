@@ -164,7 +164,7 @@ export type LabelBatchRead = {
 
 /** tier 'base' = fast first read (Haiku); 'escalate' = second look by the stronger reader (Sonnet), max 4 crops. */
 /** Pixel sizes only (camera and captured frame), logged by the server to check read quality on phones. */
-export type LabelBatchDiagnostics = { video_w: number; video_h: number; frame_w: number; frame_h: number };
+export type LabelBatchDiagnostics = { video_w: number; video_h: number; frame_w: number; frame_h: number; steady?: boolean; sharp?: number };
 export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: string }>, tier: 'base' | 'escalate' = 'base', diag?: LabelBatchDiagnostics): Promise<LabelBatchRead[]> {
   if (!crops.length) return [];
   const result = await call({

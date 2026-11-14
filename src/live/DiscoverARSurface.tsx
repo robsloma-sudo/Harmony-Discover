@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
+import { frameSharpness, SteadyGate } from './steadyCapture';
 import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
@@ -163,6 +164,11 @@ function WebLiveCamera(props: NativeProps) {
     // brings late detector/cloud results into the current view.
     const cameraMotionHistory = new CameraMotionHistory(8_000);
     let lastCameraMotion: CameraMotion = IDENTITY_MOTION;
+    // Labels are captured at a steady, sharp moment (moving phones gave blurry, unreadable crops).
+    const steadyGate = new SteadyGate();
+    let labelWaitingForSteady = false;
+    let labelWaitStartedAt = 0;
+    const MAX_STEADY_WAIT_MS = 2500;
     let lostMotionFrames = 0;
     let localDetectionBusy = false;
     let detectorFailures = 0;
@@ -661,11 +667,13 @@ function WebLiveCamera(props: NativeProps) {
             const pyramid = buildGrayPyramid(gray, width, height, 4, recycle);
             const sizeKey = width + 'x' + height;
             const now = Date.now();
+            let tickMotion: { tx: number; ty: number; scale: number } | null = null;
             if (previousPyramid && previousOpticalSize === sizeKey && pyramid.length) {
               // Each tracked bottle is its own vote: a bottle picked up and carried
               // is seen as moving by itself instead of dragging every box with it.
               const visibleLocals = localBottleTracker.visible(now);
               const measured = estimateCameraMotion(previousPyramid, pyramid, { guess: lastCameraMotion, objects: visibleLocals.map(local => local.bounds) });
+              tickMotion = measured ? { tx: measured.tx, ty: measured.ty, scale: measured.scale } : null;
               let motion: CameraMotion | null = null;
               if (measured) {
                 motion = { tx: measured.tx, ty: measured.ty, scale: measured.scale };
@@ -711,6 +719,9 @@ function WebLiveCamera(props: NativeProps) {
             sparePyramid = previousPyramid;
             previousPyramid = pyramid.length ? pyramid : null;
             previousOpticalSize = sizeKey;
+            const tickAt = performance.now();
+            steadyGate.observe(tickAt, frameSharpness(gray, width, height), tickMotion);
+            if (labelWaitingForSteady && (steadyGate.steady(tickAt) || tickAt - labelWaitStartedAt >= MAX_STEADY_WAIT_MS)) void readCandidateLabels();
             latestLocalCandidates = toLocalCandidates(localBottleTracker.visible(now), now);
             if (performance.now() - lastPublishAt >= 30) publishVisibleCandidates();
           }
@@ -778,6 +789,16 @@ function WebLiveCamera(props: NativeProps) {
     const readCandidateLabels = async () => {
       // Label reads no longer wait behind the slower whole-frame read: a new bottle gets its first name fast.
       if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
+      // Wait (up to 2.5 s) for the phone to be still and the picture sharp.
+      const steadyAt = performance.now();
+      if (!steadyGate.steady(steadyAt)) {
+        if (!labelWaitStartedAt) labelWaitStartedAt = steadyAt;
+        if (steadyAt - labelWaitStartedAt < MAX_STEADY_WAIT_MS) { labelWaitingForSteady = true; return; }
+      }
+      const steadyCapture = steadyGate.steady(steadyAt);
+      const sharpRatio = steadyGate.sharpRatio();
+      labelWaitingForSteady = false;
+      labelWaitStartedAt = 0;
       // Crop from a frame captured now: track boxes describe the current view,
       // and the cloud-read frame is 2-5 s old by the time this runs.
       // Crop labels from the camera's full resolution (up to 1920 px): a label
@@ -876,7 +897,7 @@ function WebLiveCamera(props: NativeProps) {
       };
       try {
         const video = videoRef.current;
-        const diag = { video_w: video?.videoWidth ?? 0, video_h: video?.videoHeight ?? 0, frame_w: frameCanvas.width, frame_h: frameCanvas.height };
+        const diag = { video_w: video?.videoWidth ?? 0, video_h: video?.videoHeight ?? 0, frame_w: frameCanvas.width, frame_h: frameCanvas.height, steady: steadyCapture, sharp: Math.round(sharpRatio * 100) / 100 };
         const reads = await readLiveLabelBatch(crops, 'base', diag);
         if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
         const returnedTrackIds = new Set(reads.map(read => read.trackId));
