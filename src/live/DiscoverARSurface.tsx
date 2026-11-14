@@ -125,6 +125,8 @@ function WebLiveCamera(props: NativeProps) {
     }
 
     let disposed = false;
+    // Invalidates async recognition work when the user pauses recognition or the page hides.
+    let recognitionGeneration = 0;
     let stream: MediaStream | null = null;
     let frameCheck = 0;
     let recognitionTimer = 0;
@@ -156,6 +158,7 @@ function WebLiveCamera(props: NativeProps) {
     const handleVisibilityChange = () => {
       pageVisible = document.visibilityState === 'visible';
       if (!pageVisible) {
+        recognitionGeneration += 1;
         if (recognitionTimer) window.clearTimeout(recognitionTimer);
         if (localDetectionTimer) window.clearInterval(localDetectionTimer);
         recognitionTimer = 0;
@@ -203,6 +206,7 @@ function WebLiveCamera(props: NativeProps) {
     let barcodeDetector: BarcodeDetectorLike | null = null;
     if (BarcodeDetectorCtor) { try { barcodeDetector = new BarcodeDetectorCtor({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] }); } catch { barcodeDetector = null; } }
     const decodeBarcodeFrame = (sourceCanvas: HTMLCanvasElement, frameTimestamp: number) => {
+      const generation = recognitionGeneration;
       const barcodeCanvas = document.createElement('canvas');
       barcodeCanvas.width = sourceCanvas.width;
       barcodeCanvas.height = sourceCanvas.height;
@@ -214,7 +218,7 @@ function WebLiveCamera(props: NativeProps) {
         }
         return decodedBarcodes.length ? decodedBarcodes : decodeEanFromCanvas(barcodeCanvas);
       })().then(decodedBarcodes => {
-        if (disposed || !decodedBarcodes.length) return;
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration || !decodedBarcodes.length) return;
         callbacksRef.current.onRecognitionUpdate?.({ nativeEvent: {
           text: [],
           barcodes: decodedBarcodes.map(code => ({ value: code.rawValue, symbology: code.format })),
@@ -534,7 +538,8 @@ function WebLiveCamera(props: NativeProps) {
     }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
     const readCandidateLabels = async (frameCanvas: HTMLCanvasElement) => {
-      if (disposed || !pageVisible || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
+      if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || recognitionBusy || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
+      const generation = recognitionGeneration;
       const now = Date.now();
       const isVerifiedRead = (read?: LabelBatchRead) =>
         !!read?.brand && !!read.product && read.confidence >= 0.85
@@ -582,7 +587,7 @@ function WebLiveCamera(props: NativeProps) {
       crops.forEach(crop => lastLabelReadAt.set(crop.trackId, now));
       try {
         const reads = await readLiveLabelBatch(crops);
-        if (disposed) return;
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
         const returnedTrackIds = new Set(reads.map(read => read.trackId));
         crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
         for (const read of reads) {
@@ -626,6 +631,7 @@ function WebLiveCamera(props: NativeProps) {
       const video = videoRef.current;
       if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 2 || video.videoHeight < 2) return;
       localDetectionBusy = true;
+      const generation = recognitionGeneration;
       const localFrameStartedAt = performance.now();
       const frameTimestamp = Date.now();
       try {
@@ -647,7 +653,7 @@ function WebLiveCamera(props: NativeProps) {
         const segmentationStartedAt = performance.now();
         const instances = await segmentationRunner.runInference(frame, frameTimestamp);
         lastSegmentationMs = performance.now() - segmentationStartedAt;
-        if (disposed || !pageVisible || Date.now() - frameTimestamp > 1400) return;
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration || Date.now() - frameTimestamp > 1400) return;
         const localTracks = localBottleTracker.update(instances.map(instance => {
           const contour = extractMaskContour(instance.data, instance.width, instance.height, {
             bounds: instance.bounds, minimumPixels: 12, minimumArea: 0.001, maxPoints: 96,
@@ -710,6 +716,7 @@ function WebLiveCamera(props: NativeProps) {
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) { scheduleRecognition(); return; }
       recognitionBusy = true;
+      const generation = recognitionGeneration;
       lastRecognitionStartedAt = Date.now();
       let labelFrameCanvas: HTMLCanvasElement | null = null;
       let nextRecognitionDelay: number | null = null;
@@ -752,7 +759,7 @@ function WebLiveCamera(props: NativeProps) {
         }
         const jpeg = canvas.toDataURL('image/jpeg', 0.62);
         const result = await readLiveFrame(jpeg);
-        if (disposed) return;
+        if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || generation !== recognitionGeneration) return;
         lastSentFrameSignature = frameSignature;
         lastLiveReadAt = Date.now();
         lastLiveBottleCount = result.bottles.length;
@@ -858,6 +865,7 @@ function WebLiveCamera(props: NativeProps) {
 
     recognitionSchedulerRef.current = () => {
       if (!callbacksRef.current.recognitionEnabled) {
+        recognitionGeneration += 1;
         // Turning recognition off ends the current visual-tracking epoch.
         // Do not allow old candidates or cached OCR to return on the next toggle.
         webTracks = [];
