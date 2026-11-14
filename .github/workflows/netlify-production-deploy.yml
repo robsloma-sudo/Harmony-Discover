@@ -108,7 +108,7 @@ jobs:
 
   deploy-preview:
     needs: verify
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref != 'scanner/regression-fixture-phase2'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
