@@ -34,7 +34,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const isLandscape = screenWidth > screenHeight;
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
-  const [liveReadConsent, setLiveReadConsent] = useState(false);
+  // Remembered on this device: reopening the page must not silently switch recognition off.
+  const [liveReadConsent, setLiveReadConsentState] = useState(() => {
+    try { return typeof window !== 'undefined' && window.localStorage?.getItem('discover.liveRecognition') === 'on'; } catch { return false; }
+  });
+  const setLiveReadConsent = (next: boolean | ((value: boolean) => boolean)) => setLiveReadConsentState(value => {
+    const resolved = typeof next === 'function' ? next(value) : next;
+    try { if (typeof window !== 'undefined') window.localStorage?.setItem('discover.liveRecognition', resolved ? 'on' : 'off'); } catch { /* private mode */ }
+    return resolved;
+  });
   const [capturing, setCapturing] = useState(false);
   const [captureRequestId, setCaptureRequestId] = useState(0);
   const pendingCapture = useRef<'scan'|'menu_page'|null>(null);

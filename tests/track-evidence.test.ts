@@ -16,12 +16,12 @@ describe('evidence that builds up while scanning', () => {
 
   it('does not confirm a name from one weaker read; confirms it once reads agree', () => {
     const evidence = new TrackEvidence();
-    evidence.observeIdentity(-1, read('Taylor', 0.8), 'frame:1');
+    evidence.observeIdentity(-1, read('Taylor', 0.7), 'frame:1');
     const first = evidence.identity(-1)!;
     expect(first.reliable).toBe(false);
-    evidence.observeIdentity(-1, read('Taylor', 0.8), 'frame:1'); // same read again: counted once
+    evidence.observeIdentity(-1, read('Taylor', 0.7), 'frame:1'); // same read again: counted once
     expect(evidence.identity(-1)!.confidence).toBe(first.confidence);
-    evidence.observeIdentity(-1, read('Taylor', 0.88), 'label:2');
+    evidence.observeIdentity(-1, read('Taylor', 0.75), 'label:2');
     const second = evidence.identity(-1)!;
     expect(second.confidence).toBeGreaterThan(first.confidence);
     expect(second.reliable).toBe(true);
@@ -147,5 +147,13 @@ describe('wine labels with two names (estate and cuvée)', () => {
     const identity = evidence.identity(3)!;
     expect(identity.agreeingReads).toBe(2);
     expect(identity.reliable).toBe(true);
+  });
+});
+
+describe('flies up at 80%', () => {
+  it('one clear read at 80% confirms the name at once', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(4, read('Mescladis', 0.8), 'label:1');
+    expect(evidence.identity(4)!.reliable).toBe(true);
   });
 });

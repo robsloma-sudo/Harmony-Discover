@@ -168,7 +168,7 @@ function WebLiveCamera(props: NativeProps) {
     const steadyGate = new SteadyGate();
     let labelWaitingForSteady = false;
     let labelWaitStartedAt = 0;
-    const MAX_STEADY_WAIT_MS = 2500;
+    const MAX_STEADY_WAIT_MS = 700;
     let lostMotionFrames = 0;
     let localDetectionBusy = false;
     let detectorFailures = 0;
@@ -789,7 +789,7 @@ function WebLiveCamera(props: NativeProps) {
     const readCandidateLabels = async () => {
       // Label reads no longer wait behind the slower whole-frame read: a new bottle gets its first name fast.
       if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
-      // Wait (up to 2.5 s) for the phone to be still and the picture sharp.
+      // Wait (at most 0.7 s) for the phone to be still and the picture sharp.
       const steadyAt = performance.now();
       if (!steadyGate.steady(steadyAt)) {
         if (!labelWaitStartedAt) labelWaitStartedAt = steadyAt;

@@ -32,7 +32,7 @@ export type MotionSample = { tx: number; ty: number; scale: number };
 /** Per-tick camera movement (fraction of the view) at which text starts to smear. */
 export const STILL_MOTION = 0.003;
 /** How long the camera must stay still before a capture. */
-export const STILL_FOR_MS = 120;
+export const STILL_FOR_MS = 80;
 /** A capture must be at least this sharp compared with the sharpest recent frame. */
 export const SHARP_RATIO = 0.8;
 const WINDOW_MS = 2000;

@@ -34,8 +34,8 @@ type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best:
  */
 type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<string>; locked?: string; peak: number; peakKey?: string };
 
-/** One clear read is enough to confirm a name (no second read needed). */
-export const CONFIDENT_SINGLE_READ = 0.9;
+/** One clear read at 80% or more confirms a name straight away (Rob: fly up as soon as it hits 80%). */
+export const CONFIDENT_SINGLE_READ = 0.8;
 
 /** Show a name only when agreeing reads reach this confidence and clearly beat any rival. */
 export const RELIABLE_IDENTITY = 0.75;
