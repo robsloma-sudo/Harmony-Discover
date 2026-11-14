@@ -253,8 +253,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const tracking = event.nativeEvent;
             setLiveTracking(tracking);
             if (tracking.state === 'paused' || tracking.state === 'interrupted' || tracking.state === 'not_available') {
-              // Keep the open profile as a snapshot, but don't let a reused
-              // track ID from a new camera session overwrite its identity.
+              // A camera lifecycle transition ends the visible candidate epoch.
+              // Keep an open profile as a snapshot, but clear all overlays and
+              // force world anchors to start a fresh session.
+              setLiveCandidates([]);
+              setLiveSpatialObservationFrame(null);
+              setLiveDepthFrame(null);
+              setLiveCameraPose(null);
+              setAnchorSessionKey(value => value + 1);
               setSelectedTrackId(null);
             }
           }}
