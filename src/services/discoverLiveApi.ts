@@ -2,6 +2,11 @@ import { ensureDiscoverSession } from './supabase';
 
 const base = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+// The test site uses a front-door function that allows its own web address;
+// production keeps calling discover-live-read directly.
+const liveReadFunction = /^[a-z0-9-]+$/.test(process.env.EXPO_PUBLIC_DISCOVER_LIVE_READ_FUNCTION || '')
+  ? process.env.EXPO_PUBLIC_DISCOVER_LIVE_READ_FUNCTION!
+  : 'discover-live-read';
 
 export type BottleState = 'matched' | 'reported' | 'unsure';
 export type BottleEdgePath = {
@@ -31,7 +36,7 @@ export class BottleReadError extends Error {
 async function call(body: Record<string, unknown>) {
   if (!base || !publishableKey) throw new BottleReadError('not_configured', 0);
   const session = await ensureDiscoverSession();
-  const response = await fetch(`${base}/functions/v1/discover-live-read`, {
+  const response = await fetch(`${base}/functions/v1/${liveReadFunction}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}`, apikey: publishableKey },
     body: JSON.stringify(body),

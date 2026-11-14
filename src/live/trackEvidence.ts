@@ -27,7 +27,7 @@ type Vote<T> = { read: T; weight: number; reads: number; evidence: number };
 type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<string> };
 
 /** Show a name only when agreeing reads reach this confidence and clearly beat any rival. */
-export const RELIABLE_IDENTITY = 0.8;
+export const RELIABLE_IDENTITY = 0.75;
 const RELIABLE_SHARE = 0.75;
 
 const clean = (value?: string | null) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -67,7 +67,7 @@ export class TrackEvidence<T extends IdentityRead> {
     entry.seen.add(sourceKey);
     if (entry.seen.size > 64) entry.seen = new Set([...entry.seen].slice(-32));
     const matched = read.state === 'matched' && (read.match?.score ?? 0) >= 0.9;
-    const strength = clamp(read.confidence) * (matched ? 0.75 : 0.6);
+    const strength = clamp(read.confidence) * (matched ? 0.8 : 0.7);
     const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0 };
     vote.read = read;
     vote.weight += clamp(read.confidence);

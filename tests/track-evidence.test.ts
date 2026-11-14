@@ -39,12 +39,12 @@ describe('evidence that builds up while scanning', () => {
     expect(evidence.identity(-1)!.reliable).toBe(true);
   });
 
-  it('needs more agreeing reads when they are not catalog matches', () => {
+  it('needs a third agreeing read when uncatalogued reads are only fairly legible', () => {
     const evidence = new TrackEvidence();
-    evidence.observeIdentity(-1, read('Blanton', 0.8, false), 'a');
-    evidence.observeIdentity(-1, read('Blanton', 0.8, false), 'b');
+    evidence.observeIdentity(-1, read('Blanton', 0.65, false), 'a');
+    evidence.observeIdentity(-1, read('Blanton', 0.65, false), 'b');
     expect(evidence.identity(-1)!.reliable).toBe(false);
-    evidence.observeIdentity(-1, read('Blanton', 0.8, false), 'c');
+    evidence.observeIdentity(-1, read('Blanton', 0.65, false), 'c');
     expect(evidence.identity(-1)!.reliable).toBe(true);
   });
 
