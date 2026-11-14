@@ -602,8 +602,8 @@ function WebLiveCamera(props: NativeProps) {
               fieldConfidence: { ...previous.fieldConfidence, ...read.fieldConfidence },
               details: { ...previous.details, ...read.details },
               match: hasBottleIdentityConflict(previous, read)
-                ? (read.state === 'matched' ? read.match : undefined)
-                : (read.match || previous.match),
+                ? (read.state === 'matched' ? (read.match ?? null) : null)
+                : (read.match || previous.match || null),
               state: hasBottleIdentityConflict(previous, read)
                 ? (read.state === 'matched' ? 'matched' : read.state)
                 : (read.state === 'matched' ? 'matched' : read.brand ? read.state : previous.state),
