@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.4.0
+// Harmony Discover DEV: discover-live-autosave v0.4.1
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,10 +6,12 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.4.1: tasting summaries kept at confidence 0.5+ (still need a real search URL); card research logs kept/dropped field names.
 // v0.4.0: action "card" returns everything known about a product for its profile card (found by exact name,
 // else by the product this name was last saved under) and, at most once per product every 6 hours, researches the card's
 // empty categories in the background (5 web searches, research budget applies). Brand-only bottles (many
-// wines) are now researched too.
+// wines) are now researched too. Every drink gets tasting notes (nose, palate, finish, pairing), researched first and
+// summarised in Harmony's own words with source links.
 // For a product with no researched facts yet, web research starts in the background: Claude searches
 // the web for the exact expression and only facts backed by a URL that the search actually returned
 // are stored (evidence + attributes, unreviewed). No images are received or stored.
@@ -18,7 +20,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -33,7 +35,8 @@ const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "bran
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The facts worth finding first, per kind of drink (a short list keeps the search focused).
-const COMMON = ["producer", "brand_owner", "country", "region", "classification", "subcategory", "alcohol_statement"];
+const TASTING = new Set(["tasting_notes", "nose", "palate", "finish", "food_pairing"]);
+const COMMON = ["tasting_notes", "nose", "palate", "finish", "producer", "brand_owner", "country", "region", "classification", "subcategory", "alcohol_statement"];
 const FIELDS_BY_CATEGORY: Record<string, string[]> = {
   whiskey: [...COMMON, "distillery", "state_or_province", "mash_bill", "grain", "age_statement", "cask_type", "cask_finish"],
   tequila: [...COMMON, "distillery", "state_or_province", "agave_type", "production_method", "age_statement", "cask_type"],
@@ -141,6 +144,7 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     "\nFACTS WANTED (use exactly these field names): " + wanted.map((f) => labels[f] ? f + " (" + labels[f] + ")" : f).join(", ") +
     "\nSearch the web for the exact brand and product expression. Prefer the producer's own site, then regulators and reputable references; retailers are fine as support. " +
     "Return only facts a search result states for this exact product (not a sibling expression, size or age). Leave out anything you cannot find. " +
+    "Tasting fields (tasting_notes, nose, palate, finish, food_pairing): summarise in your own words, at most 35 words each, what the producer's or reviewers' published notes for this product say; never copy their sentences. " +
     "For every fact give a 0-1 confidence and list the search-result URLs that support it (use field names in supports). Call bottle_enrichment once." }];
   const all: Array<Record<string, unknown>> = [];
   let input: Record<string, unknown> = {};
@@ -225,14 +229,19 @@ async function research(apiKey: string, model: string, identity: Record<string, 
   const rawFields = (input.fields && typeof input.fields === "object" ? input.fields : {}) as Record<string, unknown>;
   const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
   const facts: Record<string, { value: string; confidence: number }> = {};
+  const dropped: Record<string, string> = {};
   // A fact needs a real search-result URL behind it: its own, or (when the model did not map
-  // sources to fields) the product page sources it returned for this search.
+  // sources to fields) the product page sources it returned for this search. Tasting summaries are
+  // judgement by nature, so they need 0.5 (still source-backed); hard facts need 0.7.
   for (const [field, value] of Object.entries(rawFields)) {
     const v = clean(value, 240), c = unit(rawScores[field] ?? 0.75);
-    if (allowed.has(field) && v && c >= 0.7 && (supported.has(field) || sources.length > 0)) facts[field] = { value: v, confidence: c };
+    const floor = TASTING.has(field) ? 0.5 : 0.7;
+    const why = !allowed.has(field) ? "not_wanted" : !v ? "empty" : c < floor ? "low_" + c.toFixed(2) : !(supported.has(field) || sources.length > 0) ? "no_source" : "";
+    if (why) { dropped[clean(field, 40)] = why; continue; }
+    facts[field] = { value: v, confidence: c };
   }
   for (const f of Object.keys(facts)) if (!supported.has(f)) for (const s of sources.slice(0, 2)) s.supports.push(f);
-  return { facts, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note };
+  return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note };
 }
 
 const evidenceSourceType = (kind: string, url: string) => {
@@ -369,7 +378,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
           const identity = { brand: String(found.brand_name || brand), product: String(found.product_name || product), category };
           const result = await research(apiKey, model, identity, wanted, labels, CARD_SEARCHES);
           const added = await storeFacts(db, productId, identity.product, result, { researched_by: "card" });
-          console.log(JSON.stringify({ evt: "card_research", wanted: wanted.length, raw_fields: result.rawFields, valid_sources: result.validSources, note: result.note, attributes: added, search_results: result.searchResults, ms: Date.now() - started }));
+          console.log(JSON.stringify({ evt: "card_research", wanted: wanted.length, raw_fields: result.rawFields, kept: Object.keys(result.facts), dropped: result.dropped, valid_sources: result.validSources, note: result.note, attributes: added, search_results: result.searchResults, ms: Date.now() - started }));
         } catch (error) {
           console.log(JSON.stringify({ evt: "card_research_error", msg: clean(error instanceof Error ? error.message : error, 160) }));
         }
