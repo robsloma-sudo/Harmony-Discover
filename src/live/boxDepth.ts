@@ -16,11 +16,14 @@ const GAP = 0.008;
 const MIN_W = 0.03, MIN_H = 0.04;
 
 export function labelRect(b: Rect): Rect {
+  // A bottle cut off by the bottom of the view shows its label in the lower half of what is visible.
+  const cut = b.y + b.height >= 0.97;
+  const top = cut ? 0.5 : LABEL_TOP, bottom = cut ? 0.99 : LABEL_BOTTOM;
   return {
     x: b.x + b.width * LABEL_SIDE,
-    y: b.y + b.height * LABEL_TOP,
+    y: b.y + b.height * top,
     width: Math.max(MIN_W, b.width * (1 - 2 * LABEL_SIDE)),
-    height: Math.max(MIN_H, b.height * (LABEL_BOTTOM - LABEL_TOP)),
+    height: Math.max(MIN_H, b.height * (bottom - top)),
   };
 }
 
