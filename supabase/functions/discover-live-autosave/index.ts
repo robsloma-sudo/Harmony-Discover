@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.5.4
+// Harmony Discover DEV: discover-live-autosave v0.5.5
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,8 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.5.5: card research backs off when nothing new is found (15 min, 1 h, 1 day, 1 week, 30 days); facts not found
+// twice for a bottle are no longer asked for.
 // v0.5.4: card research every 15 minutes per product (was 6 hours); daily cap 300 lookups / 3,000 searches.
 // v0.5.3: one record per real bottle: the card shows the facts of every record on the same line; research is told what is
 // already known and aims at what is new; open "notable_facts" list (grows over time) and "release_history" for limited lines.
@@ -29,7 +31,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.4";
+const VERSION = "0.5.5";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -388,17 +390,20 @@ async function storeFacts(db: SupabaseClient, productId: string, product: string
   for (const row of inserted) if (!firstEvidence.has(row.attribute_code)) firstEvidence.set(row.attribute_code, row.id);
   const rows = [...firstEvidence.entries()].map(([field, evidenceId]) => ({ discover_product_id: productId, attribute_code: field, value_text: result.facts[field]!.value, state: "found", confidence: result.facts[field]!.confidence, evidence_id: evidenceId }));
   // List facts grow: new items are added to the ones already stored (duplicates skipped, at most 12 kept).
+  let unchangedLists = 0;
   for (const row of rows.filter((r) => LIST_FIELDS.has(r.attribute_code))) {
     const { data: old } = await db.from("discover_product_attributes").select("value_text").eq("discover_product_id", productId).eq("attribute_code", row.attribute_code).maybeSingle();
     if (!old?.value_text) continue;
     const items = String(old.value_text).split(LIST_SEP).map((x) => x.trim()).filter(Boolean);
     const seen = new Set(items.map((x) => norm(x)));
+    const before = items.length;
     for (const item of String(row.value_text).split(LIST_SEP).map((x) => x.trim()).filter(Boolean)) if (!seen.has(norm(item))) { items.push(item); seen.add(norm(item)); }
+    if (items.length === before) unchangedLists += 1;
     await db.from("discover_product_attributes").update({ value_text: items.slice(0, 12).join(LIST_SEP), updated_at: new Date().toISOString() }).eq("discover_product_id", productId).eq("attribute_code", row.attribute_code);
   }
   const { error: attrError } = await db.from("discover_product_attributes").upsert(rows, { onConflict: "discover_product_id,attribute_code", ignoreDuplicates: true });
   if (attrError) throw new Error("attribute_insert_failed");
-  return rows.length;
+  return rows.length - unchangedLists;   // new facts (a list that gained nothing does not count)
 }
 
 // What the card already knows, as short lines for the research prompt (so searches aim at what is new).
@@ -443,8 +448,15 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
     db.from("discover_product_evidence").select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at,metadata").in("discover_product_id", familyIds).order("captured_at", { ascending: false }).limit(60),
     db.from("discover_product_packages").select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload").eq("discover_product_id", productId).limit(12),
     db.from("bottle_sightings").select("id", { count: "exact", head: true }).in("discover_product_id", familyIds),
-    db.from("discover_product_search_usage").select("searches,research_runs,last_research_at").in("discover_product_id", familyIds),
+    db.from("discover_product_search_usage").select("discover_product_id,searches,research_runs,last_research_at,next_research_at").in("discover_product_id", familyIds),
   ]);
+  // Facts this bottle's research already failed to find twice are not asked for again (stories always are).
+  const { data: misses } = await db.from("discover_research_outcomes").select("field,outcome").in("discover_product_id", familyIds).limit(1000);
+  const missCount = new Map<string, number>(), foundOnce = new Set<string>();
+  for (const r of (misses ?? []) as Array<{ field: string; outcome: string }>) {
+    if (r.outcome === "kept") foundOnce.add(r.field); else missCount.set(r.field, (missCount.get(r.field) ?? 0) + 1);
+  }
+  const givenUp = new Set([...missCount.entries()].filter(([f, n]) => n >= 2 && !foundOnce.has(f) && !LIST_FIELDS.has(f)).map(([f]) => f));
   const attributes: Array<Record<string, unknown>> = [];
   for (const id of familyIds) for (const a of (allAttributes ?? []) as Array<Record<string, unknown>>) {
     if (String(a.discover_product_id) !== id || attributes.some((x) => x.attribute_code === a.attribute_code)) continue;
@@ -469,15 +481,18 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
   const labels: Record<string, string> = {};
   for (const f of (Array.isArray(body.fields) ? body.fields : []).slice(0, 40) as Array<Record<string, unknown>>) {
     const key = clean(f?.key, 40), label = clean(f?.label, 60);
-    if (/^[a-z_]{2,40}$/.test(key) && !have.has(key)) labels[key] = label || key;
+    if (/^[a-z_]{2,40}$/.test(key) && !have.has(key) && !givenUp.has(key)) labels[key] = label || key;
   }
   // Stories keep growing: always look for new notable facts (limited releases also get their release history).
   labels.notable_facts = labels.notable_facts || "Stories & notable facts";
   if (line?.release_pattern && line.release_pattern !== "continuous" && !have.has("release_history")) labels.release_history = labels.release_history || "Release history";
   const wanted = Object.keys(labels).slice(0, 32);
   let researching = false;
+  // Waits grow when research stops finding anything new: 15 min, 1 hour, 1 day, 1 week, 30 days.
+  const own = usageRows.find((r) => String(r.discover_product_id) === productId);
+  const waiting = !!own?.next_research_at && Date.parse(String(own.next_research_at)) > Date.now();
   // At most one card research per product every 15 minutes (keyed on the product, not the person).
-  const tryResearch = wanted.length >= 3 && !!apiKey
+  const tryResearch = wanted.length >= 3 && !!apiKey && !waiting
     && (await db.rpc("discover_rate_limit", { p_subject: productId, p_bucket: "card_research", p_max: 1, p_window_seconds: CARD_RESEARCH_EVERY_S })).data === true;
   if (tryResearch) {
     const { data: budgetOk } = await db.rpc("discover_reserve_bottle_research_budget", {
@@ -496,13 +511,16 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
           const useful = wanted.filter((f) => !hints.skip.has(f));
           const groups = [useful.filter((f) => STORY.has(f)), useful.filter((f) => !STORY.has(f))].filter((g) => g.length);
           const per = Math.floor(CARD_SEARCHES / groups.length);
+          let newFacts = 0;
           await Promise.all(groups.map(async (group, i) => {
             const result = await research(apiKey, model, identity, group, labels, per, hints.text, knownSummary(attributes, line as Record<string, unknown> | null));
             await recordOutcomes(db, productId, category, group, result, "card");
             await db.rpc("discover_add_product_searches", { p_product: productId, p_searches: result.searchesUsed });
             const added = await storeFacts(db, productId, identity.product, result, { researched_by: "card", pass: i + 1 });
+            newFacts += added;
             console.log(JSON.stringify({ evt: "card_research", pass: groups.length > 1 ? i + 1 : 0, wanted: group.length, raw_fields: result.rawFields, kept: Object.keys(result.facts), dropped: result.dropped, input_keys: result.inputKeys, valid_sources: result.validSources, note: result.note, attributes: added, searches: result.searchesUsed, search_results: result.searchResults, ms: Date.now() - started }));
           }));
+          await db.rpc("discover_note_research_result", { p_product: productId, p_new_facts: newFacts });
         } catch (error) {
           console.log(JSON.stringify({ evt: "card_research_error", msg: clean(error instanceof Error ? error.message : error, 160) }));
         }
@@ -517,7 +535,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
     packages: packages ?? [], attributes: attributes ?? [],
     evidence: (evidence ?? []).map((e: Record<string, unknown>) => { const { metadata: _m, ...rest } = e; return rest; }),
     sightings: { total: total || 0, confirmed: 0 },
-    research: { searches_total: searchesTotal, runs: runsTotal, last_at: lastAt, researching_now: researching },
+    research: { searches_total: searchesTotal, runs: runsTotal, last_at: lastAt, researching_now: researching, next_at: own?.next_research_at ?? null, skipped_fields: [...givenUp].slice(0, 20) },
   }, 200, origin);
 }
 
