@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.4.1
+// Harmony Discover DEV: discover-live-autosave v0.4.2
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,7 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.4.2: values are written as plain facts (no website or listing names inside a value).
 // v0.4.1: tasting summaries kept at confidence 0.5+ (still need a real search URL); card research logs kept/dropped field names.
 // v0.4.0: action "card" returns everything known about a product for its profile card (found by exact name,
 // else by the product this name was last saved under) and, at most once per product every 6 hours, researches the card's
@@ -20,7 +21,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4.1";
+const VERSION = "0.4.2";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -145,6 +146,7 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     "\nSearch the web for the exact brand and product expression. Prefer the producer's own site, then regulators and reputable references; retailers are fine as support. " +
     "Return only facts a search result states for this exact product (not a sibling expression, size or age). Leave out anything you cannot find. " +
     "Tasting fields (tasting_notes, nose, palate, finish, food_pairing): summarise in your own words, at most 35 words each, what the producer's or reviewers' published notes for this product say; never copy their sentences. " +
+    "Write every value as a plain fact for a drinker: never name websites, listings or reviewers inside a value (sources go in sources). " +
     "For every fact give a 0-1 confidence and list the search-result URLs that support it (use field names in supports). Call bottle_enrichment once." }];
   const all: Array<Record<string, unknown>> = [];
   let input: Record<string, unknown> = {};
