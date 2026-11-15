@@ -36,8 +36,10 @@ export function BoxStage({ stage, value, since, name, boxWidth }: Props) {
   }, [pct, fill]);
   const text = stage === 'found' ? '✓ ' + (name || '') : LABEL[stage] + ' ' + pct + '%';
   // One line that always fits inside the box: the font shrinks with the box width.
-  const room = Math.max(10, boxWidth - 12);
-  const fontSize = Math.max(3.5, Math.min(7.5, room / (Math.max(1, text.length) * 0.74)));
+  // Bold capitals are about 0.8 em wide, plus 0.3 pt letter spacing; 16 pt go to the tag's padding and the box margins.
+  const chars = Math.max(1, text.length);
+  const room = Math.max(10, boxWidth - 16);
+  const fontSize = Math.max(3.5, Math.min(7.5, (room - chars * 0.3) / (chars * 0.8)));
   return (
     <View pointerEvents="none" style={styles.wrap}>
       <View style={styles.track}>
@@ -57,6 +59,6 @@ const styles = StyleSheet.create({
   track: { alignSelf: 'stretch', height: 2.5, marginHorizontal: 3, marginTop: 3, borderRadius: 2, backgroundColor: 'rgba(119,229,181,0.18)', overflow: 'hidden' },
   fill: { height: '100%', borderRadius: 2, backgroundColor: '#77E5B5' },
   fillDone: { backgroundColor: '#BFF5DD' },
-  tag: { marginTop: 3, maxWidth: '96%', paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 4, backgroundColor: 'rgba(5,15,16,0.86)' },
-  text: { color: '#E9FFF5', fontWeight: '900', letterSpacing: 0.4, textAlign: 'center' },
+  tag: { marginTop: 3, paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 4, backgroundColor: 'rgba(5,15,16,0.86)' },
+  text: { color: '#E9FFF5', fontWeight: '900', letterSpacing: 0.3, textAlign: 'center' },
 });
