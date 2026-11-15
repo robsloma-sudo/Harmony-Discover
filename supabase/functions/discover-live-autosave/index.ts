@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.4.2
+// Harmony Discover DEV: discover-live-autosave v0.4.3
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,7 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.4.3: answer retry no longer fails on signed thinking blocks; facts given at the top level or as JSON text are accepted; logs answer keys.
 // v0.4.2: values are written as plain facts (no website or listing names inside a value).
 // v0.4.1: tasting summaries kept at confidence 0.5+ (still need a real search URL); card research logs kept/dropped field names.
 // v0.4.0: action "card" returns everything known about a product for its profile card (found by exact name,
@@ -21,7 +22,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4.2";
+const VERSION = "0.4.3";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -175,6 +176,8 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     }
     // The searches ran but no answer was given: ask once more, now requiring the answer tool.
     if (!Object.keys(input).length && all.some((b) => b.type === "web_search_tool_result")) {
+      // Earlier thinking blocks are signed for the first request; drop them (allowed for past turns).
+      for (const m of messages) if (m.role === "assistant" && Array.isArray(m.content)) m.content = (m.content as Array<Record<string, unknown>>).filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking");
       messages.push({ role: "user", content: "Now call bottle_enrichment with the facts the search results above support for this exact product." });
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: controller.signal,
@@ -191,6 +194,10 @@ async function research(apiKey: string, model: string, identity: Record<string, 
       else note = "final_" + r.status + "_" + clean(p?.error?.message ?? p?.stop_reason, 80);
     }
   } finally { clearTimeout(timer); }
+  // Nested parts sometimes arrive as JSON text: read them as objects.
+  for (const k of ["fields", "field_confidence", "sources"]) {
+    if (typeof input[k] === "string") { try { input[k] = JSON.parse(input[k] as string); } catch { /* left as is */ } }
+  }
   const found = new Map<string, string>();
   for (const b of all) {
     if (b.type !== "web_search_tool_result" || !Array.isArray(b.content)) continue;
@@ -228,7 +235,10 @@ async function research(apiKey: string, model: string, identity: Record<string, 
       if (sources.length >= 2) break;
     }
   }
-  const rawFields = (input.fields && typeof input.fields === "object" ? input.fields : {}) as Record<string, unknown>;
+  // Facts normally sit under "fields"; some answers put them at the top level instead.
+  const topLevel = Object.fromEntries(Object.entries(input).filter(([k, v]) => allowed.has(k) && typeof v === "string"));
+  const nested = input.fields && typeof input.fields === "object" && !Array.isArray(input.fields) ? input.fields as Record<string, unknown> : {};
+  const rawFields = (Object.keys(nested).length ? nested : topLevel) as Record<string, unknown>;
   const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
   const facts: Record<string, { value: string; confidence: number }> = {};
   const dropped: Record<string, string> = {};
@@ -243,7 +253,7 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     facts[field] = { value: v, confidence: c };
   }
   for (const f of Object.keys(facts)) if (!supported.has(f)) for (const s of sources.slice(0, 2)) s.supports.push(f);
-  return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note };
+  return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note, inputKeys: Object.keys(input).slice(0, 8).map((k) => clean(k, 30)) };
 }
 
 const evidenceSourceType = (kind: string, url: string) => {
@@ -380,7 +390,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
           const identity = { brand: String(found.brand_name || brand), product: String(found.product_name || product), category };
           const result = await research(apiKey, model, identity, wanted, labels, CARD_SEARCHES);
           const added = await storeFacts(db, productId, identity.product, result, { researched_by: "card" });
-          console.log(JSON.stringify({ evt: "card_research", wanted: wanted.length, raw_fields: result.rawFields, kept: Object.keys(result.facts), dropped: result.dropped, valid_sources: result.validSources, note: result.note, attributes: added, search_results: result.searchResults, ms: Date.now() - started }));
+          console.log(JSON.stringify({ evt: "card_research", wanted: wanted.length, raw_fields: result.rawFields, kept: Object.keys(result.facts), dropped: result.dropped, input_keys: result.inputKeys, valid_sources: result.validSources, note: result.note, attributes: added, search_results: result.searchResults, ms: Date.now() - started }));
         } catch (error) {
           console.log(JSON.stringify({ evt: "card_research_error", msg: clean(error instanceof Error ? error.message : error, 160) }));
         }
