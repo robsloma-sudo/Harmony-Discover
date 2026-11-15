@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.5.3
+// Harmony Discover DEV: discover-live-autosave v0.5.4
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,7 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.5.4: card research every 15 minutes per product (was 6 hours); daily cap 300 lookups / 3,000 searches.
 // v0.5.3: one record per real bottle: the card shows the facts of every record on the same line; research is told what is
 // already known and aims at what is new; open "notable_facts" list (grows over time) and "release_history" for limited lines.
 // v0.5.2: running total of web searches per product (real count from the API usage), returned on the card.
@@ -28,7 +29,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.3";
+const VERSION = "0.5.4";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -39,6 +40,10 @@ const MAX_BOTTLES = 8;
 const MIN_CONFIDENCE = 0.65;
 const USER_CALLS_PER_DAY = 300, PROJECT_CALLS_PER_DAY = 3000;
 const RESEARCH_SEARCHES = 6;   // doubled with Rob's OK (15 Nov 2026)
+// Rob, 15 Nov 2026: a product's card may research again every 15 minutes; at most 300 lookups a day
+// (one lookup = one bottle researched once; up to 10 searches each, so at most 3,000 searches a day).
+const CARD_RESEARCH_EVERY_S = 900;
+const DAILY_LOOKUPS = 300, DAILY_SEARCHES = 3000;
 const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "pisco", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "non_alcoholic_beer", "other"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -330,7 +335,7 @@ async function researchProduct(db: SupabaseClient, apiKey: string, subject: stri
     if (!wanted.length) return await finish({ result: "no_missing_research_fields", by: "live-autosave" });
     const { data: budgetOk, error: budgetError } = await db.rpc("discover_reserve_bottle_research_budget", {
       p_consumer: subject, p_jobs: 1, p_search_units: RESEARCH_SEARCHES,
-      p_user_jobs_max: 30, p_project_jobs_max: 200, p_user_search_max: 180, p_project_search_max: 1200,
+      p_user_jobs_max: DAILY_LOOKUPS, p_project_jobs_max: DAILY_LOOKUPS, p_user_search_max: DAILY_SEARCHES, p_project_search_max: DAILY_SEARCHES,
     });
     if (budgetError || budgetOk !== true) return await finish({ result: "research_budget_exhausted", by: "live-autosave" }, "retry");
     const model = Deno.env.get("DISCOVER_RESEARCH_MODEL") || Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
@@ -471,13 +476,13 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
   if (line?.release_pattern && line.release_pattern !== "continuous" && !have.has("release_history")) labels.release_history = labels.release_history || "Release history";
   const wanted = Object.keys(labels).slice(0, 32);
   let researching = false;
-  // At most one card research per product every 6 hours (keyed on the product, not the person).
+  // At most one card research per product every 15 minutes (keyed on the product, not the person).
   const tryResearch = wanted.length >= 3 && !!apiKey
-    && (await db.rpc("discover_rate_limit", { p_subject: productId, p_bucket: "card_research", p_max: 1, p_window_seconds: 21600 })).data === true;
+    && (await db.rpc("discover_rate_limit", { p_subject: productId, p_bucket: "card_research", p_max: 1, p_window_seconds: CARD_RESEARCH_EVERY_S })).data === true;
   if (tryResearch) {
     const { data: budgetOk } = await db.rpc("discover_reserve_bottle_research_budget", {
       p_consumer: subject, p_jobs: 1, p_search_units: CARD_SEARCHES,
-      p_user_jobs_max: 30, p_project_jobs_max: 200, p_user_search_max: 300, p_project_search_max: 1800,
+      p_user_jobs_max: DAILY_LOOKUPS, p_project_jobs_max: DAILY_LOOKUPS, p_user_search_max: DAILY_SEARCHES, p_project_search_max: DAILY_SEARCHES,
     });
     if (budgetOk === true) {
       researching = true;
