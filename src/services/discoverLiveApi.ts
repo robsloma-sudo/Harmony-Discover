@@ -243,7 +243,7 @@ export type LiveSightingInput = {
   words: string[]; confidence: number; agreeingReads: number;
   details: Record<string, string | string[]>; fieldConfidence: Record<string, number>;
 };
-export type LiveSightingResult = { brand: string; product: string; status: 'saved' | 'already_saved' | 'failed'; productId: string | null; newProduct: boolean; identity: ResolvedIdentity | null };
+export type LiveSightingResult = { brand: string; product: string; status: 'saved' | 'already_saved' | 'failed'; productId: string | null; newProduct: boolean; identity: ResolvedIdentity | null; researching: boolean };
 
 function toResolvedIdentity(raw: unknown): ResolvedIdentity | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -282,5 +282,6 @@ export async function saveLiveSightings(scanSessionId: string, bottles: LiveSigh
     productId: typeof r.product_id === 'string' ? r.product_id : null,
     newProduct: r.new_product === true,
     identity: toResolvedIdentity(r.identity),
+    researching: r.researching === true,
   }));
 }

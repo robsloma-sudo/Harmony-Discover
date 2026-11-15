@@ -27,6 +27,7 @@ import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/Found
 import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
 import { clientLog, installClientLog } from '../src/services/clientLog';
 import { layoutBoxes } from '../src/live/boxDepth';
+import { BoxStage } from '../src/live/BoxStage';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -57,7 +58,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;stage?:{name:'scanning'|'reading'|'identifying'|'researching'|'found';since?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -416,17 +417,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               width: ((trackedWidth * 100) + '%') as `${number}%`,
               height: ((trackedHeight * 100) + '%') as `${number}%`,
             };
-            // Tag text always fits on one line inside its box: the font shrinks to the box width (never wraps or cuts off).
-            const fitFont = (text: string, max: number) => {
-              const room = Math.max(10, trackedWidth * screenWidth - 18);
-              return Math.max(3.5, Math.min(max, room / (Math.max(1, text.length) * 0.74)));
-            };
+            const boxPx = trackedWidth * screenWidth;   // box width in points (stage text fits inside it)
             if (bottle) {
               // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
               return (
                 <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                   <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
-                    <View style={[s.liveFoundTag, { top: 2, left: 2 }]}><Text numberOfLines={1} ellipsizeMode="clip" style={[s.liveFoundTagText, { fontSize: fitFont('✓ ' + name, 7) }]}>✓ {name}</Text></View>
+                    {tracked.stage?.name === 'researching'
+                      ? <BoxStage stage="researching" since={tracked.stage.since} boxWidth={boxPx} />
+                      : <BoxStage stage="found" name={name} boxWidth={boxPx} />}
                   </View>
                 </View>
               );
@@ -436,11 +435,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             return (
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <View style={[s.liveDetectionBox, boxStyle]}>
-                  {(() => {
-                    // One line: name, then the bottle % (and the name % while name-checking; two numbers so the bottle % never seems to drop).
-                    const tag = ((name === 'BOTTLE DETECTED' ? 'BOTTLE' : name) || 'BOTTLE') + ' · ' + (identifying ? `${Math.round(tracked.confidence * 100)}% · NAME ${Math.round(tracked.identifying! * 100)}%` : `${Math.round(tracked.confidence * 100)}%`);
-                    return <View style={s.liveDetectionLabel}><Text numberOfLines={1} ellipsizeMode="clip" style={[s.liveDetectionName, { fontSize: fitFont(tag, 7) }]}>{tag}</Text></View>;
-                  })()}
+                  {/* What the scanner is doing with this bottle right now, with its progress. */}
+                  {tracked.stage?.name === 'reading'
+                    ? <BoxStage stage="recognizing" since={tracked.stage.since} boxWidth={boxPx} />
+                    : identifying
+                      ? <BoxStage stage="identifying" value={tracked.identifying} boxWidth={boxPx} />
+                      : <BoxStage stage="scanning" value={tracked.confidence} boxWidth={boxPx} />}
                 </View>
               </View>
             );

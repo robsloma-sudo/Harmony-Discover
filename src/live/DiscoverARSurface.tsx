@@ -34,6 +34,8 @@ import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
 
 /** Smallest label crop (longest side, in camera pixels) worth sending to the label reader. */
 export const MIN_READABLE_LABEL_PX = 200;
+/** How long a newly saved bottle shows RESEARCHING (web research typically finishes in 20-40 s). */
+const RESEARCH_SHOWN_MS = 40_000;
 /** Whole-bottle crops narrower than this (width / height) are slivers with no readable label. */
 export const MIN_BODY_CROP_ASPECT = 0.16;
 
@@ -191,6 +193,9 @@ function WebLiveCamera(props: NativeProps) {
     };
     let scanSessionId = newScanSessionId();
     const saveState = new Map<string, 'queued' | 'saving' | 'saved'>();
+    // Box stages (shown on the green boxes): when a bottle's label went to be read, and when its web research started.
+    const readingSince = new Map<number, number>();
+    const researchSince = new Map<string, number>();
     // Server-resolved identity per read key (brand + line + release + size); feeds liquid-level calibration.
     const resolvedByKey = new Map<string, ResolvedIdentity>();
     let saveQueue: Array<{ key: string; input: LiveSightingInput }> = [];
@@ -230,10 +235,13 @@ function WebLiveCamera(props: NativeProps) {
         saveQueue = saveQueue.filter(item => !batch.includes(item));
         batch.forEach((item, index) => {
           const status = results[index]?.status;
-          if (status === 'saved' || status === 'already_saved') saveState.set(item.key, 'saved');
           const resolved = results[index]?.identity;
           if (resolved) resolvedByKey.set(item.key, resolved);
-          else saveState.delete(item.key); // not saved: may be queued again later
+          if (status === 'saved' || status === 'already_saved') {
+            saveState.set(item.key, 'saved');
+            // A new bottle is researched on the web right after it is saved (known bottles already were).
+            if (results[index]?.researching && results[index]?.newProduct && !researchSince.has(item.key)) researchSince.set(item.key, Date.now());
+          } else saveState.delete(item.key); // not saved: may be queued again later
         });
         publishVisibleCandidates();
       } catch (error) {
@@ -573,11 +581,17 @@ function WebLiveCamera(props: NativeProps) {
           queueAutoSave(identity.read, identity.confidence, identity.agreeingReads);
           const key = identityKey(identity.read);
           const resolved = key ? resolvedByKey.get(key) : undefined;
-          return { ...candidate, confidence, bottle: resolved ? { ...identity.read, resolved } : identity.read, identityConfidence: identity.confidence, saved: !!key && saveState.get(key) === 'saved' };
+          const researchAt = key ? researchSince.get(key) : undefined;
+          const stage = researchAt !== undefined && now - researchAt < RESEARCH_SHOWN_MS
+            ? { name: 'researching' as const, since: researchAt } : { name: 'found' as const };
+          return { ...candidate, confidence, bottle: resolved ? { ...identity.read, resolved } : identity.read, identityConfidence: identity.confidence, saved: !!key && saveState.get(key) === 'saved', stage };
         }
         // Instant reading: show the first read straight away as provisional; it
         // updates as more reads arrive and is confirmed once they agree.
-        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined };
+        const readAt = readingSince.get(candidate.trackId);
+        const stage = readAt !== undefined ? { name: 'reading' as const, since: readAt }
+          : identity ? { name: 'identifying' as const } : { name: 'scanning' as const };
+        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined, stage };
       };
       const cloudCandidates = webTracks
         // A bottle whose name is already confirmed shows at once; it does not wait for a second whole-picture read.
@@ -607,9 +621,9 @@ function WebLiveCamera(props: NativeProps) {
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
-        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean };
+        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; stage?: { name: string; since?: number } };
         return [
-          shown.saved ? 'S' : '',
+          shown.saved ? 'S' : '', shown.stage ? shown.stage.name + (shown.stage.since ?? '') : '',
           Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
           candidate.trackId,
           Math.round(candidate.x * 2000), Math.round(candidate.y * 2000),
@@ -881,8 +895,10 @@ function WebLiveCamera(props: NativeProps) {
       nextLabelBatchAt = now + (unreadWaiting ? 1500 : 4000);
       if (!crops.length) return;
       labelBatchBusy = true;
-      crops.forEach(crop => lastLabelReadAt.set(crop.trackId, now));
+      crops.forEach(crop => { lastLabelReadAt.set(crop.trackId, now); if (!readingSince.has(crop.trackId)) readingSince.set(crop.trackId, now); });
+      publishVisibleCandidates();
       const applyReads = (reads: LabelBatchRead[], readAt: number) => {
+        for (const read of reads) readingSince.delete(read.trackId);
         for (const read of reads) {
           // A blank second look adds nothing; keep what the first read had.
           if (read.tier === 'escalate' && !read.brand) continue;
@@ -923,6 +939,11 @@ function WebLiveCamera(props: NativeProps) {
         if (!disposed) callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'limited', reason: error instanceof Error ? 'label_batch_failed: ' + error.message : 'label_batch_failed' } });
       } finally {
         labelBatchBusy = false;
+        // Labels that came back unreadable go back to scanning.
+        if (crops.some(crop => readingSince.get(crop.trackId) === now)) {
+          crops.forEach(crop => { if (readingSince.get(crop.trackId) === now) readingSince.delete(crop.trackId); });
+          publishVisibleCandidates();
+        }
       }
     };
 
