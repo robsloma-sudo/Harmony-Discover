@@ -58,7 +58,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;stage?:{name:'scanning'|'reading'|'identifying'|'researching'|'found';since?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -440,6 +440,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
                     ? <BoxStage stage="recognizing" since={tracked.stage.since} boxWidth={boxPx} />
                     : identifying
                       ? <BoxStage stage="identifying" value={tracked.identifying} boxWidth={boxPx} />
+                      : tracked.stage?.name === 'zoom'
+                      ? <BoxStage stage="zoom" value={tracked.stage.value} boxWidth={boxPx} />
                       : <BoxStage stage="scanning" value={tracked.confidence} boxWidth={boxPx} />}
                 </View>
               </View>

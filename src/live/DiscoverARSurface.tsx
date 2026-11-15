@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
-import { Platform, View, type ViewProps } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Platform, Pressable, Text, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import { frameSharpness, SteadyGate } from './steadyCapture';
+import { isReadableLabel, SAMPLE_GAP_MS, samplesForLabel, zoomReadiness, zoomSteps } from './distanceCapture';
 import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
@@ -33,7 +34,7 @@ import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolume
 import type { BottleVolumeProfile } from '../services/bottleVolumeCalibration';
 
 /** Smallest label crop (longest side, in camera pixels) worth sending to the label reader. */
-export const MIN_READABLE_LABEL_PX = 200;
+export { MIN_READABLE_LABEL_PX } from './distanceCapture';
 /** How long a newly saved bottle shows RESEARCHING (web research typically finishes in 20-40 s). */
 const RESEARCH_SHOWN_MS = 40_000;
 /** Whole-bottle crops narrower than this (width / height) are slivers with no readable label. */
@@ -94,10 +95,27 @@ if (Platform.OS === 'ios') {
  * previews on iOS mobile browsers. The UI only reports ready after a real
  * video frame is playing.
  */
+/** How sharp a label crop is (same measure as the steady-capture gate), on a small grey copy. */
+let sharpnessCanvas: HTMLCanvasElement | null = null;
+function cropSharpness(source: HTMLCanvasElement): number {
+  const width = Math.min(192, source.width), height = Math.max(2, Math.round(source.height * width / Math.max(1, source.width)));
+  const canvas = sharpnessCanvas ??= document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true } as CanvasRenderingContext2DSettings);
+  if (!context || width < 3 || height < 3) return 0;
+  context.drawImage(source, 0, 0, width, height);
+  return frameSharpness(rgbaToGrayscale(context.getImageData(0, 0, width, height).data, width, height), width, height);
+}
+
 function WebLiveCamera(props: NativeProps) {
   const { active, recognitionEnabled, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionSchedulerRef = useRef<(() => void) | null>(null);
+  // Zoom (Rob, 15 Nov 2026): the phone's own zoom when the browser offers it, else its telephoto lens.
+  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const [lensDeviceId, setLensDeviceId] = useState<string | null>(null);
+  const [zoomOptions, setZoomOptions] = useState<{ steps: number[]; teleId: string | null }>({ steps: [], teleId: null });
+  const [zoom, setZoom] = useState(1);
   const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
   callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
 
@@ -195,6 +213,8 @@ function WebLiveCamera(props: NativeProps) {
     const saveState = new Map<string, 'queued' | 'saving' | 'saved'>();
     // Box stages (shown on the green boxes): when a bottle's label went to be read, and when its web research started.
     const readingSince = new Map<number, number>();
+    // Labels too small to read yet (0-1 = how close to readable): their boxes say ZOOM IN.
+    const tooSmall = new Map<number, number>();
     const researchSince = new Map<string, number>();
     // Server-resolved identity per read key (brand + line + release + size); feeds liquid-level calibration.
     const resolvedByKey = new Map<string, ResolvedIdentity>();
@@ -589,8 +609,10 @@ function WebLiveCamera(props: NativeProps) {
         // Instant reading: show the first read straight away as provisional; it
         // updates as more reads arrive and is confirmed once they agree.
         const readAt = readingSince.get(candidate.trackId);
+        const small = tooSmall.get(candidate.trackId);
         const stage = readAt !== undefined ? { name: 'reading' as const, since: readAt }
-          : identity ? { name: 'identifying' as const } : { name: 'scanning' as const };
+          : identity ? { name: 'identifying' as const }
+          : small !== undefined ? { name: 'zoom' as const, value: small } : { name: 'scanning' as const };
         return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined, stage };
       };
       const cloudCandidates = webTracks
@@ -621,9 +643,9 @@ function WebLiveCamera(props: NativeProps) {
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
-        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; stage?: { name: string; since?: number } };
+        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; stage?: { name: string; since?: number; value?: number } };
         return [
-          shown.saved ? 'S' : '', shown.stage ? shown.stage.name + (shown.stage.since ?? '') : '',
+          shown.saved ? 'S' : '', shown.stage ? shown.stage.name + (shown.stage.since ?? '') + (shown.stage.value !== undefined ? Math.round(shown.stage.value * 100) : '') : '',
           Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
           candidate.trackId,
           Math.round(candidate.x * 2000), Math.round(candidate.y * 2000),
@@ -814,12 +836,13 @@ function WebLiveCamera(props: NativeProps) {
       const sharpRatio = steadyGate.sharpRatio();
       labelWaitingForSteady = false;
       labelWaitStartedAt = 0;
-      // Crop from a frame captured now: track boxes describe the current view,
-      // and the cloud-read frame is 2-5 s old by the time this runs.
-      // Crop labels from the camera's full resolution (up to 1920 px): a label
-      // cut from a shrunken frame and then enlarged was too soft to read.
-      const frameCanvas = captureVisibleFrame(1920);
-      if (!frameCanvas) return;
+      // Crop from the live video at the camera's full resolution (up to 4K): only the label is cut out,
+      // so a distant label keeps every real pixel the camera captured.
+      const sourceVideo = videoRef.current;
+      if (!sourceVideo || sourceVideo.videoWidth < 2 || sourceVideo.videoHeight < 2) return;
+      const frameRegion = getObjectFitCoverCrop(sourceVideo.videoWidth, sourceVideo.videoHeight, sourceVideo.clientWidth || sourceVideo.videoWidth, sourceVideo.clientHeight || sourceVideo.videoHeight);
+      if (!frameRegion) return;
+      const frameCanvas = { width: Math.round(frameRegion.width), height: Math.round(frameRegion.height) };
       const generation = recognitionGeneration;
       const now = Date.now();
       const isVerifiedRead = (trackId: number) => {
@@ -852,8 +875,9 @@ function WebLiveCamera(props: NativeProps) {
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 6_000);
       const crops: Array<{ trackId: number; image: string }> = [];
+      const planned: Array<{ trackId: number; crop: NonNullable<ReturnType<typeof calculateLabelCrop>>; samples: number; best: HTMLCanvasElement | null; bestSharp: number }> = [];
       for (const candidate of eligible) {
-        if (crops.length >= 8) break;
+        if (planned.length >= 8) break;
         const capturedBottle = candidate.bottle as { label_box?: { x0: number; y0: number; x1: number; y1: number } | null; box?: { x0: number; y0: number; x1: number; y1: number } } | undefined;
         const projectedLabel = capturedBottle?.label_box && capturedBottle.box
           ? projectLabelBox(capturedBottle.label_box, capturedBottle.box, { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height })
@@ -870,24 +894,46 @@ function WebLiveCamera(props: NativeProps) {
         if (!crop) continue;
         // A thin sliver (a bottle edge behind its neighbour, or a neck) never shows a readable label.
         if (!projectedLabel && Math.min(crop.sw, crop.sh) / Math.max(crop.sw, crop.sh) < MIN_BODY_CROP_ASPECT) continue;
-        // Too few real pixels to read: enlarging adds nothing, so do not pay for a read.
-        // The bottle is read once it is closer (or the camera moves in).
-        if (Math.max(crop.sw, crop.sh) < MIN_READABLE_LABEL_PX || Math.min(crop.sw, crop.sh) < MIN_READABLE_LABEL_PX / 3) continue;
-        const cropCanvas = labelCropCanvas ??= document.createElement('canvas');
-        cropCanvas.width = crop.outputWidth;
-        cropCanvas.height = crop.outputHeight;
-        const cropContext = cropCanvas.getContext('2d');
-        if (!cropContext) continue;
-        cropContext.drawImage(frameCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.outputWidth, crop.outputHeight);
+        // Too few real pixels to read (enlarging adds nothing): not sent; its box says ZOOM IN with how
+        // close it is to readable. The bottle is read once it is closer or the camera zooms in.
+        const longEdge = Math.max(crop.sw, crop.sh), shortEdge = Math.min(crop.sw, crop.sh);
+        if (!isReadableLabel(longEdge, shortEdge)) { tooSmall.set(candidate.trackId, zoomReadiness(longEdge, shortEdge)); continue; }
+        tooSmall.delete(candidate.trackId);
+        planned.push({ trackId: candidate.trackId, crop, samples: samplesForLabel(longEdge), best: null, bestSharp: -1 });
+      }
+      // Far labels: look at several frames and keep the sharpest (more frames the smaller the label).
+      const maxSamples = planned.reduce((n, plan) => Math.max(n, plan.samples), 0);
+      for (let k = 0; k < maxSamples; k++) {
+        if (k > 0) await new Promise(resolve => window.setTimeout(resolve, SAMPLE_GAP_MS));
+        if (disposed || generation !== recognitionGeneration) return;
+        const video = videoRef.current;
+        if (!video || video.videoWidth < 2) break;
+        for (const plan of planned) {
+          if (k >= plan.samples) continue;
+          const { crop } = plan;
+          const scratch = document.createElement('canvas');
+          scratch.width = crop.outputWidth;
+          scratch.height = crop.outputHeight;
+          const context = scratch.getContext('2d');
+          if (!context) continue;
+          context.drawImage(video, frameRegion.x + crop.sx, frameRegion.y + crop.sy, crop.sw, crop.sh, 0, 0, crop.outputWidth, crop.outputHeight);
+          const sharp = plan.samples > 1 ? cropSharpness(scratch) : 0;
+          if (!plan.best || sharp > plan.bestSharp) { if (plan.best) releaseCanvas(plan.best); plan.best = scratch; plan.bestSharp = sharp; }
+          else releaseCanvas(scratch);
+        }
+      }
+      for (const plan of planned) {
+        if (!plan.best) continue;
         // Best quality that fits this crop's share of the server's batch limit.
         const budget = Math.min(99_000, Math.max(38_000, Math.floor(340_000 / Math.max(1, eligible.length))));
         let image = '';
         for (const quality of [0.86, 0.78, 0.7, 0.6]) {
-          image = cropCanvas.toDataURL('image/jpeg', quality);
+          image = plan.best.toDataURL('image/jpeg', quality);
           if (image.length <= budget) break;
         }
+        releaseCanvas(plan.best);
         if (image.length > budget) continue;
-        crops.push({ trackId: candidate.trackId, image });
+        crops.push({ trackId: plan.trackId, image });
       }
       // A bottle that has never been read is read again soon, so a name shows
       // within about a second; after that, reads come at the normal pace.
@@ -1209,13 +1255,26 @@ function WebLiveCamera(props: NativeProps) {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            facingMode: { ideal: 'environment' },
-            // Labels are read from crops of this stream: at 1280x720 a bottle a few
-            // feet away gave a ~150x300 px label, too small for any reader.
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            ...(lensDeviceId ? { deviceId: { exact: lensDeviceId } } : { facingMode: { ideal: 'environment' } }),
+            // Labels are read from crops of this stream at full resolution: 4K gives a distant label four
+            // times the pixels of 1080p (phones that struggled before stay at 1080p).
+            width: { ideal: scannerMode.lite ? 1920 : 3840 },
+            height: { ideal: scannerMode.lite ? 1080 : 2160 },
           },
         });
+        // What zoom this camera offers: its own zoom range, else a separate telephoto lens.
+        const videoTrack = stream.getVideoTracks()[0] ?? null;
+        videoTrackRef.current = videoTrack;
+        try {
+          const caps = (videoTrack?.getCapabilities?.() ?? {}) as { zoom?: { min: number; max: number } };
+          const steps = caps.zoom ? zoomSteps(caps.zoom.min, caps.zoom.max) : [];
+          let teleId: string | null = null;
+          if (!steps.length) {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            teleId = devices.find(device => device.kind === 'videoinput' && /tele/i.test(device.label))?.deviceId ?? null;
+          }
+          if (!disposed) setZoomOptions({ steps, teleId });
+        } catch { if (!disposed) setZoomOptions({ steps: [], teleId: null }); }
 
         if (disposed) {
           stream.getTracks().forEach(track => track.stop());
@@ -1348,11 +1407,22 @@ function WebLiveCamera(props: NativeProps) {
         video.srcObject = null;
       }
     };
-  }, [active]);
+  }, [active, lensDeviceId]);
 
   useEffect(() => {
     if (active) recognitionSchedulerRef.current?.();
   }, [active, recognitionEnabled]);
+
+  const chooseZoom = (level: number) => {
+    setZoom(level);
+    if (zoomOptions.steps.length) {
+      void videoTrackRef.current?.applyConstraints({ advanced: [{ zoom: level } as MediaTrackConstraintSet] }).catch(() => undefined);
+    } else if (zoomOptions.teleId) {
+      // Telephoto: a different camera, so the stream restarts on it (or back on the main camera).
+      setLensDeviceId(level > 1 ? zoomOptions.teleId : null);
+    }
+  };
+  const zoomButtons = zoomOptions.steps.length ? zoomOptions.steps : zoomOptions.teleId ? [1, 3] : [];
 
   return (
     <View style={style}>
@@ -1371,6 +1441,22 @@ function WebLiveCamera(props: NativeProps) {
           backgroundColor: '#030609',
         },
       })}
+      {zoomButtons.length > 0 && (
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 168, alignItems: 'center', zIndex: 30 }} pointerEvents="box-none">
+          <View style={{ flexDirection: 'row', gap: 6, padding: 4, borderRadius: 18, backgroundColor: 'rgba(5,9,12,0.62)' }}>
+            {zoomButtons.map(level => {
+              const on = zoomOptions.steps.length ? zoom === level : (level > 1) === (lensDeviceId !== null);
+              const label = !zoomOptions.steps.length && level > 1 ? 'TELE' : level + '×';
+              return (
+                <Pressable key={level} accessibilityRole="button" accessibilityLabel={'Zoom ' + label} onPress={() => chooseZoom(level)}
+                  style={{ minWidth: 36, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, backgroundColor: on ? 'rgba(198,163,106,0.95)' : 'transparent' }}>
+                  <Text style={{ color: on ? '#111' : '#F0F1F2', fontSize: 11, fontWeight: '900' }}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      )}
     </View>
   );
 }

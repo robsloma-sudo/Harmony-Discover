@@ -2,6 +2,7 @@
 // SCANNING → RECOGNIZING → IDENTIFYING → RESEARCHING → ✓ name, each with a percentage and a progress bar
 // running from the box's left edge to its right edge. One centred line that shrinks to fit the box.
 //   SCANNING     the box is found; % = how sure the scanner is this is a bottle
+//   ZOOM IN      the label is too small to read yet; % = how close it is to readable (zoom or move closer)
 //   RECOGNIZING  the label is being read; % grows with the time a read usually takes (~1-3 s)
 //   IDENTIFYING  a name was read and is being confirmed; % = how sure the name is
 //   RESEARCHING  a new bottle is being looked up on the web; % grows with the time research usually takes (~20-40 s)
