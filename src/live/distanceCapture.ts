@@ -10,12 +10,14 @@
 /** A label smaller than this (long edge, in real camera pixels) cannot be read. */
 export const MIN_READABLE_LABEL_PX = 200;
 
-/** How many frames to look at for a label whose long edge is `longEdgePx` camera pixels. */
-export function samplesForLabel(longEdgePx: number): number {
-  if (longEdgePx >= 600) return 1;
-  if (longEdgePx >= 420) return 2;
-  if (longEdgePx >= 300) return 3;
-  return 5;
+/**
+ * How many frames to look at for a label whose long edge is `longEdgePx` camera pixels, at pinch zoom `zoom`.
+ * Pinching in means the bottle is far: 1x -> by label size only, 2x -> at least 3 frames, 3x and more -> 5.
+ */
+export function samplesForLabel(longEdgePx: number, zoom = 1): number {
+  const bySize = longEdgePx >= 600 ? 1 : longEdgePx >= 420 ? 2 : longEdgePx >= 300 ? 3 : 5;
+  const byZoom = zoom >= 3 ? 5 : zoom >= 2 ? 3 : zoom >= 1.5 ? 2 : 1;
+  return Math.max(bySize, byZoom);
 }
 
 /** Time between the frames looked at (ms): about two camera frames apart, so each is a new picture. */
@@ -31,10 +33,4 @@ export function zoomReadiness(longEdgePx: number, shortEdgePx: number): number {
 /** True when a label crop has enough real pixels to be read. */
 export function isReadableLabel(longEdgePx: number, shortEdgePx: number): boolean {
   return longEdgePx >= MIN_READABLE_LABEL_PX && shortEdgePx >= MIN_READABLE_LABEL_PX / 3;
-}
-
-/** Zoom steps offered on screen for a camera that reports a zoom range. */
-export function zoomSteps(min: number, max: number): number[] {
-  const steps = [1, 2, 3, 5].filter((z) => z >= min - 1e-6 && z <= max + 1e-6);
-  return steps.length >= 2 ? steps : [];
 }

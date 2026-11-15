@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, Text, View, type ViewProps } from 'react-native';
+import { Platform, Text, View, type ViewProps } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import { frameSharpness, SteadyGate } from './steadyCapture';
-import { isReadableLabel, SAMPLE_GAP_MS, samplesForLabel, zoomReadiness, zoomSteps } from './distanceCapture';
+import { isReadableLabel, SAMPLE_GAP_MS, samplesForLabel, zoomReadiness } from './distanceCapture';
 import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
 import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
@@ -95,6 +95,14 @@ if (Platform.OS === 'ios') {
  * previews on iOS mobile browsers. The UI only reports ready after a real
  * video frame is playing.
  */
+/** The part of the camera picture on screen: object-fit cover, then narrowed around the centre by a picture zoom. */
+function zoomedCoverCrop(video: HTMLVideoElement, digitalZoom: number) {
+  const crop = getObjectFitCoverCrop(video.videoWidth, video.videoHeight, video.clientWidth || video.videoWidth, video.clientHeight || video.videoHeight);
+  if (!crop || digitalZoom <= 1.001) return crop;
+  const width = crop.width / digitalZoom, height = crop.height / digitalZoom;
+  return { x: crop.x + (crop.width - width) / 2, y: crop.y + (crop.height - height) / 2, width, height };
+}
+
 /** How sharp a label crop is (same measure as the steady-capture gate), on a small grey copy. */
 let sharpnessCanvas: HTMLCanvasElement | null = null;
 function cropSharpness(source: HTMLCanvasElement): number {
@@ -111,11 +119,15 @@ function WebLiveCamera(props: NativeProps) {
   const { active, recognitionEnabled, style, onTrackingUpdate, onRecognitionUpdate, onARError, captureRequestId } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionSchedulerRef = useRef<(() => void) | null>(null);
-  // Zoom (Rob, 15 Nov 2026): the phone's own zoom when the browser offers it, else its telephoto lens.
+  // Pinch to zoom (Rob, 15 Nov 2026): the camera's own zoom when the browser offers it, else the picture is
+  // enlarged on screen and every part of the scanner (boxes, reads) uses the same enlarged view.
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
-  const [lensDeviceId, setLensDeviceId] = useState<string | null>(null);
-  const [zoomOptions, setZoomOptions] = useState<{ steps: number[]; teleId: string | null }>({ steps: [], teleId: null });
-  const [zoom, setZoom] = useState(1);
+  const nativeZoomRef = useRef<{ min: number; max: number } | null>(null);
+  const zoomRef = useRef(1);              // the zoom the user chose (1 = none)
+  const digitalZoomRef = useRef(1);       // the part of it done by enlarging the picture
+  const [digitalZoom, setDigitalZoom] = useState(1);
+  const [zoomLabel, setZoomLabel] = useState<string | null>(null);
+  const containerRef = useRef<any>(null);
   const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
   callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
 
@@ -175,6 +187,7 @@ function WebLiveCamera(props: NativeProps) {
     // If the last scanner session crashed the page (out of memory), step down:
     // no GPU, then a lighter detection rate.
     const scannerMode = checkPreviousScannerExit();
+    const visibleCrop = (video: HTMLVideoElement) => zoomedCoverCrop(video, digitalZoomRef.current);
     const flowIntervalMs = scannerMode.lite ? 50 : 30;
     let previousOpticalSize = '';
     let lastOpticalFlowAt = 0;
@@ -438,7 +451,7 @@ function WebLiveCamera(props: NativeProps) {
     const captureVisibleFrame = (maxLongEdge: number): HTMLCanvasElement | null => {
       const video = videoRef.current;
       if (!video || video.videoWidth < 2 || video.videoHeight < 2) return null;
-      const crop = getObjectFitCoverCrop(video.videoWidth, video.videoHeight, video.clientWidth || video.videoWidth, video.clientHeight || video.videoHeight);
+      const crop = visibleCrop(video);
       if (!crop) return null;
       const scale = Math.min(1, maxLongEdge / Math.max(crop.width, crop.height));
       const canvas = labelSourceCanvas ??= document.createElement('canvas');
@@ -676,11 +689,7 @@ function WebLiveCamera(props: NativeProps) {
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && time - lastOpticalFlowAt >= flowIntervalMs) {
           const elapsedMs = lastOpticalFlowAt ? time - lastOpticalFlowAt : 33;
           lastOpticalFlowAt = time;
-          const crop = getObjectFitCoverCrop(
-            video.videoWidth, video.videoHeight,
-            video.clientWidth || video.videoWidth,
-            video.clientHeight || video.videoHeight,
-          );
+          const crop = visibleCrop(video);
           if (!crop) { previousPyramid = null; opticalFlowFrame = window.requestAnimationFrame(tick); return; }
           const { x: sx, y: sy, width: sw, height: sh } = crop;
           const scale = Math.min(1, 320 / Math.max(sw, sh));
@@ -840,7 +849,7 @@ function WebLiveCamera(props: NativeProps) {
       // so a distant label keeps every real pixel the camera captured.
       const sourceVideo = videoRef.current;
       if (!sourceVideo || sourceVideo.videoWidth < 2 || sourceVideo.videoHeight < 2) return;
-      const frameRegion = getObjectFitCoverCrop(sourceVideo.videoWidth, sourceVideo.videoHeight, sourceVideo.clientWidth || sourceVideo.videoWidth, sourceVideo.clientHeight || sourceVideo.videoHeight);
+      const frameRegion = visibleCrop(sourceVideo);
       if (!frameRegion) return;
       const frameCanvas = { width: Math.round(frameRegion.width), height: Math.round(frameRegion.height) };
       const generation = recognitionGeneration;
@@ -899,7 +908,7 @@ function WebLiveCamera(props: NativeProps) {
         const longEdge = Math.max(crop.sw, crop.sh), shortEdge = Math.min(crop.sw, crop.sh);
         if (!isReadableLabel(longEdge, shortEdge)) { tooSmall.set(candidate.trackId, zoomReadiness(longEdge, shortEdge)); continue; }
         tooSmall.delete(candidate.trackId);
-        planned.push({ trackId: candidate.trackId, crop, samples: samplesForLabel(longEdge), best: null, bestSharp: -1 });
+        planned.push({ trackId: candidate.trackId, crop, samples: samplesForLabel(longEdge, zoomRef.current), best: null, bestSharp: -1 });
       }
       // Far labels: look at several frames and keep the sharpest (more frames the smaller the label).
       const maxSamples = planned.reduce((n, plan) => Math.max(n, plan.samples), 0);
@@ -1005,11 +1014,7 @@ function WebLiveCamera(props: NativeProps) {
       const localFrameStartedAt = performance.now();
       const frameTimestamp = Date.now();
       try {
-        const crop = getObjectFitCoverCrop(
-          video.videoWidth, video.videoHeight,
-          video.clientWidth || video.videoWidth,
-          video.clientHeight || video.videoHeight,
-        );
+        const crop = visibleCrop(video);
         if (!crop) return;
         const { x: sx, y: sy, width: sw, height: sh } = crop;
         const scale = Math.min(1, 640 / Math.max(sw, sh));
@@ -1147,11 +1152,7 @@ function WebLiveCamera(props: NativeProps) {
         // Match the crop the user actually sees (object-fit: cover). On a
         // portrait phone the camera stream may be landscape; sending the full
         // uncropped frame makes the label much smaller than it appears on-screen.
-        const crop = getObjectFitCoverCrop(
-          video.videoWidth, video.videoHeight,
-          video.clientWidth || video.videoWidth,
-          video.clientHeight || video.videoHeight,
-        );
+        const crop = visibleCrop(video);
         if (!crop) return;
         const { x: sx, y: sy, width: sw, height: sh } = crop;
         const scale = Math.min(1, 960 / Math.max(sw, sh));
@@ -1255,26 +1256,20 @@ function WebLiveCamera(props: NativeProps) {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            ...(lensDeviceId ? { deviceId: { exact: lensDeviceId } } : { facingMode: { ideal: 'environment' } }),
+            facingMode: { ideal: 'environment' },
             // Labels are read from crops of this stream at full resolution: 4K gives a distant label four
             // times the pixels of 1080p (phones that struggled before stay at 1080p).
             width: { ideal: scannerMode.lite ? 1920 : 3840 },
             height: { ideal: scannerMode.lite ? 1080 : 2160 },
           },
         });
-        // What zoom this camera offers: its own zoom range, else a separate telephoto lens.
+        // Does this camera zoom itself (real detail)? Otherwise pinching enlarges the picture.
         const videoTrack = stream.getVideoTracks()[0] ?? null;
         videoTrackRef.current = videoTrack;
         try {
           const caps = (videoTrack?.getCapabilities?.() ?? {}) as { zoom?: { min: number; max: number } };
-          const steps = caps.zoom ? zoomSteps(caps.zoom.min, caps.zoom.max) : [];
-          let teleId: string | null = null;
-          if (!steps.length) {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            teleId = devices.find(device => device.kind === 'videoinput' && /tele/i.test(device.label))?.deviceId ?? null;
-          }
-          if (!disposed) setZoomOptions({ steps, teleId });
-        } catch { if (!disposed) setZoomOptions({ steps: [], teleId: null }); }
+          nativeZoomRef.current = caps.zoom && caps.zoom.max > caps.zoom.min ? { min: caps.zoom.min, max: caps.zoom.max } : null;
+        } catch { nativeZoomRef.current = null; }
 
         if (disposed) {
           stream.getTracks().forEach(track => track.stop());
@@ -1407,25 +1402,73 @@ function WebLiveCamera(props: NativeProps) {
         video.srcObject = null;
       }
     };
-  }, [active, lensDeviceId]);
+  }, [active]);
 
   useEffect(() => {
     if (active) recognitionSchedulerRef.current?.();
   }, [active, recognitionEnabled]);
 
-  const chooseZoom = (level: number) => {
-    setZoom(level);
-    if (zoomOptions.steps.length) {
-      void videoTrackRef.current?.applyConstraints({ advanced: [{ zoom: level } as MediaTrackConstraintSet] }).catch(() => undefined);
-    } else if (zoomOptions.teleId) {
-      // Telephoto: a different camera, so the stream restarts on it (or back on the main camera).
-      setLensDeviceId(level > 1 ? zoomOptions.teleId : null);
-    }
-  };
-  const zoomButtons = zoomOptions.steps.length ? zoomOptions.steps : zoomOptions.teleId ? [1, 3] : [];
+  // Pinch: two fingers apart zoom in, together zoom out (1x to 5x).
+  useEffect(() => {
+    if (!active || typeof window === 'undefined') return;
+    let startDistance = 0, startZoom = 1, lastApplied = 0, labelTimer = 0;
+    const inCamera = (target: EventTarget | null) => {
+      const node = containerRef.current as HTMLElement | null;
+      return !!node && target instanceof Node && node.contains(target);
+    };
+    const distance = (touches: TouchList) => Math.hypot(touches[0]!.clientX - touches[1]!.clientX, touches[0]!.clientY - touches[1]!.clientY);
+    const setZoomLevel = (level: number) => {
+      const native = nativeZoomRef.current;
+      const maxZoom = native ? Math.min(5, native.max) : 4;
+      const z = Math.max(1, Math.min(maxZoom, level));
+      zoomRef.current = z;
+      if (native) {
+        const now = performance.now();
+        if (now - lastApplied > 60) {
+          lastApplied = now;
+          void videoTrackRef.current?.applyConstraints({ advanced: [{ zoom: Math.max(native.min, z) } as MediaTrackConstraintSet] }).catch(() => undefined);
+        }
+      } else {
+        digitalZoomRef.current = z;
+        setDigitalZoom(z);
+      }
+      setZoomLabel(z.toFixed(1) + '×');
+      window.clearTimeout(labelTimer);
+      labelTimer = window.setTimeout(() => setZoomLabel(null), 900);
+    };
+    const onStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !inCamera(event.target)) return;
+      startDistance = distance(event.touches);
+      startZoom = zoomRef.current;
+      event.preventDefault();
+    };
+    const onMove = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !startDistance) return;
+      event.preventDefault();   // the page itself must not zoom
+      setZoomLevel(startZoom * distance(event.touches) / startDistance);
+    };
+    const onEnd = (event: TouchEvent) => { if (event.touches.length < 2) startDistance = 0; };
+    // Safari's own pinch gesture would zoom the whole page.
+    const onGesture = (event: Event) => { if (inCamera(event.target)) event.preventDefault(); };
+    window.addEventListener('touchstart', onStart, { passive: false });
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+    window.addEventListener('gesturestart', onGesture, { passive: false } as AddEventListenerOptions);
+    window.addEventListener('gesturechange', onGesture, { passive: false } as AddEventListenerOptions);
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
+      window.removeEventListener('gesturestart', onGesture);
+      window.removeEventListener('gesturechange', onGesture);
+      window.clearTimeout(labelTimer);
+    };
+  }, [active]);
 
   return (
-    <View style={style}>
+    <View ref={containerRef} style={[style, { overflow: 'hidden' }]}>
       {React.createElement('video' as any, {
         ref: videoRef,
         autoPlay: true,
@@ -1439,22 +1482,13 @@ function WebLiveCamera(props: NativeProps) {
           height: '100%',
           objectFit: 'cover',
           backgroundColor: '#030609',
+          transform: digitalZoom > 1.001 ? `scale(${digitalZoom})` : undefined,
+          transformOrigin: 'center center',
         },
       })}
-      {zoomButtons.length > 0 && (
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 168, alignItems: 'center', zIndex: 30 }} pointerEvents="box-none">
-          <View style={{ flexDirection: 'row', gap: 6, padding: 4, borderRadius: 18, backgroundColor: 'rgba(5,9,12,0.62)' }}>
-            {zoomButtons.map(level => {
-              const on = zoomOptions.steps.length ? zoom === level : (level > 1) === (lensDeviceId !== null);
-              const label = !zoomOptions.steps.length && level > 1 ? 'TELE' : level + '×';
-              return (
-                <Pressable key={level} accessibilityRole="button" accessibilityLabel={'Zoom ' + label} onPress={() => chooseZoom(level)}
-                  style={{ minWidth: 36, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, backgroundColor: on ? 'rgba(198,163,106,0.95)' : 'transparent' }}>
-                  <Text style={{ color: on ? '#111' : '#F0F1F2', fontSize: 11, fontWeight: '900' }}>{label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+      {zoomLabel && (
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: '46%', alignItems: 'center', zIndex: 30 }}>
+          <Text style={{ color: '#F0F1F2', fontSize: 15, fontWeight: '900', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(5,9,12,0.6)' }}>{zoomLabel}</Text>
         </View>
       )}
     </View>

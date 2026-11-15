@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isReadableLabel, samplesForLabel, zoomReadiness, zoomSteps } from '../src/live/distanceCapture';
+import { isReadableLabel, samplesForLabel, zoomReadiness } from '../src/live/distanceCapture';
 import { stagePercent } from '../src/live/boxStageProgress';
 
 describe('reading labels at a distance', () => {
@@ -15,9 +15,10 @@ describe('reading labels at a distance', () => {
     expect(zoomReadiness(150, 60)).toBeCloseTo(0.75, 2);
     expect(stagePercent('zoom', zoomReadiness(150, 60), undefined, 0)).toBe(75);
   });
-  it('offers zoom steps only inside the camera range', () => {
-    expect(zoomSteps(1, 10)).toEqual([1, 2, 3, 5]);
-    expect(zoomSteps(1, 2.5)).toEqual([1, 2]);
-    expect(zoomSteps(1, 1)).toEqual([]);
+  it('pinching in makes Harmony look at more frames', () => {
+    expect(samplesForLabel(900, 1)).toBe(1);
+    expect(samplesForLabel(900, 2)).toBe(3);
+    expect(samplesForLabel(900, 3.4)).toBe(5);
+    expect(samplesForLabel(210, 1)).toBe(5);
   });
 });
