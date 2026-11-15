@@ -26,6 +26,7 @@ import { PreviewPanel } from './preview';
 import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
 import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
 import { clientLog, installClientLog } from '../src/services/clientLog';
+import { boxDepthTiers } from '../src/live/boxDepth';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -96,6 +97,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   // Scan boxes stay inside the camera view: below the found strip, above the bottom bar.
   const [bottomAreaTop, setBottomAreaTop] = useState(0);
   const cameraViewTop = foundTrayTop + 30;
+  // Overlapping boxes: front bottle 1.5x line, next normal, further back half (see boxDepth.ts).
+  const shownCandidates = liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
+  const boxTiers = boxDepthTiers(shownCandidates);
   const cameraViewBottom = bottomAreaTop > cameraViewTop ? bottomAreaTop - 4 : screenHeight - 150;
   useEffect(() => {
     if (!liveCandidates.some(candidate => candidate.bottle)) return;
@@ -404,7 +408,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const provisional = !bottle ? tracked.provisional : undefined;
             const readName = (read?: BottleRead) => read ? displayName(read.match?.brand || read.brand, read.match?.product || read.product) : '';
             const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
+            const tier = boxTiers.get(tracked.trackId) ?? { weight: 1, opacity: 1 };
             const boxStyle = {
+              borderWidth: (bottle ? 1 : 1.5) * tier.weight,
+              opacity: tier.opacity,
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,
               width: ((trackedWidth * 100) + '%') as `${number}%`,
