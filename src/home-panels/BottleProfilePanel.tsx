@@ -32,6 +32,11 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
         <Pressable accessibilityRole="button" accessibilityLabel="Close bottle profile" onPress={onClose} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Running total of web searches spent on this product (Rob: for seeing research work as it happens). */}
+        <View style={styles.searchRow}>
+          <Text numberOfLines={1} style={styles.searchLabel}>TOTAL INTERNET SEARCHES</Text>
+          <Text numberOfLines={1} style={styles.searchValue}>{intelligence?.research ? intelligence.research.searchesTotal : intelligenceLoading ? "…" : 0}{intelligenceLoading || intelligence?.research?.researchingNow ? "  · searching" : ""}</Text>
+        </View>
         <View style={styles.confidenceRow}>
           <Text style={styles.confidenceLabel}>SCAN CONFIDENCE</Text>
           <Text style={styles.confidenceValue}>{Math.round((bottle.confidence || 0) * 100)}%</Text>
@@ -98,6 +103,9 @@ const styles = StyleSheet.create({
   close:{width:34,height:34,borderRadius:17,borderWidth:1,borderColor:C.line,alignItems:"center",justifyContent:"center"},
   closeText:{color:C.ivory,fontSize:24,lineHeight:27},
   content:{padding:14,paddingBottom:28},
+  searchRow:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingHorizontal:12,paddingVertical:9,borderRadius:10,borderWidth:1,borderColor:"rgba(198,163,106,0.45)",backgroundColor:C.panel,marginBottom:10},
+  searchLabel:{color:C.brass,fontSize:9,fontWeight:"900",letterSpacing:1},
+  searchValue:{color:C.ivory,fontSize:16,fontWeight:"900"},
   confidenceRow:{padding:12,borderRadius:10,borderWidth:1,borderColor:C.line,backgroundColor:C.panel,marginBottom:12},
   confidenceLabel:{color:C.muted,fontSize:8,fontWeight:"900",letterSpacing:1},
   confidenceValue:{color:C.green,fontSize:22,fontWeight:"900",marginTop:4},

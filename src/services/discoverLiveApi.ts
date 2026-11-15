@@ -111,6 +111,8 @@ export type BottleIntelligenceProfile = {
   attributes: BottleIntelligenceAttribute[];
   evidence: BottleIntelligenceEvidence[];
   sightings: { total: number; confirmed: number };
+  /** Running total of web searches spent on this product (card only). */
+  research?: { searchesTotal: number; runs: number; researchingNow: boolean };
 };
 
 /** Loads shared product intelligence only after a user opens a bottle profile. */
@@ -126,6 +128,7 @@ export async function loadBottleCard(bottle: Pick<BottleRead, 'brand' | 'product
     attributes: Array.isArray(result.attributes) ? result.attributes : [],
     evidence: Array.isArray(result.evidence) ? result.evidence : [],
     sightings: { total: Number(result.sightings?.total) || 0, confirmed: Number(result.sightings?.confirmed) || 0 },
+    research: { searchesTotal: Number(result.research?.searches_total) || 0, runs: Number(result.research?.runs) || 0, researchingNow: result.research?.researching_now === true || result.researching === true },
   };
 }
 

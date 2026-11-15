@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.5.1
+// Harmony Discover DEV: discover-live-autosave v0.5.2
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,7 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.5.2: running total of web searches per product (real count from the API usage), returned on the card.
 // v0.5.1: learning loop: every research pass records found/dropped facts and backing sites (discover_research_outcomes);
 // research uses only hints a person promoted (discover_research_hints); new "standout" fact (what makes it special).
 // v0.5.0: research doubled (scan 6 searches; card 10 as two parallel passes: tasting + story, then other facts); new "history" fact.
@@ -25,7 +26,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.1";
+const VERSION = "0.5.2";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -158,6 +159,8 @@ async function research(apiKey: string, model: string, identity: Record<string, 
   const all: Array<Record<string, unknown>> = [];
   let input: Record<string, unknown> = {};
   let note = "";
+  let searchesUsed = 0;
+  const countSearches = (p: Record<string, unknown>) => { searchesUsed += Number((p?.usage as Record<string, Record<string, unknown>> | undefined)?.server_tool_use?.web_search_requests) || 0; };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
   try {
@@ -173,6 +176,7 @@ async function research(apiKey: string, model: string, identity: Record<string, 
       });
       const p = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error("research_http_" + r.status + " " + clean(p?.error?.message, 120));
+      countSearches(p);
       const blocks = Array.isArray(p.content) ? p.content as Array<Record<string, unknown>> : [];
       all.push(...blocks);
       const tool = blocks.find((b) => b.type === "tool_use" && b.name === "bottle_enrichment");
@@ -194,6 +198,7 @@ async function research(apiKey: string, model: string, identity: Record<string, 
           tool_choice: { type: "tool", name: "bottle_enrichment" }, messages }),
       });
       const p = await r.json().catch(() => ({}));
+      countSearches(p);
       const blocks = Array.isArray(p.content) ? p.content as Array<Record<string, unknown>> : [];
       const tool = blocks.find((b) => b.type === "tool_use" && b.name === "bottle_enrichment");
       if (r.ok && tool && tool.input && typeof tool.input === "object") input = tool.input as Record<string, unknown>;
@@ -259,7 +264,7 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     facts[field] = { value: v, confidence: c };
   }
   for (const f of Object.keys(facts)) if (!supported.has(f)) for (const s of sources.slice(0, 2)) s.supports.push(f);
-  return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note, inputKeys: Object.keys(input).slice(0, 8).map((k) => clean(k, 30)) };
+  return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note, searchesUsed, inputKeys: Object.keys(input).slice(0, 8).map((k) => clean(k, 30)) };
 }
 
 // ---------- learning loop: record what research found; use only hints a person has promoted ----------
@@ -324,6 +329,7 @@ async function researchProduct(db: SupabaseClient, apiKey: string, subject: stri
     const identity = { brand: b.brand, product: b.product, category: b.category, proof: b.proof || undefined, size: b.size || undefined };
     const result = await research(apiKey, model, identity, wanted, {}, RESEARCH_SEARCHES, hints.text);
     await recordOutcomes(db, productId, b.category, wanted, result, "scan");
+    await db.rpc("discover_add_product_searches", { p_product: productId, p_searches: result.searchesUsed });
     const evidenceRows: Array<Record<string, unknown>> = [];
     for (const [field, fact] of Object.entries(result.facts)) {
       for (const s of result.sources.filter((x) => x.supports.includes(field)).slice(0, 2)) {
@@ -395,11 +401,12 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
   const found = await findProduct(db, brand, product);
   if (!found) return reply({ ok: true, found: false, researching: false }, 200, origin);
   const productId = String(found.id);
-  const [{ data: attributes }, { data: evidence }, { data: packages }, { count: total }] = await Promise.all([
+  const [{ data: attributes }, { data: evidence }, { data: packages }, { count: total }, { data: usage }] = await Promise.all([
     db.from("discover_product_attributes").select("attribute_code,value_text,value_numeric,value_json,unit,state,confidence,evidence_id,updated_at").eq("discover_product_id", productId).limit(120),
     db.from("discover_product_evidence").select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at,metadata").eq("discover_product_id", productId).order("captured_at", { ascending: false }).limit(40),
     db.from("discover_product_packages").select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload").eq("discover_product_id", productId).limit(12),
     db.from("bottle_sightings").select("id", { count: "exact", head: true }).eq("discover_product_id", productId),
+    db.from("discover_product_search_usage").select("searches,research_runs,last_research_at").eq("discover_product_id", productId).maybeSingle(),
   ]);
   // Fill what the card is missing: in the background, within the research budget.
   const have = new Set((attributes ?? []).map((a: Record<string, unknown>) => String(a.attribute_code)));
@@ -433,8 +440,9 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
           await Promise.all(groups.map(async (group, i) => {
             const result = await research(apiKey, model, identity, group, labels, per, hints.text);
             await recordOutcomes(db, productId, category, group, result, "card");
+            await db.rpc("discover_add_product_searches", { p_product: productId, p_searches: result.searchesUsed });
             const added = await storeFacts(db, productId, identity.product, result, { researched_by: "card", pass: i + 1 });
-            console.log(JSON.stringify({ evt: "card_research", pass: groups.length > 1 ? i + 1 : 0, wanted: group.length, raw_fields: result.rawFields, kept: Object.keys(result.facts), dropped: result.dropped, input_keys: result.inputKeys, valid_sources: result.validSources, note: result.note, attributes: added, search_results: result.searchResults, ms: Date.now() - started }));
+            console.log(JSON.stringify({ evt: "card_research", pass: groups.length > 1 ? i + 1 : 0, wanted: group.length, raw_fields: result.rawFields, kept: Object.keys(result.facts), dropped: result.dropped, input_keys: result.inputKeys, valid_sources: result.validSources, note: result.note, attributes: added, searches: result.searchesUsed, search_results: result.searchResults, ms: Date.now() - started }));
           }));
         } catch (error) {
           console.log(JSON.stringify({ evt: "card_research_error", msg: clean(error instanceof Error ? error.message : error, 160) }));
@@ -450,6 +458,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
     packages: packages ?? [], attributes: attributes ?? [],
     evidence: (evidence ?? []).map((e: Record<string, unknown>) => { const { metadata: _m, ...rest } = e; return rest; }),
     sightings: { total: total || 0, confirmed: 0 },
+    research: { searches_total: Number(usage?.searches) || 0, runs: Number(usage?.research_runs) || 0, last_at: usage?.last_research_at ?? null, researching_now: researching },
   }, 200, origin);
 }
 
