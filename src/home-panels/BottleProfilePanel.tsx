@@ -36,53 +36,54 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
           <Text style={styles.confidenceLabel}>SCAN CONFIDENCE</Text>
           <Text style={styles.confidenceValue}>{Math.round((bottle.confidence || 0) * 100)}%</Text>
         </View>
-        {sections.map(section => (
-          // Every category is listed; one without a value says "No data" (no internal descriptions).
-          <View key={section.id} style={styles.section}>
-            <Text style={styles.sectionTitle}>{section.title}</Text>
-            {/* Known facts first, then the empty categories. */}
-            {[...section.fields].sort((a, b) => Number(!asText(fields[a.key]).trim()) - Number(!asText(fields[b.key]).trim())).map(item => {
-              const value = asText(fields[item.key]).trim();
-              return (
+        {/* Only what we know is shown; empty categories and empty sections are hidden. */}
+        {sections.map(section => {
+          const known = section.fields.filter(item => asText(fields[item.key]).trim());
+          if (!known.length) return null;
+          return (
+            <View key={section.id} style={styles.section}>
+              <Text style={styles.sectionTitle}>{section.title}</Text>
+              {known.map(item => (
                 <View key={item.key} style={styles.field}>
                   <Text style={styles.fieldLabel}>{item.label.toUpperCase()}</Text>
-                  <Text style={value ? styles.fieldValue : styles.noData}>{value || "No data"}</Text>
+                  <Text style={styles.fieldValue}>{asText(fields[item.key]).trim()}</Text>
+                </View>
+              ))}
+            </View>
+          );
+        })}
+        {extraAttributes.length ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>More facts</Text>
+            {extraAttributes.map(attribute => {
+              const raw = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
+              return (
+                <View key={attribute.attribute_code} style={styles.field}>
+                  <Text style={styles.fieldLabel}>{attribute.attribute_code.replace(/_/g, " ").toUpperCase()}</Text>
+                  <Text style={styles.fieldValue}>{raw}</Text>
                 </View>
               );
             })}
           </View>
-        ))}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>More facts</Text>
-          {intelligenceLoading && !extraAttributes.length ? <Text style={styles.noData}>Looking up…</Text> : null}
-          {!intelligenceLoading && !extraAttributes.length ? <Text style={styles.noData}>No data</Text> : null}
-          {extraAttributes.map(attribute => {
-            const raw = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
-            return (
-              <View key={attribute.attribute_code} style={styles.field}>
-                <Text style={styles.fieldLabel}>{attribute.attribute_code.replace(/_/g, " ").toUpperCase()}</Text>
-                <Text style={styles.fieldValue}>{raw}</Text>
+        ) : null}
+        {intelligenceLoading ? <Text style={styles.noData}>Looking up more facts…</Text> : null}
+        {(sources.length || (intelligence?.evidence ?? []).some(evidence => evidence.source_url || evidence.source_name)) ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Sources</Text>
+            {(intelligence?.evidence ?? []).filter((evidence, index, list) => (evidence.source_url || evidence.source_name) && list.findIndex(other => (other.source_url || other.source_name) === (evidence.source_url || evidence.source_name)) === index).map((evidence, index) => (
+              <View key={"e" + index + (evidence.source_url || "")} style={styles.source}>
+                <Text style={styles.sourceTitle}>{evidence.source_name || "Source"}</Text>
+                {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
               </View>
-            );
-          })}
-        </View>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Sources</Text>
-          {(intelligence?.evidence ?? []).filter(evidence => evidence.source_url || evidence.source_name).map((evidence, index) => (
-            <View key={"e" + index + (evidence.source_url || "")} style={styles.source}>
-              <Text style={styles.sourceTitle}>{evidence.source_name || "Source"}</Text>
-              {evidence.source_url ? <Text style={styles.sourceUrl}>{evidence.source_url}</Text> : null}
-            </View>
-          ))}
-          {sources.map((source, index) => (
-            <View key={"r" + index + source.url} style={styles.source}>
-              <Text style={styles.sourceTitle}>{source.title || "Source"}</Text>
-              <Text style={styles.sourceUrl}>{source.url}</Text>
-            </View>
-          ))}
-          {!sources.length && !(intelligence?.evidence ?? []).some(evidence => evidence.source_url || evidence.source_name)
-            ? <Text style={styles.noData}>{intelligenceLoading ? "Looking up…" : "No data"}</Text> : null}
-        </View>
+            ))}
+            {sources.map((source, index) => (
+              <View key={"r" + index + source.url} style={styles.source}>
+                <Text style={styles.sourceTitle}>{source.title || "Source"}</Text>
+                <Text style={styles.sourceUrl}>{source.url}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
