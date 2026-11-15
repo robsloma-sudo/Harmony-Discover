@@ -178,7 +178,7 @@ export function WorldBottleAnchorOverlay({ candidates, currentDepthFrame, observ
 }
 
 const styles = StyleSheet.create({
-  box: { position: "absolute", borderWidth: 1.8, borderColor: "#70E6C2", borderRadius: 7, backgroundColor: "rgba(40,210,170,0.035)" },
+  box: { position: "absolute", borderWidth: 1.5, borderColor: "#70E6C2", borderRadius: 7, backgroundColor: "rgba(40,210,170,0.035)" },
   label: { position: "absolute", left: -1, top: -27, maxWidth: 210, paddingHorizontal: 6, paddingVertical: 4, backgroundColor: "rgba(4,20,23,0.92)", borderWidth: 1, borderColor: "rgba(112,230,194,0.7)", borderRadius: 5 },
   name: { color: "#B8FFE8", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
   meta: { color: "#70E6C2", fontSize: 7, fontWeight: "800", marginTop: 1 },
