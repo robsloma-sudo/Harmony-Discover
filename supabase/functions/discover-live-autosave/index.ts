@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.5.2
+// Harmony Discover DEV: discover-live-autosave v0.5.3
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,8 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.5.3: one record per real bottle: the card shows the facts of every record on the same line; research is told what is
+// already known and aims at what is new; open "notable_facts" list (grows over time) and "release_history" for limited lines.
 // v0.5.2: running total of web searches per product (real count from the API usage), returned on the card.
 // v0.5.1: learning loop: every research pass records found/dropped facts and backing sites (discover_research_outcomes);
 // research uses only hints a person promoted (discover_research_hints); new "standout" fact (what makes it special).
@@ -26,7 +28,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.2";
+const VERSION = "0.5.3";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -42,8 +44,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The facts worth finding first, per kind of drink (a short list keeps the search focused).
 const TASTING = new Set(["tasting_notes", "nose", "palate", "finish", "food_pairing"]);
-const STORY = new Set(["tasting_notes", "nose", "palate", "finish", "food_pairing", "history", "standout"]);
-const COMMON = ["tasting_notes", "nose", "palate", "finish", "history", "standout", "producer", "brand_owner", "country", "region", "classification", "subcategory", "alcohol_statement"];
+const STORY = new Set(["tasting_notes", "nose", "palate", "finish", "food_pairing", "history", "standout", "notable_facts", "release_history"]);
+// Facts that hold a list and keep growing: new items are added to what is already known.
+const LIST_FIELDS = new Set(["notable_facts"]);
+const LIST_SEP = " • ";
+const COMMON = ["tasting_notes", "nose", "palate", "finish", "history", "standout", "notable_facts", "producer", "brand_owner", "country", "region", "classification", "subcategory", "alcohol_statement"];
 const FIELDS_BY_CATEGORY: Record<string, string[]> = {
   whiskey: [...COMMON, "distillery", "state_or_province", "mash_bill", "grain", "age_statement", "cask_type", "cask_finish"],
   tequila: [...COMMON, "distillery", "state_or_province", "agave_type", "production_method", "age_statement", "cask_type"],
@@ -145,7 +150,7 @@ const ENRICHMENT_TOOL = {
   } },
 };
 
-async function research(apiKey: string, model: string, identity: Record<string, unknown>, wanted: string[], labels: Record<string, string> = {}, searches = RESEARCH_SEARCHES, hintText = "") {
+async function research(apiKey: string, model: string, identity: Record<string, unknown>, wanted: string[], labels: Record<string, string> = {}, searches = RESEARCH_SEARCHES, hintText = "", knownText = "") {
   const messages: Array<Record<string, unknown>> = [{ role: "user", content:
     "Find these facts for this exact beverage product.\nPRODUCT: " + JSON.stringify(identity) +
     "\nFACTS WANTED (use exactly these field names): " + wanted.map((f) => labels[f] ? f + " (" + labels[f] + ")" : f).join(", ") +
@@ -154,8 +159,11 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     "Tasting fields (tasting_notes, nose, palate, finish, food_pairing): summarise in your own words, at most 35 words each, what the producer's or reviewers' published notes for this product say; never copy their sentences. " +
     "history: in your own words, at most 40 words, the producer's and this bottling's background (founding, people, notable dates). " +
     "standout: in your own words, at most 30 words, what makes this bottle unusual or worth talking about (a method, place, person, record or story). " +
+    "notable_facts: up to 5 separate short facts (each at most 25 words) that make this bottle interesting to a drinker: release years and re-releases, limited editions, awards, unusual production details, people, records; join them with \" • \" and never repeat anything under ALREADY KNOWN. " +
+    "release_history: in your own words, at most 40 words, when this product was released or re-released (years, batches, ages). " +
     "Write every value as a plain fact for a drinker: never name websites, listings or reviewers inside a value (sources go in sources). " +
-    "For every fact give a 0-1 confidence and list the search-result URLs that support it (use field names in supports). Call bottle_enrichment once." + hintText }];
+    "For every fact give a 0-1 confidence and list the search-result URLs that support it (use field names in supports). Call bottle_enrichment once." + hintText +
+    (knownText ? "\nALREADY KNOWN about this product (use it to aim your searches at what is new; do not return it again):\n" + knownText : "") }];
   const all: Array<Record<string, unknown>> = [];
   let input: Record<string, unknown> = {};
   let note = "";
@@ -257,8 +265,8 @@ async function research(apiKey: string, model: string, identity: Record<string, 
   // sources to fields) the product page sources it returned for this search. Tasting summaries are
   // judgement by nature, so they need 0.5 (still source-backed); hard facts need 0.7.
   for (const [field, value] of Object.entries(rawFields)) {
-    const v = clean(value, 240), c = unit(rawScores[field] ?? 0.75);
-    const floor = TASTING.has(field) ? 0.5 : 0.7;
+    const v = clean(value, LIST_FIELDS.has(field) ? 700 : 240), c = unit(rawScores[field] ?? 0.75);
+    const floor = TASTING.has(field) ? 0.5 : LIST_FIELDS.has(field) ? 0.6 : 0.7;
     const why = !allowed.has(field) ? "not_wanted" : !v ? "empty" : c < floor ? "low_" + c.toFixed(2) : !(supported.has(field) || sources.length > 0) ? "no_source" : "";
     if (why) { dropped[clean(field, 40)] = why; continue; }
     facts[field] = { value: v, confidence: c };
@@ -374,9 +382,26 @@ async function storeFacts(db: SupabaseClient, productId: string, product: string
   const firstEvidence = new Map<string, string>();
   for (const row of inserted) if (!firstEvidence.has(row.attribute_code)) firstEvidence.set(row.attribute_code, row.id);
   const rows = [...firstEvidence.entries()].map(([field, evidenceId]) => ({ discover_product_id: productId, attribute_code: field, value_text: result.facts[field]!.value, state: "found", confidence: result.facts[field]!.confidence, evidence_id: evidenceId }));
+  // List facts grow: new items are added to the ones already stored (duplicates skipped, at most 12 kept).
+  for (const row of rows.filter((r) => LIST_FIELDS.has(r.attribute_code))) {
+    const { data: old } = await db.from("discover_product_attributes").select("value_text").eq("discover_product_id", productId).eq("attribute_code", row.attribute_code).maybeSingle();
+    if (!old?.value_text) continue;
+    const items = String(old.value_text).split(LIST_SEP).map((x) => x.trim()).filter(Boolean);
+    const seen = new Set(items.map((x) => norm(x)));
+    for (const item of String(row.value_text).split(LIST_SEP).map((x) => x.trim()).filter(Boolean)) if (!seen.has(norm(item))) { items.push(item); seen.add(norm(item)); }
+    await db.from("discover_product_attributes").update({ value_text: items.slice(0, 12).join(LIST_SEP), updated_at: new Date().toISOString() }).eq("discover_product_id", productId).eq("attribute_code", row.attribute_code);
+  }
   const { error: attrError } = await db.from("discover_product_attributes").upsert(rows, { onConflict: "discover_product_id,attribute_code", ignoreDuplicates: true });
   if (attrError) throw new Error("attribute_insert_failed");
   return rows.length;
+}
+
+// What the card already knows, as short lines for the research prompt (so searches aim at what is new).
+function knownSummary(attributes: Array<Record<string, unknown>>, line: Record<string, unknown> | null) {
+  const lines = attributes.filter((a) => a.value_text).map((a) => String(a.attribute_code) + ": " + clean(a.value_text, 160));
+  if (line?.release_pattern && line.release_pattern !== "continuous") lines.push("release pattern: " + clean(line.release_pattern, 40));
+  if (line?.notes) lines.push("catalogue note: " + clean(line.notes, 200));
+  return lines.join("\n").slice(0, 2500);
 }
 
 async function findProduct(db: SupabaseClient, brand: string, product: string): Promise<Record<string, unknown> | null> {
@@ -401,20 +426,49 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
   const found = await findProduct(db, brand, product);
   if (!found) return reply({ ok: true, found: false, researching: false }, 200, origin);
   const productId = String(found.id);
-  const [{ data: attributes }, { data: evidence }, { data: packages }, { count: total }, { data: usage }] = await Promise.all([
-    db.from("discover_product_attributes").select("attribute_code,value_text,value_numeric,value_json,unit,state,confidence,evidence_id,updated_at").eq("discover_product_id", productId).limit(120),
-    db.from("discover_product_evidence").select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at,metadata").eq("discover_product_id", productId).order("captured_at", { ascending: false }).limit(40),
-    db.from("discover_product_packages").select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload").eq("discover_product_id", productId).limit(12),
-    db.from("bottle_sightings").select("id", { count: "exact", head: true }).eq("discover_product_id", productId),
-    db.from("discover_product_search_usage").select("searches,research_runs,last_research_at").eq("discover_product_id", productId).maybeSingle(),
+  // A bottle's line (e.g. Taylor Barrel Proof) shares its facts: this record first, then other records of the same line.
+  const lineId = found.discover_line_id ? String(found.discover_line_id) : null;
+  const [{ data: family }, { data: line }] = await Promise.all([
+    lineId ? db.from("discover_products").select("id").eq("discover_line_id", lineId).limit(20) : Promise.resolve({ data: [] as Array<{ id: string }> }),
+    lineId ? db.from("discover_brand_lines").select("line_name,release_pattern,notes").eq("id", lineId).maybeSingle() : Promise.resolve({ data: null }),
   ]);
+  const familyIds = [productId, ...((family ?? []) as Array<{ id: string }>).map((r) => String(r.id)).filter((id) => id !== productId)];
+  const [{ data: allAttributes }, { data: evidence }, { data: packages }, { count: total }, { data: usage }] = await Promise.all([
+    db.from("discover_product_attributes").select("discover_product_id,attribute_code,value_text,value_numeric,value_json,unit,state,confidence,evidence_id,updated_at").in("discover_product_id", familyIds).limit(300),
+    db.from("discover_product_evidence").select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at,metadata").in("discover_product_id", familyIds).order("captured_at", { ascending: false }).limit(60),
+    db.from("discover_product_packages").select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload").eq("discover_product_id", productId).limit(12),
+    db.from("bottle_sightings").select("id", { count: "exact", head: true }).in("discover_product_id", familyIds),
+    db.from("discover_product_search_usage").select("searches,research_runs,last_research_at").in("discover_product_id", familyIds),
+  ]);
+  const attributes: Array<Record<string, unknown>> = [];
+  for (const id of familyIds) for (const a of (allAttributes ?? []) as Array<Record<string, unknown>>) {
+    if (String(a.discover_product_id) !== id || attributes.some((x) => x.attribute_code === a.attribute_code)) continue;
+    const { discover_product_id: _p, ...rest } = a; attributes.push(rest);
+  }
+  // List facts are combined across the line's records (each item once).
+  for (const field of LIST_FIELDS) {
+    const items: string[] = [];
+    for (const a of (allAttributes ?? []) as Array<Record<string, unknown>>) {
+      if (a.attribute_code !== field) continue;
+      for (const item of String(a.value_text || "").split(LIST_SEP).map((x) => x.trim()).filter(Boolean)) if (!items.some((x) => norm(x) === norm(item))) items.push(item);
+    }
+    const target = attributes.find((x) => x.attribute_code === field);
+    if (target && items.length) target.value_text = items.slice(0, 12).join(LIST_SEP);
+  }
+  const usageRows = (usage ?? []) as Array<Record<string, unknown>>;
+  const searchesTotal = usageRows.reduce((n, r) => n + (Number(r.searches) || 0), 0);
+  const runsTotal = usageRows.reduce((n, r) => n + (Number(r.research_runs) || 0), 0);
+  const lastAt = usageRows.map((r) => String(r.last_research_at || "")).sort().pop() || null;
   // Fill what the card is missing: in the background, within the research budget.
-  const have = new Set((attributes ?? []).map((a: Record<string, unknown>) => String(a.attribute_code)));
+  const have = new Set(attributes.map((a) => String(a.attribute_code)));
   const labels: Record<string, string> = {};
   for (const f of (Array.isArray(body.fields) ? body.fields : []).slice(0, 40) as Array<Record<string, unknown>>) {
     const key = clean(f?.key, 40), label = clean(f?.label, 60);
     if (/^[a-z_]{2,40}$/.test(key) && !have.has(key)) labels[key] = label || key;
   }
+  // Stories keep growing: always look for new notable facts (limited releases also get their release history).
+  labels.notable_facts = labels.notable_facts || "Stories & notable facts";
+  if (line?.release_pattern && line.release_pattern !== "continuous" && !have.has("release_history")) labels.release_history = labels.release_history || "Release history";
   const wanted = Object.keys(labels).slice(0, 32);
   let researching = false;
   // At most one card research per product every 6 hours (keyed on the product, not the person).
@@ -438,7 +492,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
           const groups = [useful.filter((f) => STORY.has(f)), useful.filter((f) => !STORY.has(f))].filter((g) => g.length);
           const per = Math.floor(CARD_SEARCHES / groups.length);
           await Promise.all(groups.map(async (group, i) => {
-            const result = await research(apiKey, model, identity, group, labels, per, hints.text);
+            const result = await research(apiKey, model, identity, group, labels, per, hints.text, knownSummary(attributes, line as Record<string, unknown> | null));
             await recordOutcomes(db, productId, category, group, result, "card");
             await db.rpc("discover_add_product_searches", { p_product: productId, p_searches: result.searchesUsed });
             const added = await storeFacts(db, productId, identity.product, result, { researched_by: "card", pass: i + 1 });
@@ -458,7 +512,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
     packages: packages ?? [], attributes: attributes ?? [],
     evidence: (evidence ?? []).map((e: Record<string, unknown>) => { const { metadata: _m, ...rest } = e; return rest; }),
     sightings: { total: total || 0, confirmed: 0 },
-    research: { searches_total: Number(usage?.searches) || 0, runs: Number(usage?.research_runs) || 0, last_at: usage?.last_research_at ?? null, researching_now: researching },
+    research: { searches_total: searchesTotal, runs: runsTotal, last_at: lastAt, researching_now: researching },
   }, 200, origin);
 }
 

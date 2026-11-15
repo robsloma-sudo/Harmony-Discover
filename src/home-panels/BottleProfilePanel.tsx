@@ -51,7 +51,9 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
               {known.map(item => (
                 <View key={item.key} style={styles.field}>
                   <Text style={styles.fieldLabel}>{item.label.toUpperCase()}</Text>
-                  <Text style={styles.fieldValue}>{asText(fields[item.key]).trim()}</Text>
+                  {item.key === "notable_facts"
+                    ? asText(fields[item.key]).split(" • ").map(fact => fact.trim()).filter(Boolean).map((fact, index) => <Text key={index} style={styles.fieldValue}>• {fact}</Text>)
+                    : <Text style={styles.fieldValue}>{asText(fields[item.key]).trim()}</Text>}
                 </View>
               ))}
             </View>

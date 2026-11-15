@@ -53,7 +53,7 @@ export function profileFieldValues(bottle: BottleRead, intelligence: BottleIntel
   return out;
 }
 
-const TASTING = new Set(['tasting_notes', 'nose', 'palate', 'finish', 'food_pairing', 'history', 'standout']);
+const TASTING = new Set(['tasting_notes', 'nose', 'palate', 'finish', 'food_pairing', 'history', 'standout', 'notable_facts', 'release_history']);
 
 /** The card's empty categories (key + label), for background research. */
 export function missingProfileFields(bottle: BottleRead, intelligence: BottleIntelligenceProfile | null): Array<{ key: string; label: string }> {

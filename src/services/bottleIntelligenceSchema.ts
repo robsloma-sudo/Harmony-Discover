@@ -46,8 +46,10 @@ const COMMON: IntelligenceSection[] = [
     field("finish", "Finish", "Length and aftertaste"),
     field("food_pairing", "Pairs with", "Foods or occasions it suits"),
   ]},
-  { id: "story", title: "Story", description: "The producer and this bottling's background.", fields: [
+  { id: "story", title: "Story & notable facts", description: "The producer and this bottling's background.", fields: [
     field("standout", "What makes it special", "What is unusual or worth talking about"),
+    field("notable_facts", "Notable facts", "Releases, awards, people and production details"),
+    field("release_history", "Release history", "When it was released or re-released"),
     field("history", "History", "Founding, people and notable dates"),
   ]},
   { id: "origin", title: "Origin & provenance", description: "Where the raw materials and finished product come from.", fields: [
