@@ -114,6 +114,21 @@ export type BottleIntelligenceProfile = {
 };
 
 /** Loads shared product intelligence only after a user opens a bottle profile. */
+/** The product card: everything the shared record knows, found by name; the server researches the
+ * listed empty categories in the background (at most once per product every 6 hours). */
+export async function loadBottleCard(bottle: Pick<BottleRead, 'brand' | 'product' | 'category'>, fields: Array<{ key: string; label: string }>): Promise<BottleIntelligenceProfile | null> {
+  if (!bottle.brand.trim()) return null;
+  const result = await call({ action: 'card', brand: bottle.brand, product: bottle.product, category: bottle.category, fields: fields.slice(0, 40) }, autosaveFunction);
+  if (!result.found || !result.product || typeof result.product !== 'object') return null;
+  return {
+    product: result.product as BottleIntelligenceProfile['product'],
+    packages: Array.isArray(result.packages) ? result.packages : [],
+    attributes: Array.isArray(result.attributes) ? result.attributes : [],
+    evidence: Array.isArray(result.evidence) ? result.evidence : [],
+    sightings: { total: Number(result.sightings?.total) || 0, confirmed: Number(result.sightings?.confirmed) || 0 },
+  };
+}
+
 export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'brand' | 'product' | 'category'>): Promise<BottleIntelligenceProfile | null> {
   if (!bottle.brand.trim() || !bottle.product.trim()) return null;
   const result = await call({ action: 'profile', brand: bottle.brand, product: bottle.product, category: bottle.category });

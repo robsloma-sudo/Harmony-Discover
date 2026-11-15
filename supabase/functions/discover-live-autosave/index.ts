@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.3.0
+// Harmony Discover DEV: discover-live-autosave v0.4.0
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,10 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.4.0: action "card" returns everything known about a product for its profile card (found by exact name,
+// else by the product this name was last saved under) and, at most once per product every 6 hours, researches the card's
+// empty categories in the background (5 web searches, research budget applies). Brand-only bottles (many
+// wines) are now researched too.
 // For a product with no researched facts yet, web research starts in the background: Claude searches
 // the web for the exact expression and only facts backed by a URL that the search actually returned
 // are stored (evidence + attributes, unreviewed). No images are received or stored.
@@ -14,7 +18,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -131,15 +135,16 @@ const ENRICHMENT_TOOL = {
   } },
 };
 
-async function research(apiKey: string, model: string, identity: Record<string, unknown>, wanted: string[]) {
+async function research(apiKey: string, model: string, identity: Record<string, unknown>, wanted: string[], labels: Record<string, string> = {}, searches = RESEARCH_SEARCHES) {
   const messages: Array<Record<string, unknown>> = [{ role: "user", content:
     "Find these facts for this exact beverage product.\nPRODUCT: " + JSON.stringify(identity) +
-    "\nFACTS WANTED (use exactly these field names): " + wanted.join(", ") +
+    "\nFACTS WANTED (use exactly these field names): " + wanted.map((f) => labels[f] ? f + " (" + labels[f] + ")" : f).join(", ") +
     "\nSearch the web for the exact brand and product expression. Prefer the producer's own site, then regulators and reputable references; retailers are fine as support. " +
     "Return only facts a search result states for this exact product (not a sibling expression, size or age). Leave out anything you cannot find. " +
     "For every fact give a 0-1 confidence and list the search-result URLs that support it (use field names in supports). Call bottle_enrichment once." }];
   const all: Array<Record<string, unknown>> = [];
   let input: Record<string, unknown> = {};
+  let note = "";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
@@ -149,17 +154,35 @@ async function research(apiKey: string, model: string, identity: Record<string, 
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({ model, max_tokens: 3000,
           system: "You are a careful beverage product researcher for a drinks catalogue. Search first, then report only facts the search results support for the exact product. Never guess or fill from memory.",
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: RESEARCH_SEARCHES }, ENRICHMENT_TOOL],
-          tool_choice: { type: "auto" }, messages }),
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: searches }, ENRICHMENT_TOOL],
+          // "any": every turn uses a tool, so the model ends by calling bottle_enrichment instead of writing prose.
+          tool_choice: { type: "any" }, messages }),
       });
       const p = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error("research_http_" + r.status);
+      if (!r.ok) throw new Error("research_http_" + r.status + " " + clean(p?.error?.message, 120));
       const blocks = Array.isArray(p.content) ? p.content as Array<Record<string, unknown>> : [];
       all.push(...blocks);
       const tool = blocks.find((b) => b.type === "tool_use" && b.name === "bottle_enrichment");
       if (tool && tool.input && typeof tool.input === "object") { input = tool.input as Record<string, unknown>; break; }
-      if (p.stop_reason !== "pause_turn" || turn === 2) break;
       messages.push({ role: "assistant", content: blocks });
+      if (p.stop_reason !== "pause_turn" || turn === 2) break;
+    }
+    // The searches ran but no answer was given: ask once more, now requiring the answer tool.
+    if (!Object.keys(input).length && all.some((b) => b.type === "web_search_tool_result")) {
+      messages.push({ role: "user", content: "Now call bottle_enrichment with the facts the search results above support for this exact product." });
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST", signal: controller.signal,
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({ model, max_tokens: 3000,
+          system: "You are a careful beverage product researcher for a drinks catalogue. Report only facts the search results support for the exact product. Never guess or fill from memory.",
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }, ENRICHMENT_TOOL],
+          tool_choice: { type: "tool", name: "bottle_enrichment" }, messages }),
+      });
+      const p = await r.json().catch(() => ({}));
+      const blocks = Array.isArray(p.content) ? p.content as Array<Record<string, unknown>> : [];
+      const tool = blocks.find((b) => b.type === "tool_use" && b.name === "bottle_enrichment");
+      if (r.ok && tool && tool.input && typeof tool.input === "object") input = tool.input as Record<string, unknown>;
+      else note = "final_" + r.status + "_" + clean(p?.error?.message ?? p?.stop_reason, 80);
     }
   } finally { clearTimeout(timer); }
   const found = new Map<string, string>();
@@ -170,22 +193,46 @@ async function research(apiKey: string, model: string, identity: Record<string, 
   const allowed = new Set(wanted);
   const sources: Array<{ url: string; title: string; supports: string[]; kind: string }> = [];
   const supported = new Set<string>();
+  // Cited URLs are matched loosely to the URLs the search really returned (www., http/https, trailing
+  // slash, case); a citation of the same site as a returned page counts as that page.
+  const key = (v: string) => { try { const x = new URL(v); return x.hostname.replace(/^www\./, "") + x.pathname.replace(/\/+$/, "").toLowerCase(); } catch { return ""; } };
+  const host = (v: string) => { try { return new URL(v).hostname.replace(/^www\./, ""); } catch { return ""; } };
+  const byKey = new Map([...found.keys()].map((u) => [key(u), u]));
+  const byHost = new Map([...found.keys()].map((u) => [host(u), u]));
+  const resolveCited = (raw: unknown) => {
+    const text = String(raw ?? "");
+    const n = normalizeUrl(text.startsWith("http") ? text : "https://" + text);
+    if (!n) return "";
+    if (found.has(n)) return n;
+    return byKey.get(key(n)) ?? byHost.get(host(n)) ?? "";
+  };
   for (const s of (Array.isArray(input.sources) ? input.sources : []).slice(0, 8) as Array<Record<string, unknown>>) {
-    const u = normalizeUrl(s.url);
-    if (!u || !found.has(u) || sources.some((x) => x.url === u)) continue;   // only URLs the search really returned
+    const u = resolveCited(s.url);
+    if (!u || sources.some((x) => x.url === u)) continue;   // only URLs the search really returned
     const supports = [...new Set((Array.isArray(s.supports) ? s.supports : []).map((x) => String(x).trim()).filter((x) => allowed.has(x)))];
-    if (!supports.length) continue;
     supports.forEach((f) => supported.add(f));
     sources.push({ url: u, title: found.get(u) || clean(s.title, 180), supports, kind: String(s.source_type || "reference") });
+  }
+  // No usable citation: fall back to returned search pages that are about this brand (title or address names it).
+  if (!sources.length) {
+    const brandWords = norm(identity.brand).split(" ").filter((w) => w.length >= 4);
+    for (const [u, title] of found) {
+      const text = norm(title + " " + u);
+      if (brandWords.length && brandWords.every((w) => text.includes(w))) sources.push({ url: u, title, supports: [], kind: "reference" });
+      if (sources.length >= 2) break;
+    }
   }
   const rawFields = (input.fields && typeof input.fields === "object" ? input.fields : {}) as Record<string, unknown>;
   const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
   const facts: Record<string, { value: string; confidence: number }> = {};
+  // A fact needs a real search-result URL behind it: its own, or (when the model did not map
+  // sources to fields) the product page sources it returned for this search.
   for (const [field, value] of Object.entries(rawFields)) {
-    const v = clean(value, 240), c = unit(rawScores[field]);
-    if (allowed.has(field) && supported.has(field) && v && c >= 0.75) facts[field] = { value: v, confidence: c };
+    const v = clean(value, 240), c = unit(rawScores[field] ?? 0.75);
+    if (allowed.has(field) && v && c >= 0.7 && (supported.has(field) || sources.length > 0)) facts[field] = { value: v, confidence: c };
   }
-  return { facts, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size };
+  for (const f of Object.keys(facts)) if (!supported.has(f)) for (const s of sources.slice(0, 2)) s.supports.push(f);
+  return { facts, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note };
 }
 
 const evidenceSourceType = (kind: string, url: string) => {
@@ -246,6 +293,100 @@ async function researchProduct(db: SupabaseClient, apiKey: string, subject: stri
   }
 }
 
+// ---------- product card: everything known about the product, and research for what is missing ----------
+const CARD_SEARCHES = 5;
+async function storeFacts(db: SupabaseClient, productId: string, product: string, result: Awaited<ReturnType<typeof research>>, meta: Record<string, unknown>) {
+  const evidenceRows: Array<Record<string, unknown>> = [];
+  for (const [field, fact] of Object.entries(result.facts)) {
+    for (const s of result.sources.filter((x) => x.supports.includes(field)).slice(0, 2)) {
+      evidenceRows.push({ discover_product_id: productId, attribute_code: field, source_type: evidenceSourceType(s.kind, s.url),
+        source_name: s.title || "Web research source", source_url: s.url, observed_value: { value: fact.value, attribute_code: field, product_expression: product },
+        confidence: fact.confidence, verification_state: "unreviewed", metadata: { ...meta, supports: [field] } });
+    }
+  }
+  if (!evidenceRows.length) return 0;
+  const { data: inserted, error } = await db.from("discover_product_evidence").insert(evidenceRows).select("id,attribute_code");
+  if (error || !Array.isArray(inserted)) throw new Error("evidence_insert_failed");
+  const firstEvidence = new Map<string, string>();
+  for (const row of inserted) if (!firstEvidence.has(row.attribute_code)) firstEvidence.set(row.attribute_code, row.id);
+  const rows = [...firstEvidence.entries()].map(([field, evidenceId]) => ({ discover_product_id: productId, attribute_code: field, value_text: result.facts[field]!.value, state: "found", confidence: result.facts[field]!.confidence, evidence_id: evidenceId }));
+  const { error: attrError } = await db.from("discover_product_attributes").upsert(rows, { onConflict: "discover_product_id,attribute_code", ignoreDuplicates: true });
+  if (attrError) throw new Error("attribute_insert_failed");
+  return rows.length;
+}
+
+async function findProduct(db: SupabaseClient, brand: string, product: string): Promise<Record<string, unknown> | null> {
+  const { data: exact } = await db.rpc("discover_find_exact_product", { p_brand: brand, p_product: product });
+  if (Array.isArray(exact) && exact.length === 1) return exact[0] as Record<string, unknown>;
+  // Otherwise the product this name was saved under most recently (same brand; same expression first).
+  const { data: seen } = await db.from("bottle_sightings").select("discover_product_id,read_brand,read_product")
+    .not("discover_product_id", "is", null).ilike("read_brand", brand.replace(/[%_\\]/g, "")).order("created_at", { ascending: false }).limit(40);
+  const rows = (seen ?? []).filter((r: Record<string, unknown>) => norm(r.read_brand) === norm(brand));
+  const pick = rows.find((r: Record<string, unknown>) => norm(r.read_product) === norm(product)) ?? rows[0];
+  if (!pick) return null;
+  const { data: row } = await db.from("discover_products").select("*").eq("id", pick.discover_product_id).maybeSingle();
+  return row ?? null;
+}
+
+async function productCard(db: SupabaseClient, apiKey: string, subject: string, body: Record<string, unknown>, origin: string | null) {
+  const brand = clean(body.brand, 80), product = clean(body.product, 80);
+  const category = CATEGORIES.includes(String(body.category)) ? String(body.category) : "other";
+  if (!brand) return reply({ error: "brand_required" }, 400, origin);
+  const { data: okRate, error: rateErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "product_card", p_max: 60, p_window_seconds: 60 });
+  if (rateErr || okRate !== true) return reply({ error: rateErr ? "rate_limit_unavailable" : "rate_limited" }, rateErr ? 503 : 429, origin);
+  const found = await findProduct(db, brand, product);
+  if (!found) return reply({ ok: true, found: false, researching: false }, 200, origin);
+  const productId = String(found.id);
+  const [{ data: attributes }, { data: evidence }, { data: packages }, { count: total }] = await Promise.all([
+    db.from("discover_product_attributes").select("attribute_code,value_text,value_numeric,value_json,unit,state,confidence,evidence_id,updated_at").eq("discover_product_id", productId).limit(120),
+    db.from("discover_product_evidence").select("attribute_code,source_type,source_name,source_url,observed_value,confidence,verification_state,captured_at,expires_at,metadata").eq("discover_product_id", productId).order("captured_at", { ascending: false }).limit(40),
+    db.from("discover_product_packages").select("package_size_ml,abv_percent,package_type,container_material,upc_gtin,ean,label_approval_id,package_payload").eq("discover_product_id", productId).limit(12),
+    db.from("bottle_sightings").select("id", { count: "exact", head: true }).eq("discover_product_id", productId),
+  ]);
+  // Fill what the card is missing: in the background, within the research budget.
+  const have = new Set((attributes ?? []).map((a: Record<string, unknown>) => String(a.attribute_code)));
+  const labels: Record<string, string> = {};
+  for (const f of (Array.isArray(body.fields) ? body.fields : []).slice(0, 40) as Array<Record<string, unknown>>) {
+    const key = clean(f?.key, 40), label = clean(f?.label, 60);
+    if (/^[a-z_]{2,40}$/.test(key) && !have.has(key)) labels[key] = label || key;
+  }
+  const wanted = Object.keys(labels).slice(0, 24);
+  let researching = false;
+  // At most one card research per product every 6 hours (keyed on the product, not the person).
+  const tryResearch = wanted.length >= 3 && !!apiKey
+    && (await db.rpc("discover_rate_limit", { p_subject: productId, p_bucket: "card_research", p_max: 1, p_window_seconds: 21600 })).data === true;
+  if (tryResearch) {
+    const { data: budgetOk } = await db.rpc("discover_reserve_bottle_research_budget", {
+      p_consumer: subject, p_jobs: 1, p_search_units: CARD_SEARCHES,
+      p_user_jobs_max: 30, p_project_jobs_max: 200, p_user_search_max: 150, p_project_search_max: 900,
+    });
+    if (budgetOk === true) {
+      researching = true;
+      const task = (async () => {
+        const started = Date.now();
+        try {
+          const model = Deno.env.get("DISCOVER_RESEARCH_MODEL") || Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
+          const identity = { brand: String(found.brand_name || brand), product: String(found.product_name || product), category };
+          const result = await research(apiKey, model, identity, wanted, labels, CARD_SEARCHES);
+          const added = await storeFacts(db, productId, identity.product, result, { researched_by: "card" });
+          console.log(JSON.stringify({ evt: "card_research", wanted: wanted.length, raw_fields: result.rawFields, valid_sources: result.validSources, note: result.note, attributes: added, search_results: result.searchResults, ms: Date.now() - started }));
+        } catch (error) {
+          console.log(JSON.stringify({ evt: "card_research_error", msg: clean(error instanceof Error ? error.message : error, 160) }));
+        }
+      })();
+      const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+      if (runtime?.waitUntil) runtime.waitUntil(task); else await task;
+    }
+  }
+  return reply({
+    ok: true, found: true, researching,
+    product: { id: productId, brand: found.brand_name, product: found.product_name, category: found.product_class || category, expression: found.expression_variant, upc_gtin: found.upc_gtin, ean: found.ean, status: found.status, match_confidence: found.match_confidence, identity: found.identity_payload || {} },
+    packages: packages ?? [], attributes: attributes ?? [],
+    evidence: (evidence ?? []).map((e: Record<string, unknown>) => { const { metadata: _m, ...rest } = e; return rest; }),
+    sightings: { total: total || 0, confirmed: 0 },
+  }, 200, origin);
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin");
   if (!originOk(origin)) return reply({ error: "origin_not_allowed" }, 403, null);
@@ -272,6 +413,7 @@ Deno.serve(async (req: Request) => {
   try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
   catch { return reply({ error: "invalid_json" }, 400, origin); }
   if (body.action === "health") return reply({ ok: true, version: VERSION }, 200, origin);
+  if (body.action === "card") return await productCard(db, apiKey, subject, body, origin);
 
   const session = String(body.scan_session_id || "");
   if (!UUID.test(session)) return reply({ error: "scan_session_id_required" }, 400, origin);
@@ -357,7 +499,7 @@ Deno.serve(async (req: Request) => {
     const researchBottle = matched
       ? { ...b, brand: String(resolved!.brand || b.brand), product: [resolved!.line, releaseKey(resolved) !== "standard" ? releaseLabel(resolved) : null].filter(Boolean).join(", ") }
       : b;
-    const canResearch = !!(productId && apiKey && researchBottle.product);
+    const canResearch = !!(productId && apiKey && researchBottle.brand);
     if (canResearch) researchTasks.push(researchProduct(db, apiKey, subject, productId!, String(inserted.id), researchBottle));
     results.push({ brand: b.brand, product: b.product, status: "saved", sighting_id: inserted.id, product_id: productId, new_product: created, researching: canResearch, identity });
   }

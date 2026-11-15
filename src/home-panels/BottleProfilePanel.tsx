@@ -3,6 +3,7 @@ import { ScrollView, Text, View, Pressable, StyleSheet } from "react-native";
 import type { BottleRead, BottleIntelligenceProfile } from "../services/discoverLiveApi";
 import { getBottleFamilyLabel, getBottleIntelligenceSections } from "../services/bottleIntelligenceSchema";
 import { displayName } from '../live/foundTray';
+import { profileFieldValues } from './profileFields';
 
 type Props = { bottle: BottleRead; onClose: () => void; intelligence?: BottleIntelligenceProfile | null; intelligenceLoading?: boolean };
 
@@ -14,23 +15,10 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
   const family = getBottleFamilyLabel(bottle.category, details);
   const sections = getBottleIntelligenceSections(bottle.category, details);
   const identity = displayName(bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product) || "Bottle identity pending";
-  const fields: Record<string, unknown> = {
-    ...details,
-    brand: bottle.match?.brand || bottle.brand,
-    product: bottle.match?.product || bottle.product,
-    size: bottle.size,
-    proof: bottle.proof,
-    origin: bottle.origin,
-    label_text: bottle.words?.join(" · "),
-    certifications: details.certifications,
-  };
-  // Facts found by the shared product record fill the same categories.
-  for (const attribute of intelligence?.attributes ?? []) {
-    const value = attribute.value_text ?? (attribute.value_numeric !== null ? String(attribute.value_numeric) + (attribute.unit ? " " + attribute.unit : "") : asText(attribute.value_json));
-    if (value && !asText(fields[attribute.attribute_code]).trim()) fields[attribute.attribute_code] = value;
-  }
+  const fields: Record<string, unknown> = profileFieldValues(bottle, intelligence);
   const shownKeys = new Set(sections.flatMap(section => section.fields.map(item => item.key)));
-  const extraAttributes = (intelligence?.attributes ?? []).filter(attribute => !shownKeys.has(attribute.attribute_code)
+  const covered = new Set(['producer','winery','distillery','estate','brand_owner','net_contents','package_size','alcohol_statement','origin','subcategory','harvested_on','distillation','state_or_province','grain','flavor','production_method']);
+  const extraAttributes = (intelligence?.attributes ?? []).filter(attribute => !shownKeys.has(attribute.attribute_code) && !covered.has(attribute.attribute_code)
     && (attribute.value_text || attribute.value_numeric !== null || asText(attribute.value_json)));
   const sources = bottle.researchSources || [];
   return (
@@ -52,7 +40,8 @@ export function BottleProfilePanel({ bottle, onClose, intelligence = null, intel
           // Every category is listed; one without a value says "No data" (no internal descriptions).
           <View key={section.id} style={styles.section}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
-            {section.fields.map(item => {
+            {/* Known facts first, then the empty categories. */}
+            {[...section.fields].sort((a, b) => Number(!asText(fields[a.key]).trim()) - Number(!asText(fields[b.key]).trim())).map(item => {
               const value = asText(fields[item.key]).trim();
               return (
                 <View key={item.key} style={styles.field}>

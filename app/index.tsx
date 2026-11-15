@@ -10,7 +10,8 @@ import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '
 import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse, BottleIntelligenceProfile } from '../src/services/discoverLiveApi';
-import { loadBottleIntelligenceProfile } from '../src/services/discoverLiveApi';
+import { loadBottleCard } from '../src/services/discoverLiveApi';
+import { missingProfileFields } from '../src/home-panels/profileFields';
 import { attachBottleReadsToCandidates } from '../src/services/bottleCandidateAssociation';
 import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
@@ -146,23 +147,26 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     setSelectedFoundKey(null);
     setSelectedBottleIntelligence(null);
   };
+  const selectedBottleRef = useRef<BottleRead | null>(null);
+  selectedBottleRef.current = selectedBottle ?? null;
   const selectedBottleBrand = selectedBottle?.match?.brand || selectedBottle?.brand || '';
   const selectedBottleProduct = selectedBottle?.match?.product || selectedBottle?.product || '';
   const selectedBottleCategory = selectedBottle?.category || 'other';
   useEffect(() => {
     let cancelled = false;
-    if (!selectedBottleBrand.trim() || !selectedBottleProduct.trim()) {
+    if (!selectedBottleBrand.trim()) {
       setSelectedBottleIntelligence(null);
       setSelectedBottleIntelligenceLoading(false);
       return () => { cancelled = true; };
     }
     setSelectedBottleIntelligence(null);
     setSelectedBottleIntelligenceLoading(true);
-    const load = (first: boolean) => loadBottleIntelligenceProfile({
+    // The empty categories are sent so the server can research them (once per product every 6 h).
+    const load = (first: boolean) => loadBottleCard({
       brand: selectedBottleBrand,
       product: selectedBottleProduct,
       category: selectedBottleCategory,
-    })
+    }, selectedBottleRef.current ? missingProfileFields(selectedBottleRef.current, null) : [])
       // A later check only replaces what is shown when it found something.
       .then(profile => { if (!cancelled && (first || profile)) setSelectedBottleIntelligence(profile); })
       .catch(() => { if (!cancelled && first) setSelectedBottleIntelligence(null); })
