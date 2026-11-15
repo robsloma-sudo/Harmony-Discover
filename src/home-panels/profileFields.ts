@@ -53,7 +53,7 @@ export function profileFieldValues(bottle: BottleRead, intelligence: BottleIntel
   return out;
 }
 
-const TASTING = new Set(['tasting_notes', 'nose', 'palate', 'finish', 'food_pairing']);
+const TASTING = new Set(['tasting_notes', 'nose', 'palate', 'finish', 'food_pairing', 'history', 'standout']);
 
 /** The card's empty categories (key + label), for background research. */
 export function missingProfileFields(bottle: BottleRead, intelligence: BottleIntelligenceProfile | null): Array<{ key: string; label: string }> {
@@ -62,6 +62,6 @@ export function missingProfileFields(bottle: BottleRead, intelligence: BottleInt
     .flatMap(section => section.fields)
     .filter(item => !values[item.key] && !['brand', 'product', 'label_text'].includes(item.key))
     .map(item => ({ key: item.key, label: item.label }))
-    // Tasting notes are researched first for every drink.
+    // Tasting notes and the story are researched first for every drink.
     .sort((a, b) => Number(!TASTING.has(a.key)) - Number(!TASTING.has(b.key)));
 }
