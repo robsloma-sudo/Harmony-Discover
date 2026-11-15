@@ -184,8 +184,17 @@ export class LocalBottleTracker {
     for (const pair of pairs) {
       if (touched.has(pair.track) || usedDetections.has(pair.index)) continue;
       usedDetections.add(pair.index);
+      const detection = detections[pair.index]!;
+      // The widest part of the bottle decides where its box sits (Rob, 15 Nov 2026): a narrower box inside
+      // the bottle (a neck sticker, capsule or shoulder) confirms the bottle but never pulls the box onto the neck.
+      if (detection.bounds.width < pair.track.bounds.width * 0.8 && isNestedBottlePart(pair.track.bounds, detection.bounds)) {
+        pair.track.lastSeenAt = now;
+        pair.track.misses = 0;
+        touched.add(pair.track);
+        continue;
+      }
       // Light smoothing; detections are already moved to the current view.
-      observe(pair.track, detections[pair.index]!, 0.6);
+      observe(pair.track, detection, 0.6);
     }
 
     // 2. A neck/cork/label box inside a bottle already on screen is part of
