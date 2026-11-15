@@ -418,8 +418,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             };
             // Tag text always fits on one line inside its box: the font shrinks to the box width (never wraps or cuts off).
             const fitFont = (text: string, max: number) => {
-              const room = Math.max(10, trackedWidth * screenWidth - 14);
-              return Math.max(3.5, Math.min(max, room / (Math.max(1, text.length) * 0.66)));
+              const room = Math.max(10, trackedWidth * screenWidth - 18);
+              return Math.max(3.5, Math.min(max, room / (Math.max(1, text.length) * 0.74)));
             };
             if (bottle) {
               // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
