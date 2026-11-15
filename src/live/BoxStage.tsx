@@ -7,8 +7,7 @@
 //   RESEARCHING  a new bottle is being looked up on the web; % grows with the time research usually takes (~20-40 s)
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-
-export type BoxStageName = 'scanning' | 'recognizing' | 'identifying' | 'researching' | 'found';
+import { LABEL, TYPICAL_MS, stagePercent, type BoxStageName } from './boxStageProgress';
 
 type Props = {
   stage: BoxStageName;
@@ -21,19 +20,6 @@ type Props = {
   /** Box width in screen points (text shrinks to fit). */
   boxWidth: number;
 };
-
-const LABEL: Record<BoxStageName, string> = {
-  scanning: 'SCANNING', recognizing: 'RECOGNIZING', identifying: 'IDENTIFYING', researching: 'RESEARCHING', found: '',
-};
-// Typical durations: progress eases toward 95% over them and never claims 100% before the stage really ends.
-const TYPICAL_MS: Partial<Record<BoxStageName, number>> = { recognizing: 1_400, researching: 14_000 };
-
-export function stagePercent(stage: BoxStageName, value: number | undefined, since: number | undefined, now: number): number {
-  if (stage === 'found') return 100;
-  const typical = TYPICAL_MS[stage];
-  if (typical && since) return Math.min(95, Math.round(95 * (1 - Math.exp(-Math.max(0, now - since) / typical))));
-  return Math.max(0, Math.min(99, Math.round((value ?? 0) * 100)));
-}
 
 export function BoxStage({ stage, value, since, name, boxWidth }: Props) {
   const timed = !!TYPICAL_MS[stage] && !!since;

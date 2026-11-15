@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stagePercent } from '../src/live/BoxStage';
+import { stagePercent } from '../src/live/boxStageProgress';
 
 describe('box stage progress', () => {
   it('scanning and identifying show the confidence', () => {
