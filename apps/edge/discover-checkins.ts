@@ -17,11 +17,11 @@ const DEFAULT_ORIGINS = ['https://harmony-discover.netlify.app', 'https://harmon
 let deps: CheckinsEdgeDeps | null = null; let refused = '';
 try {
   const env = Deno.env.toObject();
-  // Same origin list as discover-api when DISCOVER_ALLOWED_ORIGINS is set; otherwise the Discover web sites.
+  // Discover's own web sites, plus anything listed in DISCOVER_ALLOWED_ORIGINS (the same list discover-api uses).
   const configured = (env.DISCOVER_ALLOWED_ORIGINS ?? '').split(',').map(v => v.trim()).filter(v => {
     try { const u = new URL(v); return u.protocol === 'https:' && u.origin === v; } catch { return false; }
   });
-  const allowedOrigins = new Set(configured.length ? configured : DEFAULT_ORIGINS);
+  const allowedOrigins = new Set([...DEFAULT_ORIGINS, ...configured]);
   if (env.DISCOVER_CHECKINS_ENABLED === 'false') throw new Error('check-ins disabled by DISCOVER_CHECKINS_ENABLED=false');
   const db = createDiscoverClient({ DISCOVER_ENV: 'development', DISCOVER_ALLOWED_PROJECT_REFS: 'lqqmwqrffelgnbngrkep', ...env });
   const phgUrl = (env.PHG_ATLAS_URL || PHG_URL_DEFAULT).replace(/\/$/, '');
