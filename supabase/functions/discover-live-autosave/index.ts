@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.5.5
+// Harmony Discover DEV: discover-live-autosave v0.6.0
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,10 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.6.0: known facts first. Every saved bottle and every opened card is linked to Harmony's catalogue (barcode, then
+// name) and to the US label approvals (discover_prefill_known); what they already know (ABV, origin, bottler/importer,
+// class, Harmony category, approved brand history, label package) fills empty card fields before any web research,
+// so research only looks for what is still missing. Never overwrites a fact.
 // v0.5.5: card research backs off when nothing new is found (15 min, 1 h, 1 day, 1 week, 30 days); facts not found
 // twice for a bottle are no longer asked for.
 // v0.5.4: card research every 15 minutes per product (was 6 hours); daily cap 300 lookups / 3,000 searches.
@@ -31,7 +35,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.5";
+const VERSION = "0.6.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -372,6 +376,17 @@ async function researchProduct(db: SupabaseClient, apiKey: string, subject: stri
   }
 }
 
+// ---------- v0.6.0: what Harmony and the US label register already know goes on the card first ----------
+async function prefillKnown(db: SupabaseClient, productId: string) {
+  const started = Date.now();
+  const { data, error } = await db.rpc("discover_prefill_known", { p_product: productId });
+  if (error) { console.log(JSON.stringify({ evt: "prefill_known_error", msg: clean(error.message, 160) })); return null; }
+  const d = (data ?? {}) as Record<string, Record<string, unknown> | null>;
+  console.log(JSON.stringify({ evt: "prefill_known", harmony_facts: d.harmony?.facts_added ?? 0, label: d.label?.ok ?? null,
+    label_facts: d.label_facts?.facts_added ?? 0, ms: Date.now() - started }));
+  return data;
+}
+
 // ---------- product card: everything known about the product, and research for what is missing ----------
 const CARD_SEARCHES = 10;   // doubled with Rob's OK: two 5-search passes (tasting + story, then the other facts)
 async function storeFacts(db: SupabaseClient, productId: string, product: string, result: Awaited<ReturnType<typeof research>>, meta: Record<string, unknown>) {
@@ -436,6 +451,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
   const found = await findProduct(db, brand, product);
   if (!found) return reply({ ok: true, found: false, researching: false }, 200, origin);
   const productId = String(found.id);
+  await prefillKnown(db, productId);
   // A bottle's line (e.g. Taylor Barrel Proof) shares its facts: this record first, then other records of the same line.
   const lineId = found.discover_line_id ? String(found.discover_line_id) : null;
   const [{ data: family }, { data: line }] = await Promise.all([
@@ -652,7 +668,11 @@ Deno.serve(async (req: Request) => {
       ? { ...b, brand: String(resolved!.brand || b.brand), product: [resolved!.line, releaseKey(resolved) !== "standard" ? releaseLabel(resolved) : null].filter(Boolean).join(", ") }
       : b;
     const canResearch = !!(productId && apiKey && researchBottle.brand);
-    if (canResearch) researchTasks.push(researchProduct(db, apiKey, subject, productId!, String(inserted.id), researchBottle));
+    // Known facts first (Harmony catalogue + US label approval), then web research only for what is still missing.
+    if (productId) researchTasks.push((async () => {
+      await prefillKnown(db, productId!);
+      if (canResearch) await researchProduct(db, apiKey, subject, productId!, String(inserted.id), researchBottle);
+    })());
     results.push({ brand: b.brand, product: b.product, status: "saved", sighting_id: inserted.id, product_id: productId, new_product: created, researching: canResearch, identity });
   }
   // Research continues after the reply so the scanner is never kept waiting.
