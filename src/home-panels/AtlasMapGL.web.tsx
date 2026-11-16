@@ -15,6 +15,36 @@ import { fetchAtlasClusters, fetchAtlasPoints } from '../services/discoverVenueA
 import { addPinImages, pinImageId, pinKind, pinSize, PIN_SIZE } from './atlasPins.web';
 
 const US_CENTER: [number, number] = [-97, 38.6];
+/** Deepest zoom with real satellite imagery (Esri World Imagery is native to tile level 19; past it the map has
+ *  nothing new to draw and phones were going black). Pinch stops here. */
+export const ATLAS_MAX_ZOOM = 19;
+
+/** Smoother tiles for Discover, applied on top of Harmony Atlas's basemap (the basemap file stays verbatim):
+ *  - 256 px imagery tiles: a quarter of the tile requests of the 128 px retina setting, so zooming keeps up;
+ *  - a low-detail copy of the same imagery underneath, so a tile that is still loading shows a soft picture
+ *    instead of a black square;
+ *  - no fade-in, so tiles appear the moment they arrive. */
+function smoothStyle(style: any) {
+  const esri = style?.sources?.esri;
+  if (!esri) return style;
+  esri.tileSize = 256;
+  esri.maxzoom = ATLAS_MAX_ZOOM;
+  style.sources['esri-low'] = { ...esri, maxzoom: 12 };
+  const i = style.layers.findIndex((l: any) => l.id === 'esri');
+  if (i >= 0) {
+    style.layers[i].paint = { ...(style.layers[i].paint || {}), 'raster-fade-duration': 0 };
+    style.layers.splice(i, 0, { id: 'esri-low', type: 'raster', source: 'esri-low', paint: { 'raster-fade-duration': 0, 'raster-contrast': 0.05 } });
+  }
+  return style;
+}
+
+/** Keep the required map credits, but folded into the small (i) button instead of a white box. */
+function foldAttribution(host: HTMLElement | null) {
+  host?.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show').forEach(el => {
+    el.classList.remove('maplibregl-compact-show');
+    el.removeAttribute('open');
+  });
+}
 const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
 
 /** Harmony Atlas gridBox(): snap the padded view to the cluster grid so bubbles do not jump. */
@@ -110,16 +140,24 @@ export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullSc
     (async () => {
       try {
         const lib = await loadMapLibre();
-        const style = await buildAtlasStyle(ATLAS_DEFAULT_BASEMAP);
+        const style = smoothStyle(await buildAtlasStyle(ATLAS_DEFAULT_BASEMAP));
         if (cancelled || !hostRef.current) return;
         libRef.current = lib;
         const c = centerRef.current;
         const map = new lib.Map({ container: hostRef.current, style, center: c ? [c.longitude, c.latitude] : US_CENTER, zoom: c ? 13 : 3.6, pitch: 0,
-          attributionControl: { compact: true }, maxPitch: 70, cooperativeGestures: !fullScreen }) as MlMap & Record<string, any>;
+          attributionControl: { compact: true }, maxPitch: 70, cooperativeGestures: !fullScreen,
+          // Smooth zooming: never cancel tiles mid-pinch (cancelled tiles were the black boxes), keep more tiles in
+          // memory, no cross-fade, cap the drawing resolution at 2x so phones are not drawing 3x canvases.
+          maxZoom: ATLAS_MAX_ZOOM, fadeDuration: 0, cancelPendingTileRequestsWhileZooming: false, maxTileCacheSize: 512,
+          refreshExpiredTiles: false, pixelRatio: Math.min(window.devicePixelRatio || 1, 2) }) as MlMap & Record<string, any>;
+        map.once('load', () => foldAttribution(hostRef.current));
+        map.on('styledata', () => foldAttribution(hostRef.current));
         mapRef.current = map;
         if (fullScreen) (window as unknown as { __discoverAtlas?: unknown }).__discoverAtlas = map; // same idea as Harmony Atlas window.__map (tests, voice)
         map.on('style.load', () => {
-          try { map.setProjection({ type: 'vertical-perspective' }); if (map.setSky) map.setSky({ 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] }); } catch { /* older engines */ }
+          // Globe when zoomed out (like Harmony Atlas), flat up close. Harmony's 'vertical-perspective' stays a globe at
+          // every zoom and stops drawing from about zoom 16.3 (the whole map went black); 'globe' hands over to flat.
+          try { map.setProjection({ type: 'globe' }); if (map.setSky) map.setSky({ 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] }); } catch { /* older engines */ }
           addDataLayers(map);
           if (map.getLayer('building-3d')) map.setLayoutProperty('building-3d', 'visibility', is3DRef.current ? 'visible' : 'none');
           setReady(true);

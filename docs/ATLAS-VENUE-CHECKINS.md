@@ -59,3 +59,14 @@ Server re-checks the venue against Harmony Atlas and computes the distance itsel
   until it gets an embedded browser view.
 - The key comes from PHG through `phg-discover-menu-pages` (`op: streetview`). Google must allow the Discover web
   address on that key (Google Cloud Console > Credentials > the Maps key > Website restrictions).
+
+## Smooth zoom (2026-11-16)
+
+- Black-out cause: Harmony Atlas's `vertical-perspective` projection stays a globe at every zoom and stops drawing from
+  about zoom 16.3 (pins and imagery both vanished). Discover uses `globe`: a globe when zoomed out, flat up close.
+- Black boxes while zooming: tiles were cancelled mid-pinch and faded in. Now: no cancelling while zooming, no fade, a
+  bigger tile cache, 256 px imagery tiles (a quarter of the requests) and a low-detail imagery underlay so a loading
+  tile shows a soft picture instead of black. Drawing resolution capped at 2x.
+- Max zoom 19 (the deepest level with real satellite imagery; level 20 is a grey placeholder).
+- Map credits stay (required by OpenStreetMap/Esri) but are folded into the small (i) button.
+- Test: 24 fast zoom in/out frames between levels 12 and 19, 0 % black in every frame; pins and imagery at 17, 18, 19.
