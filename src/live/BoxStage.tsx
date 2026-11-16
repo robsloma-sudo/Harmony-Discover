@@ -8,7 +8,7 @@
 //   RESEARCHING  a new bottle is being looked up on the web; % grows with the time research usually takes (~20-40 s)
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { LABEL, TYPICAL_MS, stagePercent, type BoxStageName } from './boxStageProgress';
+import { LABEL, STAGE_STEP, TYPICAL_MS, stagePercent, type BoxStageName } from './boxStageProgress';
 
 type Props = {
   stage: BoxStageName;
@@ -35,7 +35,8 @@ export function BoxStage({ stage, value, since, name, boxWidth }: Props) {
   useEffect(() => {
     Animated.timing(fill, { toValue: pct, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
   }, [pct, fill]);
-  const text = stage === 'found' ? '✓ ' + (name || '') : LABEL[stage] + ' ' + pct + '%';
+  // Steps 1-4 are numbered so the order is clear: "2/4 RECOGNIZING 64%".
+  const text = stage === 'found' ? '✓ ' + (name || '') : STAGE_STEP[stage] + '/4 ' + LABEL[stage] + ' ' + pct + '%';
   // One line that always fits inside the box: the font shrinks with the box width.
   // Bold capitals are about 0.8 em wide, plus 0.3 pt letter spacing; 16 pt go to the tag's padding and the box margins.
   const chars = Math.max(1, text.length);

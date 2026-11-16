@@ -28,6 +28,7 @@ import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
 import { clientLog, installClientLog } from '../src/services/clientLog';
 import { layoutBoxes } from '../src/live/boxDepth';
 import { BoxStage } from '../src/live/BoxStage';
+import { forwardOnlyStage, type ShownStage, type StageMemory } from '../src/live/boxStageProgress';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -58,6 +59,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
+  // Furthest step (1-4) each box has reached; boxes never step backwards (forgotten when the box goes).
+  const stageMemoryRef = useRef(new Map<number, StageMemory>());
   const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
@@ -101,6 +104,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   // Boxes outline labels and never overlap: a bottle behind another is hidden, neighbours are trimmed (see boxDepth.ts).
   const shownCandidates = liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
   const boxLayout = layoutBoxes(shownCandidates);
+  for (const id of [...stageMemoryRef.current.keys()]) if (!liveCandidates.some(c => c.trackId === id)) stageMemoryRef.current.delete(id);
   const cameraViewBottom = bottomAreaTop > cameraViewTop ? bottomAreaTop - 4 : screenHeight - 150;
   useEffect(() => {
     if (!liveCandidates.some(candidate => candidate.bottle)) return;
@@ -418,14 +422,25 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               height: ((trackedHeight * 100) + '%') as `${number}%`,
             };
             const boxPx = trackedWidth * screenWidth;   // box width in points (stage text fits inside it)
+            // Where this bottle is in the 1-2-3-4 steps; a box never goes back to an earlier step.
+            // A name confirmed but not yet saved stays at step 3 (99%); once saved, a new bottle shows step 4
+            // (researching) and a known bottle shows its name.
+            const current: ShownStage = bottle
+              ? (tracked.stage?.name === 'researching' ? { stage: 'researching', since: tracked.stage.since }
+                : tracked.saved ? { stage: 'found' } : { stage: 'identifying', value: 0.99 })
+              : tracked.stage?.name === 'reading' ? { stage: 'recognizing', since: tracked.stage.since }
+              : identifying ? { stage: 'identifying', value: tracked.identifying }
+              : tracked.stage?.name === 'zoom' ? { stage: 'zoom', value: tracked.stage.value }
+              : { stage: 'scanning', value: tracked.confidence };
+            const staged = forwardOnlyStage(stageMemoryRef.current.get(tracked.trackId), current, Date.now());
+            stageMemoryRef.current.set(tracked.trackId, staged.memory);
+            const shownStage = staged.shown;
             if (bottle) {
               // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
               return (
                 <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                   <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
-                    {tracked.stage?.name === 'researching'
-                      ? <BoxStage stage="researching" since={tracked.stage.since} boxWidth={boxPx} />
-                      : <BoxStage stage="found" name={name} boxWidth={boxPx} />}
+                    <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
                   </View>
                 </View>
               );
@@ -436,13 +451,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <View style={[s.liveDetectionBox, boxStyle]}>
                   {/* What the scanner is doing with this bottle right now, with its progress. */}
-                  {tracked.stage?.name === 'reading'
-                    ? <BoxStage stage="recognizing" since={tracked.stage.since} boxWidth={boxPx} />
-                    : identifying
-                      ? <BoxStage stage="identifying" value={tracked.identifying} boxWidth={boxPx} />
-                      : tracked.stage?.name === 'zoom'
-                      ? <BoxStage stage="zoom" value={tracked.stage.value} boxWidth={boxPx} />
-                      : <BoxStage stage="scanning" value={tracked.confidence} boxWidth={boxPx} />}
+                  <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
                 </View>
               </View>
             );
