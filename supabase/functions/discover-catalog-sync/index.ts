@@ -1,4 +1,4 @@
-// discover-catalog-sync v0.3 — copies data between Harmony (PHG) and Discover DEV through PHG's token-guarded bridge.
+// discover-catalog-sync v0.4 — copies data between Harmony (PHG) and Discover DEV through PHG's token-guarded bridge.
 //   labels        : US label approvals since 2016 (name, style, origin, producer) -> discover_label_catalog
 //   research_pull : PHG products that still need web research -> discover_phg_enrich_queue (batch 'full')
 //   research_push : finished research results -> PHG product_web_facts (review table, no product writes)
@@ -9,12 +9,14 @@
 //   facts_push    : facts Discover found for linked products -> PHG product_discover_facts (review table)
 //   cola_details  : asks Harmony for the US label detail of newly scanned bottles (within Harmony's monthly "scans"
 //                   COLA allocation), pulls finished details back and copies them into empty card fields
+//   letter_pack   : writes the on-phone letter-count catalogue (brand letter bags) to public storage discover-packs
+//   fonts         : refreshes the open-licence font catalogue (Fontsource, Google Fonts, Font Squirrel)
 //   daily         : products + brand_profiles + link + facts_push
 // Auth: x-discover-cron-secret. Bridge token + PHG publishable key live in discover_bridge_config (server only).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.3";
+const VERSION = "0.4";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const BUDGET_MS = 100_000;
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
@@ -167,6 +169,61 @@ Deno.serve(async (req) => {
       const { data: prefill } = pulled ? await db.rpc("discover_prefill_from_labels", {}) : { data: null };
       return { asked, queued, pulled, scans_left: reply?.scans_left ?? null, prefill };
     };
+
+    if (action === "letter_pack") {
+      // One line per brand: letters-bag TAB word bags (comma) TAB brand TAB approvals; most-approved brands first.
+      const lines: string[] = [];
+      for (let from = 0; ; from += 1000) {   // the database hands out at most 1,000 rows per request
+        const { data, error } = await db.from("discover_brand_bags").select("bag,word_bags,brand,labels")
+          .order("labels", { ascending: false }).order("brand_norm").range(from, from + 999);
+        if (error) throw new Error("pack_read_failed " + error.message.slice(0, 80));
+        for (const r of data ?? []) lines.push([r.bag, (r.word_bags ?? []).join(","), String(r.brand).replace(/[\t\n]/g, " "), r.labels].join("\t"));
+        if (!data || data.length < 1000) break;
+      }
+      const text = "v1\tbag\twords\tbrand\tlabels\n" + lines.join("\n") + "\n";
+      const gz = new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip")));
+      const bytes = new Uint8Array(await gz.arrayBuffer());
+      const { error: upErr } = await db.storage.from("discover-packs").upload("letter-bags-v1.tsv.gz", bytes,
+        { contentType: "application/gzip", upsert: true, cacheControl: "3600" });
+      if (upErr) throw new Error("pack_upload_failed " + upErr.message.slice(0, 80));
+      return json({ ok: true, version: VERSION, brands: lines.length, raw_bytes: text.length, gzip_bytes: bytes.length });
+    }
+
+    if (action === "fonts") {
+      const ua = { "User-Agent": "Mozilla/5.0 (compatible; HarmonyDiscover/1.0)", Accept: "application/json" };
+      const rows = new Map<string, any>();
+      const add = (family: string, category: string, tags: string[], license: string, source: string, url: string, pop: number | null) => {
+        const k = family.toLowerCase(); const r = rows.get(k) ?? { family, category, tags: new Set<string>(), license, sources: new Set<string>(), url, popularity: pop };
+        tags.filter(Boolean).forEach((t) => r.tags.add(t.toLowerCase())); r.sources.add(source); if (pop != null) r.popularity = pop; rows.set(k, r);
+      };
+      const got: Record<string, number> = {};
+      try {
+        const gfText = await (await fetch("https://fonts.google.com/metadata/fonts", { headers: ua })).text();
+        const gf = JSON.parse(gfText.slice(gfText.indexOf("{"))).familyMetadataList ?? [];
+        const fs: any[] = await (await fetch("https://api.fontsource.org/v1/fonts", { headers: ua })).json();
+        const gfm = new Map(gf.map((f: any) => [String(f.family).toLowerCase(), f]));
+        for (const f of fs) { const g: any = gfm.get(String(f.family).toLowerCase()) ?? {};
+          add(f.family, f.category, [...(g.classifications ?? []), f.category], f.license, "fontsource", "https://fontsource.org/fonts/" + f.id, g.popularity ?? null); }
+        for (const g of gf) if (!rows.has(String(g.family).toLowerCase()))
+          add(g.family, String(g.category ?? "").toLowerCase(), g.classifications ?? [], "open (Google Fonts)", "google", "https://fonts.google.com/specimen/" + String(g.family).replace(/ /g, "+"), g.popularity ?? null);
+        got.google = gf.length; got.fontsource = fs.length;
+      } catch (e) { got.google_error = 1; }
+      try {
+        const fq: any[] = await (await fetch("https://www.fontsquirrel.com/api/fontlist/all", { headers: ua })).json();
+        for (const f of fq) add(f.family_name, String(f.classification ?? "").toLowerCase(), [f.classification], "free for commercial use (Font Squirrel)", "fontsquirrel", "https://www.fontsquirrel.com/fonts/" + f.family_urlname, null);
+        got.fontsquirrel = fq.length;
+      } catch (e) { got.fontsquirrel_error = 1; }
+      const SCRIPT = ["handwriting", "script", "calligraphic", "handdrawn", "blackletter"];
+      const out = [...rows.values()].map((r) => ({ family: r.family, category: r.category, tags: [...r.tags], script_like: [...r.tags].some((t: string) => SCRIPT.includes(t)),
+        license: r.license, sources: [...r.sources], url: r.url, popularity: r.popularity }));
+      let loaded = 0;
+      for (let i = 0; i < out.length; i += 1000) {
+        const { data, error } = await db.rpc("discover_font_catalog_load", { p_rows: out.slice(i, i + 1000) });
+        if (error) throw new Error("fonts_load_failed " + error.message.slice(0, 80));
+        loaded += Number(data) || 0;
+      }
+      return json({ ok: true, version: VERSION, fetched: got, loaded, script_like: out.filter((r) => r.script_like).length });
+    }
 
     if (action === "cola_details") return json({ ok: true, version: VERSION, cola_details: await colaDetails() });
     if (action === "products") return json({ ok: true, version: VERSION, products: await syncProducts() });
