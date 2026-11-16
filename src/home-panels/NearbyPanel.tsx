@@ -1,18 +1,20 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {useWindowDimensions} from 'react-native';
-import {ActivityIndicator,Linking,Platform,Pressable,ScrollView,Text,TextInput,View,PanResponder} from 'react-native';
+import {ActivityIndicator,Linking,Modal,Platform,Pressable,ScrollView,Text,TextInput,View,PanResponder} from 'react-native';
 import {colors} from '../ui';
-import {findNearbyPhgAtlasVenues,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
-import {AtlasMap} from './AtlasMap';
+import {findNearbyPhgAtlasVenues,layersForCategory,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
+import {AtlasMapGL} from './AtlasMapGL';
+import {VenueFeedSheet} from './VenueFeedSheet';
+import {VENUE_TYPE_COLORS} from './AtlasMapGL.types';
 import type {JourneyScanItem} from './JourneyPlayerOverlay';
 
 const radii:VenueRadius[]=[1,5,10,15,25];
-const filters=[{label:'All',value:''},{label:'Bars',value:'bar'},{label:'Cocktail bars',value:'cocktail_bar'},{label:'Restaurants',value:'restaurant'},{label:'Breweries',value:'brewery'},{label:'Wineries',value:'winery'},{label:'Distilleries',value:'distillery'}];
+const filters=[{label:'All',value:''},{label:'Bars',value:'bar'},{label:'Cocktail bars',value:'cocktail_bar'},{label:'Restaurants',value:'restaurant'},{label:'Liquor stores',value:'liquor_store'},{label:'Breweries',value:'brewery'},{label:'Wineries',value:'winery'},{label:'Distilleries',value:'distillery'}];
 type NearbyCommand = { id:number; action:'set_radius'|'set_category'|'search'|'recenter'|'configure'; radius_miles?:number; category?:string; search?:string };
 
-export default function NearbyPanel({command,onCommandResult,journeyItems=[],onOpenJourney}:{command?:NearbyCommand|null;onCommandResult?:(id:number,result:string)=>void;journeyItems?:JourneyScanItem[];onOpenJourney?:(item:JourneyScanItem)=>void}){
+export default function NearbyPanel({command,onCommandResult,journeyItems=[],onOpenJourney,checkedInVenueRef=null}:{command?:NearbyCommand|null;onCommandResult?:(id:number,result:string)=>void;journeyItems?:JourneyScanItem[];onOpenJourney?:(item:JourneyScanItem)=>void;checkedInVenueRef?:string|null}){
  const {height:screenHeight}=useWindowDimensions();
- const [radius,setRadius]=useState<VenueRadius>(5),[settledRadius,setSettledRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[selectedVenue,setSelectedVenue]=useState<string|null>(null),[journeysOpen,setJourneysOpen]=useState(false);
+ const [radius,setRadius]=useState<VenueRadius>(5),[settledRadius,setSettledRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[selectedVenue,setSelectedVenue]=useState<string|null>(null),[journeysOpen,setJourneysOpen]=useState(false),[fullScreen,setFullScreen]=useState(false),[atlasPick,setAtlasPick]=useState<DiscoverVenue|null>(null),[viewCount,setViewCount]=useState<number|null>(null);
  const locate=useCallback(()=>new Promise<string>(resolve=>{
   if(typeof navigator==='undefined'||!navigator.geolocation){const message='Location permission is not available in this build yet.';setError(message);resolve(message);return;}
   setLocating(true);setError('');
@@ -33,11 +35,24 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
  useEffect(()=>{if(!coords)return;let active=true;setLoading(true);setError('');findNearbyPhgAtlasVenues(coords.latitude,coords.longitude,settledRadius,category||null).then(rows=>{if(active){setVenues(rows);if(selectedVenue&&!rows.some(v=>v.id===selectedVenue))setSelectedVenue(null);}}).catch(e=>{if(active)setError(e instanceof Error?e.message:'Nearby search failed.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;}},[coords,settledRadius,category]);
  const filtered=useMemo(()=>venues.filter(v=>v.name.toLowerCase().includes(query.trim().toLowerCase())||(v.locality||'').toLowerCase().includes(query.trim().toLowerCase())),[venues,query]);
  const selected=filtered.find(v=>v.id===selectedVenue)||null;
- const venuePins=filtered.map(v=>({id:v.id,name:v.name,latitude:v.latitude,longitude:v.longitude}));
+ const venuePins=useMemo(()=>filtered.map(v=>({id:v.id,name:v.name,latitude:v.latitude,longitude:v.longitude,venue_type:v.venue_type,atlas_layer:v.atlas_layer})),[filtered]);
+ const fitKey=`${settledRadius}-${filtered.length}-${filtered[0]?.latitude}-${filtered[0]?.longitude}-${filtered[filtered.length-1]?.latitude}-${filtered[filtered.length-1]?.longitude}`;
  const openVenue=(v:DiscoverVenue)=>{setSelectedVenue(v.id);};
  return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{paddingBottom:10}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
   
-  <AtlasMap center={coords} venues={venuePins} onSelectVenue={id=>setSelectedVenue(id)} fitKey={`${settledRadius}-${filtered.length}-${filtered[0]?.latitude}-${filtered[0]?.longitude}-${filtered[filtered.length-1]?.latitude}-${filtered[filtered.length-1]?.longitude}`} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
+  <AtlasMapGL center={coords} venues={venuePins} selectedId={selectedVenue} onSelectVenue={id=>setSelectedVenue(id)} fitKey={fitKey} height={Math.max(360,Math.min(screenHeight*0.52,620))}/>
+  <Pressable onPress={()=>{if(!coords)void locate();setAtlasPick(selected??null);setFullScreen(true);}} accessibilityRole="button" style={{padding:11,borderRadius:9,alignItems:'center',marginTop:9,borderWidth:1,borderColor:'rgba(74,137,255,0.85)',backgroundColor:'rgba(24,65,130,0.28)'}}><Text style={{color:'#DCEBFF',fontSize:10,fontWeight:'900',letterSpacing:1}}>OPEN FULL-SCREEN ATLAS</Text></Pressable>
+  <Modal visible={fullScreen} animationType="fade" onRequestClose={()=>setFullScreen(false)}>
+   <View style={{flex:1,backgroundColor:'#071326'}}>
+    <AtlasMapGL center={coords} venues={venuePins} selectedId={atlasPick?.id??null} onSelectVenue={(id,v)=>setAtlasPick(v??venues.find(x=>x.id===id)??null)} layers={layersForCategory(category||null)} onViewportVenues={(list,clustered)=>setViewCount(clustered?null:list.length)} fullScreen/>
+    <View pointerEvents="box-none" style={{position:'absolute',left:10,right:60,top:52}}>
+     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap:5}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:'rgba(5,15,32,0.9)',borderWidth:1,borderColor:'rgba(91,155,255,0.5)'}}><Text style={{color:category===f.value?'#111':'#EAF4FF',fontSize:10,fontWeight:'800'}}>{f.label}</Text></Pressable>)}</ScrollView>
+     <Text style={{color:'#C9D6EA',fontSize:10,fontWeight:'800',marginTop:6}}>{viewCount==null?'Zoom in to see each place':`${viewCount} places in view`}</Text>
+    </View>
+    <Pressable onPress={()=>{setFullScreen(false);setAtlasPick(null);}} accessibilityLabel="Close full-screen Atlas" style={{position:'absolute',left:10,top:atlasPick?92:undefined,bottom:atlasPick?undefined:22,paddingHorizontal:14,paddingVertical:9,borderRadius:10,backgroundColor:'rgba(5,15,32,0.92)',borderWidth:1,borderColor:'rgba(91,155,255,0.7)'}}><Text style={{color:'#EAF4FF',fontSize:11,fontWeight:'900'}}>CLOSE</Text></Pressable>
+    {atlasPick&&<VenueFeedSheet venue={atlasPick} checkedInHere={checkedInVenueRef===atlasPick.id} onClose={()=>setAtlasPick(null)}/>}
+   </View>
+  </Modal>
   <Pressable onPress={locate} disabled={locating} style={{padding:11,backgroundColor:colors.accent,borderRadius:9,alignItems:'center',marginTop:9,marginBottom:9}}>{locating?<ActivityIndicator color="#111"/>:<Text style={{color:'#111',fontSize:10,fontWeight:'900'}}>{coords?'RECENTER ATLAS':'ENABLE LOCATION & LOAD ATLAS'}</Text>}</Pressable>
 
   <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:7}}>
@@ -67,7 +82,8 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
   {selected&&<View style={{padding:11,marginBottom:8,borderRadius:10,backgroundColor:'rgba(23,54,100,0.42)',borderWidth:1,borderColor:'rgba(74,137,255,0.5)'}}>
    <Text style={{color:'#EAF2FF',fontSize:12,fontWeight:'900'}}>{selected.name}</Text>
    <Text style={{color:'#A8B7D0',fontSize:9,marginTop:3}}>{[selected.locality,selected.region].filter(Boolean).join(', ')||selected.address_line||'Address unavailable'} · {selected.distance_miles.toFixed(1)} mi</Text>
-   <Text style={{color:'#8DBBFF',fontSize:9,marginTop:6}}>Journey availability will appear after the Harmony connection is approved.</Text>
+   {selected.drink_items?<Text style={{color:'#A8B7D0',fontSize:9,marginTop:4}}>{selected.drink_items} drinks on file{selected.cocktail_avg_price?` · cocktails avg $${selected.cocktail_avg_price.toFixed(0)}`:''}</Text>:null}
+   <Pressable onPress={()=>{setAtlasPick(selected);setFullScreen(true);}}><Text style={{color:'#FFD166',fontSize:9,fontWeight:'900',marginTop:8}}>OPEN VENUE · MENUS & BOTTLES →</Text></Pressable>
    <Pressable onPress={()=>Linking.openURL('https://www.openstreetmap.org/?mlat='+selected.latitude+'&mlon='+selected.longitude+'#map=16/'+selected.latitude+'/'+selected.longitude)}><Text style={{color:'#8DBBFF',fontSize:9,fontWeight:'900',marginTop:8}}>OPEN IN MAPS ↗</Text></Pressable>
   </View>}
   {filtered.map(v=><Pressable key={v.id} onPress={()=>openVenue(v)} style={{padding:10,marginBottom:6,borderRadius:9,backgroundColor:selectedVenue===v.id?'rgba(26,63,117,0.5)':colors.panel,borderWidth:1,borderColor:selectedVenue===v.id?'rgba(74,137,255,0.65)':'transparent'}}>

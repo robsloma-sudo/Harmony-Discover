@@ -11,3 +11,4 @@ dist/
 
 # Generated Supabase Edge Function bundle; regenerate with npm run build:edge
 supabase/functions/discover-api/_shared/
+supabase/functions/discover-checkins/_shared/
