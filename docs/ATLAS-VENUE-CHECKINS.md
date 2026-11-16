@@ -47,3 +47,15 @@ Server re-checks the venue against Harmony Atlas and computes the distance itsel
 - `discover-api` in DEV answers `environment_refused` (missing `DISCOVER_ALLOWED_ORIGINS` secret) - pre-existing;
   `discover-checkins` falls back to the Discover site origins.
 - Photos of scanned bottles on venue pages, native iPhone map pitch and location prompt: not built.
+
+## Pins and Street View (added 2026-11-16)
+
+- Zoomed in (zoom 9+), every place is a teardrop pin whose tip sits on the business's exact point. Pins grow as you
+  zoom in and shrink as you zoom out. Below zoom 9 the Harmony Atlas count bubbles stay.
+- One simple emoji per kind, inside a pin in the Harmony Atlas layer colour: on premise 🍸 bar / 🍽️ restaurant,
+  off premise 🏪 liquor store, 🍺 brewery, 🍷 winery, 🥃 distillery. The selected place gets a bigger pin.
+- Street View plays live inside the page (Google Maps Embed, same key and URL format as Harmony Atlas): in every venue
+  card, and anywhere you tap on the full-screen map away from a pin. No redirect. The iPhone app opens Google Maps
+  until it gets an embedded browser view.
+- The key comes from PHG through `phg-discover-menu-pages` (`op: streetview`). Google must allow the Discover web
+  address on that key (Google Cloud Console > Credentials > the Maps key > Website restrictions).

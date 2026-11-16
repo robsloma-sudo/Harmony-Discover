@@ -143,3 +143,21 @@ export async function fetchVenueFeed(venueRef:string, days=90):Promise<VenueFeed
   if (!response.ok) throw new Error(body.error==='checkins_not_configured'?'Crowd updates are not switched on yet.':(body.error || `Venue feed failed (${response.status}).`));
   return body as VenueFeed;
 }
+
+// ---- Google Street View (same Maps Embed key as Harmony Atlas, via PHG; the Embed API has no usage charge) ----
+let streetViewKey: Promise<string> | null = null;
+export function getStreetViewKey(): Promise<string> {
+  if (!streetViewKey) {
+    streetViewKey = fetch(`${PHG_URL}/functions/v1/phg-discover-menu-pages`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: PHG_KEY }, body: JSON.stringify({ op: 'streetview' }) })
+      .then(r => r.json()).then(j => (j?.ok && typeof j.key === 'string' ? j.key : ''))
+      .catch(() => '');
+    streetViewKey.then(k => { if (!k) streetViewKey = null; });
+  }
+  return streetViewKey;
+}
+/** Interactive Street View for a point, embedded in the page (no redirect). */
+export const streetViewEmbedUrl = (key: string, latitude: number, longitude: number, heading = 0) =>
+  `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${latitude.toFixed(6)},${longitude.toFixed(6)}&fov=85&heading=${Math.round(heading)}&pitch=0`;
+/** Same spot in Google Maps (only used where an embed is impossible, e.g. the native app). */
+export const streetViewAppUrl = (latitude: number, longitude: number) =>
+  `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${latitude.toFixed(6)},${longitude.toFixed(6)}`;

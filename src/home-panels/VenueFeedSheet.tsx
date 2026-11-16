@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { fetchVenueFeed, fetchVenueMenuPages, type DiscoverVenue, type MenuPagesView, type VenueFeed } from '../services/discoverVenueApi';
 import { ATLAS_LAYERS } from '../services/phgAtlasRecords';
+import { StreetViewEmbed } from './StreetViewEmbed';
 import { VENUE_TYPE_COLORS, VENUE_TYPE_LABELS } from './AtlasMapGL.types';
 
 const ago = (iso: string) => {
@@ -43,6 +44,9 @@ export function VenueFeedSheet({ venue, checkedInHere, onClose }: { venue: Disco
       <Pressable onPress={onClose} accessibilityLabel="Close venue" style={{ padding: 6 }}><Text style={{ color: '#8DBBFF', fontSize: 16, fontWeight: '900' }}>×</Text></Pressable>
     </View>
     <ScrollView style={{ marginTop: 10 }} contentContainerStyle={{ paddingBottom: 8 }}>
+      <Text style={{ color: '#8DBBFF', fontSize: 9, fontWeight: '900', letterSpacing: 1.2, marginBottom: 6 }}>STREET VIEW · DRAG TO LOOK AROUND</Text>
+      <StreetViewEmbed latitude={venue.latitude} longitude={venue.longitude} title={venue.name} height={200} />
+      <View style={{ height: 12 }} />
       <Text style={{ color: '#8DBBFF', fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }}>MENU</Text>
       {menuState === 'loading' && <ActivityIndicator color="#8DBBFF" style={{ marginVertical: 6 }} />}
       {menuState === 'failed' && <Text style={{ color: '#91A9CB', fontSize: 10, marginTop: 4 }}>Menu pages couldn't load just now.</Text>}

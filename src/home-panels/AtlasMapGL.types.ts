@@ -18,6 +18,8 @@ export type AtlasMapGLProps = {
   layers?: AtlasLayer[];
   /** Full Atlas mode: the venues currently drawn as points (empty while showing cluster bubbles). */
   onViewportVenues?: (venues: DiscoverVenue[], clustered: boolean) => void;
+  /** Tap on the map away from any pin: a point for Street View. */
+  onPickPoint?: (point: { latitude: number; longitude: number }) => void;
   selectedId?: string | null;
   height?: number;
   fullScreen?: boolean;

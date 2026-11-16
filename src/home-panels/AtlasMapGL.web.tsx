@@ -12,6 +12,7 @@ import { ATLAS_DEFAULT_BASEMAP, buildAtlasStyle } from './atlasBasemaps.web';
 import type { AtlasMapGLProps } from './AtlasMapGL.types';
 import { ATLAS_LAYERS, ATLAS_LAYER_ORDER, ATLAS_POINT_ZOOM, atlasRowToVenue, type AtlasLayer, type DiscoverVenue } from '../services/phgAtlasRecords';
 import { fetchAtlasClusters, fetchAtlasPoints } from '../services/discoverVenueApi';
+import { addPinImages, pinImageId, pinKind, pinSize, PIN_SIZE } from './atlasPins.web';
 
 const US_CENTER: [number, number] = [-97, 38.6];
 const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
@@ -24,7 +25,7 @@ function gridBox(map: MlMap & { getBounds(): { getWest(): number; getEast(): num
     maxLng: Math.min(180, Math.ceil((b.getEast() + pw) / c) * c), maxLat: Math.min(85, Math.ceil((b.getNorth() + ph) / c) * c) };
 }
 
-export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullScreen = false, selectedId, fitKey, layers, onViewportVenues }: AtlasMapGLProps) {
+export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullScreen = false, selectedId, fitKey, layers, onViewportVenues, onPickPoint }: AtlasMapGLProps) {
   const viewport = !!layers; // full Atlas mode: the map loads Harmony Atlas data for whatever is on screen
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<(MlMap & Record<string, any>) | null>(null);
@@ -33,6 +34,7 @@ export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullSc
   const venuesById = useRef(new Map<string, DiscoverVenue>());
   const onSelectRef = useRef(onSelectVenue); onSelectRef.current = onSelectVenue;
   const onViewportRef = useRef(onViewportVenues); onViewportRef.current = onViewportVenues;
+  const onPickPointRef = useRef(onPickPoint); onPickPointRef.current = onPickPoint;
   const layersRef = useRef(layers); layersRef.current = layers;
   const centerRef = useRef(center); centerRef.current = center;
   const reqRef = useRef(0);
@@ -53,20 +55,27 @@ export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullSc
       'circle-radius': ['min', 34, ['+', 7, ['*', 2.2, ['sqrt', ['get', 'n']]]]], 'circle-pitch-alignment': 'map' } });
     map.addLayer({ id: 'atlas-cells-n', type: 'symbol', source: 'atlas-cells', layout: { 'text-field': ['to-string', ['get', 'n']], 'text-size': 11, 'text-font': ['Noto Sans Bold'], 'text-allow-overlap': true },
       paint: { 'text-color': '#05070d' } });
-    map.addLayer({ id: 'atlas-pts', type: 'circle', source: 'atlas-pts', paint: {
-      'circle-color': color, 'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 3.5, 13, 5.5, 16, 8],
-      'circle-stroke-color': '#05070d', 'circle-stroke-width': 1.2, 'circle-pitch-alignment': 'map' } });
+    // Teardrop pins: the tip is the business's exact coordinate; emoji = kind of business; grow as you zoom in.
+    addPinImages(map as never);
+    map.addLayer({ id: 'atlas-pts', type: 'symbol', source: 'atlas-pts', layout: {
+      'icon-image': ['get', 'pin'], 'icon-anchor': 'bottom', 'icon-size': PIN_SIZE,
+      'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-pitch-alignment': 'viewport',
+      'symbol-sort-key': ['-', 0, ['get', 'lat']] } });
     map.addLayer({ id: 'atlas-pts-label', type: 'symbol', source: 'atlas-pts', minzoom: 15, layout: {
-      'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, 1.2], 'text-anchor': 'top', 'text-font': ['Noto Sans Regular'] },
+      'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, 0.35], 'text-anchor': 'top', 'text-font': ['Noto Sans Regular'],
+      'text-optional': true },
       paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,.85)', 'text-halo-width': 1.3 } });
-    map.addLayer({ id: 'atlas-sel', type: 'circle', source: 'atlas-sel', paint: { 'circle-radius': 13, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#FFD166', 'circle-stroke-width': 3, 'circle-pitch-alignment': 'map' } });
+    // Selected place: the same pin, a size larger, drawn on top.
+    map.addLayer({ id: 'atlas-sel', type: 'symbol', source: 'atlas-sel', layout: {
+      'icon-image': ['get', 'pin'], 'icon-anchor': 'bottom', 'icon-size': pinSize(1.4),
+      'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-pitch-alignment': 'viewport' } });
   };
 
   const setPoints = (list: DiscoverVenue[]) => {
     const map = mapRef.current; if (!map) return;
     venuesById.current = new Map(list.map(v => [v.id, v]));
     (map.getSource('atlas-pts') as MlGeoJSONSource | undefined)?.setData(fc(list.map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.longitude, v.latitude] },
-      properties: { id: v.id, name: v.name, layer: v.atlas_layer ?? 'venues' } }))));
+      properties: { id: v.id, name: v.name, layer: v.atlas_layer ?? 'venues', pin: pinImageId(pinKind(v)), lat: v.latitude } }))));
   };
   const setCells = (cells: Array<{ layer: AtlasLayer; lat: number; lng: number; n: number }>) => {
     (mapRef.current?.getSource('atlas-cells') as MlGeoJSONSource | undefined)?.setData(fc(cells.map(c => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] }, properties: { layer: c.layer, n: c.n } }))));
@@ -124,12 +133,21 @@ export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullSc
           const xy = e.features?.[0]?.geometry.coordinates as [number, number] | undefined;
           if (xy) map.easeTo({ center: xy, zoom: Math.max(map.getZoom() + 2, ATLAS_POINT_ZOOM), duration: 700 });
         });
+        // Tap anywhere that isn't a pin or bubble: Street View for that spot, inside the page.
+        map.on('click', (e: { point: unknown; lngLat: { lng: number; lat: number } }) => {
+          if (!onPickPointRef.current) return;
+          const hits = (map as any).queryRenderedFeatures(e.point, { layers: ['atlas-pts', 'atlas-cells', 'atlas-sel'] });
+          if (hits && hits.length) return;
+          onPickPointRef.current({ latitude: e.lngLat.lat, longitude: e.lngLat.lng });
+        });
         for (const l of ['atlas-pts', 'atlas-cells']) {
           map.on('mouseenter', l, () => { map.getCanvas().style.cursor = 'pointer'; });
           map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
         }
         map.on('moveend', () => { if (!layersRef.current) return; if (t) clearTimeout(t); t = setTimeout(() => void loadRef.current(), 300); });
-        map.on('error', (e: { error?: { message?: string } }) => { if (!map.isStyleLoaded()) setFailed(e?.error?.message || 'Map could not load.'); });
+        // Only a failure before the first draw is shown; later tile hiccups retry on their own.
+        let drawn = false; map.once('load', () => { drawn = true; });
+        map.on('error', (e: { error?: { message?: string } }) => { if (!drawn) setFailed(e?.error?.message || 'Map could not load.'); });
       } catch (e) { if (!cancelled) setFailed(e instanceof Error ? e.message : 'Map could not load.'); }
     })();
     return () => { cancelled = true; if (t) clearTimeout(t); userMarkerRef.current?.remove(); mapRef.current?.remove(); mapRef.current = null; };
@@ -145,7 +163,7 @@ export function AtlasMapGL({ center, venues, onSelectVenue, height = 360, fullSc
   useEffect(() => {
     const map = mapRef.current; if (!ready || !map) return;
     const v = selectedId ? venuesById.current.get(selectedId) ?? (venues as DiscoverVenue[]).find(x => x.id === selectedId) : null;
-    (map.getSource('atlas-sel') as MlGeoJSONSource | undefined)?.setData(fc(v ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [v.longitude, v.latitude] }, properties: {} }] : []));
+    (map.getSource('atlas-sel') as MlGeoJSONSource | undefined)?.setData(fc(v ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [v.longitude, v.latitude] }, properties: { pin: pinImageId(pinKind(v)) } }] : []));
     if (v) map.flyTo({ center: [v.longitude, v.latitude], zoom: Math.max(map.getZoom(), 15), pitch: is3DRef.current ? 60 : map.getPitch(), bearing: is3DRef.current ? -20 : map.getBearing(), duration: 1300, curve: 1.4, essential: true });
   }, [ready, selectedId]);
 

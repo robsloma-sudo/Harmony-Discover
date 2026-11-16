@@ -5,6 +5,7 @@ import {colors} from '../ui';
 import {findNearbyPhgAtlasVenues,layersForCategory,type DiscoverVenue,type VenueRadius} from '../services/discoverVenueApi';
 import {AtlasMapGL} from './AtlasMapGL';
 import {VenueFeedSheet} from './VenueFeedSheet';
+import {StreetViewEmbed} from './StreetViewEmbed';
 import {VENUE_TYPE_COLORS} from './AtlasMapGL.types';
 import type {JourneyScanItem} from './JourneyPlayerOverlay';
 
@@ -14,7 +15,7 @@ type NearbyCommand = { id:number; action:'set_radius'|'set_category'|'search'|'r
 
 export default function NearbyPanel({command,onCommandResult,journeyItems=[],onOpenJourney,checkedInVenueRef=null}:{command?:NearbyCommand|null;onCommandResult?:(id:number,result:string)=>void;journeyItems?:JourneyScanItem[];onOpenJourney?:(item:JourneyScanItem)=>void;checkedInVenueRef?:string|null}){
  const {height:screenHeight}=useWindowDimensions();
- const [radius,setRadius]=useState<VenueRadius>(5),[settledRadius,setSettledRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[selectedVenue,setSelectedVenue]=useState<string|null>(null),[journeysOpen,setJourneysOpen]=useState(false),[fullScreen,setFullScreen]=useState(false),[atlasPick,setAtlasPick]=useState<DiscoverVenue|null>(null),[viewCount,setViewCount]=useState<number|null>(null);
+ const [radius,setRadius]=useState<VenueRadius>(5),[settledRadius,setSettledRadius]=useState<VenueRadius>(5),[category,setCategory]=useState(''),[venues,setVenues]=useState<DiscoverVenue[]>([]),[coords,setCoords]=useState<{latitude:number;longitude:number}|null>(null),[loading,setLoading]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState(''),[selectedVenue,setSelectedVenue]=useState<string|null>(null),[journeysOpen,setJourneysOpen]=useState(false),[fullScreen,setFullScreen]=useState(false),[atlasPick,setAtlasPick]=useState<DiscoverVenue|null>(null),[viewCount,setViewCount]=useState<number|null>(null),[svPoint,setSvPoint]=useState<{latitude:number;longitude:number}|null>(null);
  const locate=useCallback(()=>new Promise<string>(resolve=>{
   if(typeof navigator==='undefined'||!navigator.geolocation){const message='Location permission is not available in this build yet.';setError(message);resolve(message);return;}
   setLocating(true);setError('');
@@ -44,12 +45,17 @@ export default function NearbyPanel({command,onCommandResult,journeyItems=[],onO
   <Pressable onPress={()=>{if(!coords)void locate();setAtlasPick(selected??null);setFullScreen(true);}} accessibilityRole="button" style={{padding:11,borderRadius:9,alignItems:'center',marginTop:9,borderWidth:1,borderColor:'rgba(74,137,255,0.85)',backgroundColor:'rgba(24,65,130,0.28)'}}><Text style={{color:'#DCEBFF',fontSize:10,fontWeight:'900',letterSpacing:1}}>OPEN FULL-SCREEN ATLAS</Text></Pressable>
   <Modal visible={fullScreen} animationType="fade" onRequestClose={()=>setFullScreen(false)}>
    <View style={{flex:1,backgroundColor:'#071326'}}>
-    <AtlasMapGL center={coords} venues={venuePins} selectedId={atlasPick?.id??null} onSelectVenue={(id,v)=>setAtlasPick(v??venues.find(x=>x.id===id)??null)} layers={layersForCategory(category||null)} onViewportVenues={(list,clustered)=>setViewCount(clustered?null:list.length)} fullScreen/>
+    <AtlasMapGL center={coords} venues={venuePins} selectedId={atlasPick?.id??null} onSelectVenue={(id,v)=>{setSvPoint(null);setAtlasPick(v??venues.find(x=>x.id===id)??null);}} layers={layersForCategory(category||null)} onViewportVenues={(list,clustered)=>setViewCount(clustered?null:list.length)} onPickPoint={p=>{setAtlasPick(null);setSvPoint(p);}} fullScreen/>
     <View pointerEvents="box-none" style={{position:'absolute',left:10,right:60,top:52}}>
      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap:5}}>{filters.map(f=><Pressable key={f.value} onPress={()=>setCategory(f.value)} style={{paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:category===f.value?colors.accent:'rgba(5,15,32,0.9)',borderWidth:1,borderColor:'rgba(91,155,255,0.5)'}}><Text style={{color:category===f.value?'#111':'#EAF4FF',fontSize:10,fontWeight:'800'}}>{f.label}</Text></Pressable>)}</ScrollView>
      <Text style={{color:'#C9D6EA',fontSize:10,fontWeight:'800',marginTop:6}}>{viewCount==null?'Zoom in to see each place':`${viewCount} places in view`}</Text>
     </View>
-    <Pressable onPress={()=>{setFullScreen(false);setAtlasPick(null);}} accessibilityLabel="Close full-screen Atlas" style={{position:'absolute',left:10,top:atlasPick?92:undefined,bottom:atlasPick?undefined:22,paddingHorizontal:14,paddingVertical:9,borderRadius:10,backgroundColor:'rgba(5,15,32,0.92)',borderWidth:1,borderColor:'rgba(91,155,255,0.7)'}}><Text style={{color:'#EAF4FF',fontSize:11,fontWeight:'900'}}>CLOSE</Text></Pressable>
+    <Pressable onPress={()=>{setFullScreen(false);setAtlasPick(null);setSvPoint(null);}} accessibilityLabel="Close full-screen Atlas" style={{position:'absolute',left:10,top:(atlasPick||svPoint)?92:undefined,bottom:(atlasPick||svPoint)?undefined:22,paddingHorizontal:14,paddingVertical:9,borderRadius:10,backgroundColor:'rgba(5,15,32,0.92)',borderWidth:1,borderColor:'rgba(91,155,255,0.7)'}}><Text style={{color:'#EAF4FF',fontSize:11,fontWeight:'900'}}>CLOSE</Text></Pressable>
+    {svPoint&&!atlasPick&&<View style={{position:'absolute',left:0,right:0,bottom:0,padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(6,14,30,0.97)',borderWidth:1,borderColor:'rgba(74,137,255,0.55)'}}>
+     <View style={{flexDirection:'row',alignItems:'center',marginBottom:8}}><Text style={{color:'#8DBBFF',fontSize:9,fontWeight:'900',letterSpacing:1.2,flex:1}}>STREET VIEW · DRAG TO LOOK AROUND</Text><Pressable onPress={()=>setSvPoint(null)} accessibilityLabel="Close Street View" style={{padding:4}}><Text style={{color:'#8DBBFF',fontSize:16,fontWeight:'900'}}>×</Text></Pressable></View>
+     <StreetViewEmbed latitude={svPoint.latitude} longitude={svPoint.longitude} height={Math.round(Math.min(screenHeight*0.42,360))}/>
+     <Text style={{color:'#6F86A8',fontSize:9,marginTop:6}}>Tap anywhere on the map to look there. If Google has no imagery close by, it says so.</Text>
+    </View>}
     {atlasPick&&<VenueFeedSheet venue={atlasPick} checkedInHere={checkedInVenueRef===atlasPick.id} onClose={()=>setAtlasPick(null)}/>}
    </View>
   </Modal>
