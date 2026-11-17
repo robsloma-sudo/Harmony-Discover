@@ -8,6 +8,7 @@ import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
 import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
+import { emptyCandidatesAction } from '../src/live/worldAnchorFramePolicy';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse, BottleIntelligenceProfile } from '../src/services/discoverLiveApi';
 import { loadBottleCard } from '../src/services/discoverLiveApi';
@@ -356,8 +357,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const value = event.nativeEvent;
             if (!value.candidates.length) {
               setLiveCandidates([]);
-              setLiveSpatialObservationFrame(null);
-              setAnchorSessionKey(session => session + 1);
+              // One empty read is a miss, not a new world: only an explicit session end resets anchors.
+              const action = emptyCandidatesAction(value);
+              if (action === 'reset') {
+                setLiveSpatialObservationFrame(null);
+                setAnchorSessionKey(session => session + 1);
+              } else if (action === 'miss') {
+                setLiveSpatialObservationFrame(value.depthFrame!);
+              }
               return;
             }
             // On the web the camera surface already decides names from agreeing
