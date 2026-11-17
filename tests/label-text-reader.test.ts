@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as workerModule from '../scripts/ocr-worker.mjs';
-import { LabelTextReader, cylinderForCrop, textReaderEnabled, type TextWorkerLike } from '../src/live/labelTextReader';
+import { LabelTextReader, cylinderForCrop, readSettings, textReaderEnabled, type TextWorkerLike } from '../src/live/labelTextReader';
 
 type Box = { x0: number; y0: number; x1: number; y1: number; score?: number };
 const w = workerModule as unknown as {
@@ -108,12 +108,17 @@ class FakeWorker implements TextWorkerLike {
   onerror: ((event: Event) => void) | null = null;
   posted: Array<Record<string, unknown>> = [];
   terminated = false;
-  constructor(private readonly behaviour: 'ok' | 'fail') {}
+  constructor(private readonly behaviour: 'ok' | 'fail' | 'nogpu') {}
   postMessage(message: unknown) {
     const m = message as Record<string, unknown>;
     this.posted.push(m);
     queueMicrotask(() => {
-      if (m.type === 'init') this.onmessage?.({ data: this.behaviour === 'ok' ? { type: 'ready', id: 0 } : { type: 'error', id: 0, message: 'no' } } as MessageEvent);
+      if (m.type === 'init') {
+        const data = this.behaviour === 'fail' ? { type: 'error', id: 0, message: 'no' }
+          : this.behaviour === 'nogpu' && m.backend === 'webgpu' ? { type: 'fallback', id: 0, reason: 'GPU self-check failed' }
+          : { type: 'ready', id: 0, backend: m.backend };
+        this.onmessage?.({ data } as MessageEvent);
+      }
       if (m.type === 'read') this.onmessage?.({ data: { type: 'result', id: m.id, words: [{ text: 'JAMESON', confidence: 0.95, height: 40 }], detMs: 80, totalMs: 160, unrolledReads: 1 } } as MessageEvent);
     });
   }
@@ -150,5 +155,43 @@ describe('where the phone text reader runs', () => {
     expect(textReaderEnabled('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148')).toBe(false);
     expect(textReaderEnabled('Mozilla/5.0 (Linux; Android 14) Mobile Safari')).toBe(false);
     expect(textReaderEnabled('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1.15')).toBe(true);
+  });
+});
+
+describe('graphics chip first, processor as fallback', () => {
+  it('uses the GPU when it passes its self-check', async () => {
+    const workers: FakeWorker[] = [];
+    const reader = new LabelTextReader(() => { const w = new FakeWorker('ok'); workers.push(w); return w; }, 1000, 1000, readSettings(''), true);
+    reader.warmUp(); await tick(); await tick();
+    expect(reader.backend).toBe('webgpu');
+    expect(workers).toHaveLength(1);
+  });
+  it('falls back to the processor when the GPU fails', async () => {
+    const workers: FakeWorker[] = [];
+    const reader = new LabelTextReader(() => { const w = new FakeWorker('nogpu'); workers.push(w); return w; }, 1000, 1000, readSettings(''), true);
+    reader.warmUp(); for (let i = 0; i < 5; i++) await tick();
+    expect(reader.backend).toBe('wasm');
+    expect(workers[0]!.terminated).toBe(true);
+    expect(reader.gpuNote).toContain('self-check');
+  });
+  it('phones read less', () => {
+    expect(readSettings('iPhone Mobile')).toEqual({ detLongSide: 320, maxWords: 2 });
+    expect(readSettings('Macintosh')).toEqual({ detLongSide: 480, maxWords: 4 });
+  });
+});
+
+describe('a slow graphics chip is not used', () => {
+  it('falls back when the GPU self-check is slow', async () => {
+    class SlowGpu extends FakeWorker {
+      postMessage(message: unknown) {
+        const m = message as Record<string, unknown>;
+        if (m.type === 'init' && m.backend === 'webgpu') { queueMicrotask(() => this.onmessage?.({ data: { type: 'ready', id: 0, backend: 'webgpu', warmMs: 900 } } as MessageEvent)); return; }
+        super.postMessage(message);
+      }
+    }
+    const reader = new LabelTextReader(() => new SlowGpu('ok'), 1000, 1000, readSettings(''), true);
+    reader.warmUp(); for (let i = 0; i < 5; i++) await tick();
+    expect(reader.backend).toBe('wasm');
+    expect(reader.gpuNote).toBe('gpu_slow_900ms');
   });
 });

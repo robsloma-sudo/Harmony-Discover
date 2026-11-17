@@ -316,7 +316,7 @@ function WebLiveCamera(props: NativeProps) {
         ms_to_name: draft.guessAt ? draft.guessAt - draft.startedAt : null,
         ms_to_confirm: confirmedBrand ? Date.now() - draft.startedAt : null,
         brand: confirmedBrand || null, product: read?.product || null,
-        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'scanner-ocr-1',
+        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'ocr2-' + (textReader?.backend ?? 'none'),
         guess_brand: draft.guess ?? null, guess_agreed: draft.guess && confirmedBrand ? sameBrand(draft.guess, confirmedBrand) : null,
         ocr_ms: draft.ocrMs ?? null, ocr_words: draft.words ?? [],
       });
@@ -1018,7 +1018,8 @@ function WebLiveCamera(props: NativeProps) {
       }
       // The phone's own text reader looks at one bottle with no name or guess yet, at most every 3 s,
       // and only while the reader is free (it shares the processor with the bottle detector).
-      let phoneReads = textReader && !textReader.isBusy && now - lastPhoneReadAt >= PHONE_READ_GAP_MS ? 0 : 1;
+      // Only at a quiet moment: phone held still (the detector then steps back while the text is read).
+      let phoneReads = textReader && !textReader.isBusy && steadyCapture && now - lastPhoneReadAt >= PHONE_READ_GAP_MS ? 0 : 1;
       for (const plan of planned) {
         if (!plan.best) continue;
         if (!timingByTrack.has(plan.trackId) && !loggedTimingTracks.has(plan.trackId)) {
@@ -1226,7 +1227,11 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
         void runLocalDetection().finally(() => {
-          scheduleLocalDetection(Math.max(30, segmentationRunner?.msUntilReady() ?? 250));
+          // While the phone reads label text on the processor, the detector steps back a little (the camera is
+          // steady then, and camera motion keeps the boxes on the bottles).
+          const readingText = !!textReader?.isBusy;
+          const yieldMs = readingText ? (textReader?.backend === 'webgpu' ? 120 : 350) : 0;
+          scheduleLocalDetection(Math.max(30, yieldMs, segmentationRunner?.msUntilReady() ?? 250));
         });
       }, delay);
     };
