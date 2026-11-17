@@ -58,6 +58,8 @@ export type ARKitCameraPose = { width: number; height: number; cameraIntrinsics:
 type NativeProps = ViewProps & {
   active?: boolean;
   recognitionEnabled?: boolean;
+  /** Settings > Quick Guess: the phone reads the biggest label words for an instant "Probably …". */
+  quickGuess?: boolean;
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number; depthEstimate?: ARKitDepthFrame } }) => void;
@@ -132,8 +134,8 @@ function WebLiveCamera(props: NativeProps) {
   const [digitalZoom, setDigitalZoom] = useState(1);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
   const containerRef = useRef<any>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess };
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -294,7 +296,13 @@ function WebLiveCamera(props: NativeProps) {
     // Instant "Probably …" (17 Nov 2026): the phone reads the biggest words on a label crop and the letter
     // catalogue turns them into a guess, shown until the cloud read names the bottle. A guess is never saved
     // and never counts as evidence. Skipped after an out-of-memory crash, or with ?ocr=off.
-    const textReader = !scannerMode.lite && textReaderEnabled() ? new LabelTextReader() : null;
+    // Switched on and off from Settings > Quick Guess while the camera runs.
+    let textReader: LabelTextReader | null = null;
+    const syncTextReader = () => {
+      const wanted = !scannerMode.lite && (callbacksRef.current.quickGuess ?? textReaderEnabled());
+      if (wanted && !textReader) { textReader = new LabelTextReader(); if (segmentationRunner) textReader.warmUp(); }
+      else if (!wanted && textReader) { textReader.dispose(); textReader = null; probableByTrack.clear(); publishVisibleCandidates(); }
+    };
     const probableByTrack = new Map<number, { brand: string; at: number }>();
     let lastPhoneReadAt = 0;
     // Boxes the label reader said are not drinks at all (a book, sign, phone...): hidden and not read again.
@@ -925,6 +933,7 @@ function WebLiveCamera(props: NativeProps) {
     }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
     const readCandidateLabels = async () => {
+      syncTextReader();
       // Label reads no longer wait behind the slower whole-frame read: a new bottle gets its first name fast.
       if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
       // Wait (at most 0.7 s) for the phone to be still and the picture sharp.
