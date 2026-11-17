@@ -18,6 +18,7 @@ import { noLabelStep } from './labelBatch';
 import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
+import { detectorBackendPreference } from './dfineWorkerProvider';
 import { hasBottleIdentityConflict, isConfirmedWebBottleTrack, mergeBottleRead } from './webTrackPolicy';
 import { compensateDetections, projectLabelBox, type TrackPosition } from './trackMotionCompensation';
 import { rgbaToGrayscale } from './browserOpticalFlow';
@@ -467,7 +468,8 @@ function WebLiveCamera(props: NativeProps) {
     let detectorProvider: { backend?: string; gpuTrialResult?: string } | null = null;
     const ensureSegmentationRunner = () => {
       if (segmentationRunner || segmentationLoading || segmentationLoadFailed || disposed) return segmentationLoading;
-      const gpuPossible = scannerMode.allowGpu && typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
+      // Same choice the detector makes: iPhone/iPad and ?detector=wasm use the processor (see dfineWorkerProvider).
+      const gpuPossible = scannerMode.allowGpu && detectorBackendPreference() !== 'wasm' && typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
       // Recorded before loading: a crash while the GPU is being tried counts against the GPU.
       markScannerRunning(gpuPossible ? 'webgpu' : 'wasm');
       segmentationLoading = loadDfineSegOnnxProvider({ minimumScore: 0.5, nmsIoUThreshold: 0.45 }, { allowGpu: scannerMode.allowGpu }).then(provider => {
