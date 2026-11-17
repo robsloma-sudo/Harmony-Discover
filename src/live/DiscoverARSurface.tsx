@@ -30,7 +30,7 @@ import {
 } from './cameraMotion';
 import { computeAppearanceSignature } from './appearanceSignature';
 import { checkPreviousScannerExit, markScannerRunning, markScannerStopped, markTextReaderRunning } from './scannerHealth';
-import { TrackEvidence, identityKey, sameBottleIdentity } from './trackEvidence';
+import { TrackEvidence, foldWords, identityKey, sameBottleIdentity } from './trackEvidence';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
@@ -247,16 +247,24 @@ function WebLiveCamera(props: NativeProps) {
     let saveRetryAt = 0;
     // Names confirmed in this scan session: the scene that tips close calls on partly hidden labels.
     const sessionNames = new Map<string, PriorName>();
+    // Brands saved in this session with a product name: a later brand-only read of the same bottle (a different
+    // box on the same George T. Stagg) is not saved again as a second, vaguer bottle.
+    const savedFullBrands = new Set<string>();
     const resetAutoSave = () => {
       scanSessionId = newScanSessionId();
       sessionNames.clear();
       saveState.clear();
+      savedFullBrands.clear();
       saveQueue = [];
       saveRetryAt = 0;
     };
     const queueAutoSave = (read: BottleRead, identityConfidence: number, agreeingReads: number) => {
       const key = identityKey(read);
       if (!key || saveState.has(key) || !read.brand) return;
+      const brandKey = foldWords(read.match?.brand || read.brand);
+      const hasProduct = !!foldWords(read.match?.product || read.product);
+      if (!hasProduct && savedFullBrands.has(brandKey)) { saveState.set(key, 'saved'); return; }
+      if (hasProduct) savedFullBrands.add(brandKey);
       // Agreement between independent reads is the evidence: carry it into the
       // brand/product confidence the server uses for matching and research.
       const fieldConfidence: Record<string, number> = { ...(read.fieldConfidence ?? {}) };
@@ -433,7 +441,7 @@ function WebLiveCamera(props: NativeProps) {
     let lastLiveBottleCount = 0;
     const unchangedFrameHeartbeatMs = 7_500;
     const emptyFrameRetryMs = 5_000;
-    let nextLabelBatchAt = Date.now() + 2200;
+    let nextLabelBatchAt = Date.now() + 1200;
     const labelReadsByTrack = new Map<number, LabelBatchRead>();
     const lastLabelReadAt = new Map<number, number>();
     // Second looks (stronger reader) run on their own, so easy bottles never wait for hard ones.
@@ -1243,7 +1251,7 @@ function WebLiveCamera(props: NativeProps) {
       // A bottle that has never been read is read again soon, so a name shows
       // within about a second; after that, reads come at the normal pace.
       const unreadWaiting = candidates.some(candidate => !lastLabelReadAt.has(candidate.trackId) && !crops.some(crop => crop.trackId === candidate.trackId));
-      nextLabelBatchAt = now + (unreadWaiting ? 1500 : 4000);
+      nextLabelBatchAt = now + (unreadWaiting ? 1000 : 4000);
       if (!crops.length) return;
       labelBatchBusy = true;
       crops.forEach(crop => { lastLabelReadAt.set(crop.trackId, now); if (!readingSince.has(crop.trackId)) readingSince.set(crop.trackId, now); });
@@ -1387,9 +1395,11 @@ function WebLiveCamera(props: NativeProps) {
           };
         }), now, { countMisses });
         migrateLocalTrackIds(localBottleTracker.takeMergedTrackIds());
-        for (const trackId of localBottleTracker.takeReacquiredTrackIds()) {
+        // Re-found where it was and looking the same: its name stands (no re-read, no re-save).
+        const confidentlyBack = new Set(localBottleTracker.takeConfidentReacquiredTrackIds());
+        for (const trackId of [...localBottleTracker.takeReacquiredTrackIds(), ...confidentlyBack]) {
           const id = -Math.abs(trackId);
-          reverifyTracks.add(id);
+          if (!confidentlyBack.has(trackId)) reverifyTracks.add(id);
           // Same spot is not proof of the same bottle: its fill reading starts again.
           liquidGuard.bump(id);
           liquidHistoryByTrack.delete(id);

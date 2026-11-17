@@ -138,3 +138,45 @@ describe('spatial memory of bottles', () => {
     expect(moved!.bounds.x).toBeCloseTo(1.1 * (0.44 - 0.5) + 0.5 + 0.02, 5);
   });
 });
+
+describe('re-finding bottles without reading them again (Rob, 17 Nov 2026)', () => {
+  it('keeps a bottle the detector lost in view, and gives its ID back when it is detected there again', () => {
+    const tracker = new LocalBottleTracker();
+    let t = 1000;
+    let original: number | undefined;
+    for (let i = 0; i < 4; i++, t += 300) original = tracker.update([{ ...bottle(0.3), appearance: look(7) }], t)[0]!.trackId;
+    // Missed for several passes (a hand in front): not drawn.
+    for (let i = 0; i < 6; i++, t += 1000) tracker.update([], t);
+    expect(tracker.visible(t)).toEqual([]);
+    // Seen again in the same place: same ID, and no fresh check needed.
+    const back = tracker.update([{ ...bottle(0.305), appearance: look(7) }], t);
+    expect(back[0]!.trackId).toBe(original);
+    expect(tracker.takeConfidentReacquiredTrackIds()).toEqual([original]);
+    expect(tracker.takeReacquiredTrackIds()).toEqual([]);
+  });
+
+  it('forgets a lost bottle when a different-looking bottle stands in its place', () => {
+    const tracker = new LocalBottleTracker();
+    let t = 1000;
+    let original: number | undefined;
+    for (let i = 0; i < 4; i++, t += 300) original = tracker.update([{ ...bottle(0.3), appearance: look(7) }], t)[0]!.trackId;
+    for (let i = 0; i < 6; i++, t += 1000) tracker.update([], t);
+    const other = tracker.update([{ ...bottle(0.3), appearance: look(50) }], t);
+    expect(other[0]?.trackId ?? -1).not.toBe(original);
+    for (let i = 1; i <= 2; i++) tracker.update([{ ...bottle(0.3), appearance: look(50) }], t + i * 300);
+    expect(tracker.visible(t + 600).map(item => item.trackId)).not.toContain(original);
+  });
+
+  it('re-finds a remembered bottle that came back further off than expected when it looks the same', () => {
+    const tracker = new LocalBottleTracker();
+    tracker.update([{ ...bottle(0.3), appearance: look(9) }], 1000);
+    const [original] = tracker.update([{ ...bottle(0.3), appearance: look(9) }], 1300);
+    for (let i = 0; i < 6; i++) tracker.applyCameraMotion(pan(-0.12), 1400 + i * 30);
+    tracker.update([], 2000);
+    // The camera's path drifted: it comes back 0.25 to the right of where memory put it.
+    for (let i = 0; i < 6; i++) tracker.applyCameraMotion(pan(0.12), 30_000 + i * 30);
+    const back = tracker.update([{ ...bottle(0.55), appearance: look(9) }], 30_400);
+    expect(back.map(item => item.trackId)).toContain(original!.trackId);
+    expect(tracker.takeReacquiredTrackIds()).toEqual([original!.trackId]);   // further off: one fresh check
+  });
+});

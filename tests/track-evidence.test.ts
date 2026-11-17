@@ -187,3 +187,22 @@ describe('reads of a partly hidden label are clues, not proof (17 Nov 2026)', ()
     expect(part.identity(-1)!.confidence).toBeLessThan(whole.identity(-1)!.confidence);
   });
 });
+
+describe('two hesitant reads are not enough (Very Old Barton, 17 Nov 2026)', () => {
+  const plain = (confidence: number) => ({ brand: 'Very Old Barton', product: 'Kentucky Straight Rye', confidence, state: 'reported', match: null });
+  it('does not confirm a name from two unmatched reads under 80%', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(-1, plain(0.77), 'label:1');
+    evidence.observeIdentity(-1, plain(0.78), 'label:2');
+    expect(evidence.identity(-1)!.reliable).toBe(false);
+  });
+  it('confirms it with a third agreeing read, or one clear read', () => {
+    const third = new TrackEvidence();
+    ['label:1', 'label:2', 'label:3'].forEach(key => third.observeIdentity(-1, plain(0.77), key));
+    expect(third.identity(-1)!.reliable).toBe(true);
+    const clear = new TrackEvidence();
+    clear.observeIdentity(-1, plain(0.77), 'label:1');
+    clear.observeIdentity(-1, plain(0.82), 'label:2');
+    expect(clear.identity(-1)!.reliable).toBe(true);
+  });
+});

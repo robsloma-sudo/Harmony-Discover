@@ -37,6 +37,8 @@ import { isPhoneUserAgent, textReaderEnabled } from '../src/live/labelTextReader
 import { forwardOnlyStage, type ShownStage, type StageMemory } from '../src/live/boxStageProgress';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
+// Boxes glide to their new place (web: a short CSS transition) instead of jumping on every detector pass.
+const BOX_GLIDE = (Platform.OS === 'web' ? { transitionProperty: 'left, top, width, height, border-color', transitionDuration: '180ms', transitionTimingFunction: 'ease-out' } : {}) as object;
 
 export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'settings'|'collection'|'taste' } = {}) {
   const insets = useSafeAreaInsets();
@@ -117,13 +119,31 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [bottomAreaTop, setBottomAreaTop] = useState(0);
   const cameraViewTop = foundTrayTop + 30;
   // Boxes outline labels and never overlap: a bottle behind another is hidden, neighbours are trimmed (see boxDepth.ts).
-  const shownCandidates = liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
+  // Named bottles always show; an unnamed box needs a little more certainty, so a busy shelf is not a wall of boxes.
+  const shownCandidates = liveCandidates.filter(track => track.confidence >= (track.bottle ? 0.45 : 0.55) && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
   const boxLayout = layoutBoxes(shownCandidates);
   for (const id of [...stageMemoryRef.current.keys()]) if (!liveCandidates.some(c => c.trackId === id)) stageMemoryRef.current.delete(id);
   const cameraViewBottom = bottomAreaTop > cameraViewTop ? bottomAreaTop - 4 : screenHeight - 150;
+  // A bottle counts as done (solid green ✓, chip in the strip) once it is saved or being researched; if saving is
+  // slow it still counts after 3 s, so a chip never waits forever.
+  const namedSinceRef = useRef(new Map<number, number>());
+  const isDone = (track: (typeof liveCandidates)[number]) => {
+    if (!track.bottle) return false;
+    if (track.saved || track.stage?.name === 'researching') return true;
+    const since = namedSinceRef.current.get(track.trackId);
+    return since !== undefined && Date.now() - since >= 3_000;
+  };
   useEffect(() => {
-    if (!liveCandidates.some(candidate => candidate.bottle)) return;
-    const { list, added } = mergeFound(foundRef.current, liveCandidates, Date.now());
+    const now = Date.now();
+    for (const track of liveCandidates) if (track.bottle && !namedSinceRef.current.has(track.trackId)) namedSinceRef.current.set(track.trackId, now);
+    for (const id of [...namedSinceRef.current.keys()]) if (!liveCandidates.some(track => track.trackId === id) && namedSinceRef.current.size > 200) namedSinceRef.current.delete(id);
+  }, [liveCandidates]);
+  useEffect(() => {
+    // Only a box that is drawn on screen and done sends its chip to the strip (Rob, 17 Nov 2026: chips flew up
+    // before their boxes showed).
+    const ready = liveCandidates.filter(track => isDone(track) && boxLayout.has(track.trackId));
+    if (!ready.length) return;
+    const { list, added } = mergeFound(foundRef.current, ready, Date.now());
     if (list === foundRef.current) return;
     foundRef.current = list;
     setFoundItems(list);
@@ -442,10 +462,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
-      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
+      {permission.granted && !scanPhotos && shownCandidates.length > 0 && (
         <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}>
         <View pointerEvents="box-none" style={[s.liveDetectionLayer, { top: -cameraViewTop, height: screenHeight, bottom: undefined }]}>
-          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp))
+          {shownCandidates
             // Draw big boxes first so a smaller (nearer or front) bottle's box sits on top and can be tapped.
             .slice().sort((a, b) => b.width * b.height - a.width * a.height)
             .map(tracked => {
@@ -473,9 +493,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             // Where this bottle is in the 1-2-3-4 steps; a box never goes back to an earlier step.
             // A name confirmed but not yet saved stays at step 3 (99%); once saved, a new bottle shows step 4
             // (researching) and a known bottle shows its name.
+            const done = isDone(tracked);
             const current: ShownStage = bottle
               ? (tracked.stage?.name === 'researching' ? { stage: 'researching', since: tracked.stage.since }
-                : tracked.saved ? { stage: 'found' } : { stage: 'identifying', value: 0.99 })
+                : done ? { stage: 'found' } : { stage: 'identifying', value: 0.99 })
               : tracked.stage?.name === 'reading' ? { stage: 'recognizing', since: tracked.stage.since }
               : identifying ? { stage: 'identifying', value: tracked.identifying }
               : tracked.stage?.name === 'zoom' ? { stage: 'zoom', value: tracked.stage.value }
@@ -483,11 +504,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const staged = forwardOnlyStage(stageMemoryRef.current.get(tracked.trackId), current, Date.now());
             stageMemoryRef.current.set(tracked.trackId, staged.memory);
             const shownStage = staged.shown;
+            // Three looks (Rob, 17 Nov 2026): thin white = still looking; amber dashed = "Probably …";
+            // solid green with ✓ = done (named and saved). Boxes glide to their new place instead of jumping.
             if (bottle) {
               // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
               return (
                 <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
-                  <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
+                  <View style={[s.liveDetectionBox, done ? s.liveDetectionBoxDone : s.liveDetectionBoxNamed, boxStyle, BOX_GLIDE]}>
                     <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
                   </View>
                 </View>
@@ -497,7 +520,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             // Identified bottles are opened from the found strip at the top.
             return (
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <View style={[s.liveDetectionBox, boxStyle]}>
+                <View style={[s.liveDetectionBox, guess ? s.liveDetectionBoxGuess : s.liveDetectionBoxLooking, boxStyle, BOX_GLIDE]}>
                   {/* What the scanner is doing with this bottle right now, with its progress. */}
                   <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} guess={guess} boxWidth={boxPx} />
                 </View>
@@ -509,6 +532,13 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       )}
       {permission.granted && !scanPhotos && <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}><View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: -cameraViewTop, height: screenHeight }}><WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} /></View></View>}
       {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} unseenKeys={unseenFoundKeys} selectedKey={selectedFoundKey} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); closeProfile(); }} />}
+      {permission.granted && !scanPhotos && (foundItems.length > 0 || shownCandidates.length > 0) && (() => {
+        const working = shownCandidates.filter(track => !isDone(track)).length;
+        return <View pointerEvents="none" style={[s.scanCount, { top: cameraViewTop + 4 }]}>
+          <Text style={s.scanCountDone}>✓ {foundItems.length} DONE</Text>
+          {working > 0 && <Text style={s.scanCountWorking}>  ·  {working} READING</Text>}
+        </View>;
+      })()}
       {foundFlights.map(flight => <FoundFlightLabel key={flight.id} flight={flight} onDone={done => setFoundFlights(flights => flights.filter(f => f.id !== done.id))} />)}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
@@ -629,7 +659,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 const s = StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg},menuRow:{minHeight:48,flexDirection:'row',alignItems:'center',gap:11,paddingVertical:7,borderBottomWidth:1,borderBottomColor:'rgba(153,163,174,0.12)'},menuTitle:{color:C.ivory,fontSize:11,fontWeight:'800'},menuDesc:{color:C.muted,fontSize:9,marginTop:3},menuValue:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:1},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
  permissionFallback:{backgroundColor:'#090B0F',alignItems:'center',justifyContent:'center'},permissionCard:{position:'absolute',left:28,right:28,top:'35%',padding:22,borderRadius:18,backgroundColor:'rgba(9,11,14,0.92)',borderWidth:1,borderColor:C.line},permissionTitle:{color:C.ivory,fontSize:23,fontWeight:'700',marginTop:12},permissionBody:{color:C.muted,fontSize:13,lineHeight:20,marginTop:7},permissionButton:{backgroundColor:C.brass,padding:14,borderRadius:10,alignItems:'center',marginTop:18},permissionButtonText:{color:'#111',fontSize:11,fontWeight:'900',letterSpacing:1.5},
- viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
+ viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveDetectionBoxLooking:{borderWidth:1,borderColor:'rgba(233,255,245,0.55)',backgroundColor:'transparent'},liveDetectionBoxGuess:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#FFC857',backgroundColor:'rgba(255,200,87,0.04)'},liveDetectionBoxNamed:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#77E5B5',backgroundColor:'transparent'},liveDetectionBoxDone:{borderWidth:2.5,borderColor:'#3EF0A0',backgroundColor:'rgba(62,240,160,0.07)'},scanCount:{position:'absolute',zIndex:6,alignSelf:'center',flexDirection:'row',paddingHorizontal:9,paddingVertical:3,borderRadius:10,backgroundColor:'rgba(5,15,16,0.78)'},scanCountDone:{color:'#3EF0A0',fontSize:9,fontWeight:'900',letterSpacing:0.8},scanCountWorking:{color:'rgba(233,255,245,0.75)',fontSize:9,fontWeight:'800',letterSpacing:0.8},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
  centerHint:{position:'absolute',left:26,right:26,justifyContent:'center',alignItems:'center'},centerHintText:{color:'rgba(240,241,242,0.68)',fontSize:9,letterSpacing:2.4,fontWeight:'700'},corner:{position:'absolute',width:25,height:25,borderColor:'rgba(198,163,106,0.8)'},tl:{top:0,left:0,borderTopWidth:1,borderLeftWidth:1},tr:{top:0,right:0,borderTopWidth:1,borderRightWidth:1},bl:{bottom:0,left:0,borderBottomWidth:1,borderLeftWidth:1},br:{bottom:0,right:0,borderBottomWidth:1,borderRightWidth:1},
  bottomArea:{position:'absolute',bottom:0,backgroundColor:'rgba(7,9,12,0.92)',borderTopWidth:1,borderColor:C.line,borderTopLeftRadius:20,borderTopRightRadius:20,paddingHorizontal:8},controls:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:4},utilityControl:{alignItems:'center',justifyContent:'center',gap:5,minWidth:42,paddingVertical:7},utilityLabel:{color:C.ivory,fontSize:7,fontWeight:'800',letterSpacing:0.7},centerControls:{flexDirection:'row',alignItems:'center',gap:8},primaryControl:{width:36,height:36,borderRadius:18,borderWidth:1,borderColor:C.line,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(20,24,30,0.9)'},primaryControlHalf:{width:30,height:30},primaryControlActive:{borderColor:C.brass},shutterOuter:{width:66,height:66,borderRadius:33,borderWidth:2,borderColor:C.ivory,alignItems:'center',justifyContent:'center'},shutterOuterCompact:{width:58,height:58},shutterInner:{width:52,height:52,borderRadius:26,backgroundColor:C.ivory},shutterInnerCompact:{width:44,height:44},shutterBusy:{opacity:0.55},shutterBusyText:{color:'#111',textAlign:'center',fontSize:20,fontWeight:'900',lineHeight:50}
 });

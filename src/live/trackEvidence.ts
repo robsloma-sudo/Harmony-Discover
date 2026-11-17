@@ -30,7 +30,7 @@ export type TrackIdentity<T extends IdentityRead> = {
   agreeingReads: number;
 };
 
-type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number; fullReads: number };
+type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number; fullReads: number; matched?: boolean };
 /**
  * locked: the vote key once a name has been confirmed. A confirmed bottle keeps
  * its name (and its number never goes down) while it stays the same tracked
@@ -158,6 +158,7 @@ export class TrackEvidence<T extends IdentityRead> {
     vote.weight += clamp(read.confidence);
     vote.reads += 1;
     if (!partial) vote.fullReads += 1;
+    if (matched && !partial) vote.matched = true;
     if (read.state !== 'unsure' && !partial) vote.best = Math.max(vote.best, clamp(read.confidence));
     vote.evidence = 1 - (1 - vote.evidence) * (1 - strength);
     entry.votes.set(key, vote);
@@ -187,7 +188,11 @@ export class TrackEvidence<T extends IdentityRead> {
     let confidence = top!.evidence * Math.min(1, share / 0.85);
     const strongSingle = top!.best >= CONFIDENT_SINGLE_READ && share >= RELIABLE_SHARE;
     // Clues from partly hidden labels alone never confirm a name.
-    let reliable = top!.fullReads >= 1 && ((confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2) || strongSingle);
+    // Two hesitant reads agreeing (each under 80%) are not enough on their own (Rob, 17 Nov 2026: "Very Old
+    // Barton" was read twice at 77% from a bottle that was not on the shelf): it also takes one clear read, a
+    // catalogue match, or a third agreeing read.
+    const backed = top!.best >= CONFIDENT_SINGLE_READ || !!top!.matched || top!.reads >= 3;
+    let reliable = top!.fullReads >= 1 && ((confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2 && backed) || strongSingle);
     if (strongSingle) confidence = Math.max(confidence, top!.best);
     if (entry.locked === topKey) reliable = true;
     else if (reliable) entry.locked = topKey;
@@ -215,6 +220,7 @@ export class TrackEvidence<T extends IdentityRead> {
         existing.reads += vote.reads;
         existing.fullReads += vote.fullReads;
         existing.evidence = 1 - (1 - existing.evidence) * (1 - vote.evidence);
+        existing.matched = existing.matched || vote.matched;
       }
     }
     source.seen.forEach(key => target.seen.add(key));
