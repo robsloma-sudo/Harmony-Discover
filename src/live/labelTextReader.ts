@@ -32,23 +32,34 @@ export function cylinderForCrop(bottle: { x: number; width: number }, crop: Pixe
   return radius > 4 ? { centerX, radius } : null;
 }
 
+/** True on phones and tablets (where the text reader shares memory and processor with the bottle detector). */
+export function isPhoneUserAgent(userAgent = typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '') : ''): boolean {
+  return /iPhone|iPad|iPod|Android|Mobile/i.test(userAgent);
+}
+
 /**
- * On a computer it is on by default. On phones it is OFF by default (17 Nov 2026: on an iPhone it took
- * ~0.7 s per read and slowed the bottle boxes, because it shares the phone's processor with the bottle
- * detector). Turn it on with ?ocr=on (or localStorage 'discover.ocr' = 'on'); off with ?ocr=off.
+ * Computers: on by default; Settings > Quick Guess, ?ocr=on or ?ocr=off change it (remembered).
+ * Phones (17 Nov 2026): Quick Guess is not offered. Running the reader beside the bottle detector ran iPhones
+ * out of memory (the page restarted). A phone loads it only for one page visit with ?ocr=on (testing);
+ * a remembered "on" from the Settings switch is ignored there.
  */
-export function textReaderEnabled(userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : ''): boolean {
+export function textReaderEnabled(userAgent = typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '') : ''): boolean {
+  const phone = isPhoneUserAgent(userAgent);
   try {
     const fromUrl = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('ocr') : null;
     if (fromUrl === 'off') { try { localStorage.setItem('discover.ocr', 'off'); } catch { /* storage blocked */ } return false; }
-    if (fromUrl === 'on') { try { localStorage.setItem('discover.ocr', 'on'); } catch { /* storage blocked */ } return true; }
+    if (fromUrl === 'on') {
+      if (!phone) { try { localStorage.setItem('discover.ocr', 'on'); } catch { /* storage blocked */ } }
+      return true;
+    }
   } catch { /* no URL */ }
+  if (phone) return false;
   try {
     const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('discover.ocr') : null;
     if (stored === 'off') return false;
     if (stored === 'on') return true;
   } catch { /* storage blocked */ }
-  return !/iPhone|iPad|iPod|Android|Mobile/i.test(userAgent);
+  return true;
 }
 
 /** Phone reads are spaced out so the bottle detector keeps the processor (ms between reads). */

@@ -12,7 +12,7 @@ import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker, isSameBottle, type LocalBottleCandidate } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
-import { LabelTextReader, OCR_MAX_EDGE, PHONE_READ_GAP_MS, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
+import { LabelTextReader, OCR_MAX_EDGE, PHONE_READ_GAP_MS, cylinderForCrop, isPhoneUserAgent, textReaderEnabled, type Cylinder } from './labelTextReader';
 import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, probableFromFragments, sameBrand } from './letterGuess';
 import { looksLikeNoDrink } from './labelBatch';
 import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
@@ -26,7 +26,7 @@ import {
   estimateCameraMotion, invertMotion as invertCameraMotion, refineBoxMotion, visibleFraction, type CameraMotion, type GrayPyramid,
 } from './cameraMotion';
 import { computeAppearanceSignature } from './appearanceSignature';
-import { checkPreviousScannerExit, markScannerRunning, markScannerStopped } from './scannerHealth';
+import { checkPreviousScannerExit, markScannerRunning, markScannerStopped, markTextReaderRunning } from './scannerHealth';
 import { TrackEvidence, identityKey } from './trackEvidence';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
@@ -299,9 +299,11 @@ function WebLiveCamera(props: NativeProps) {
     // Switched on and off from Settings > Quick Guess while the camera runs.
     let textReader: LabelTextReader | null = null;
     const syncTextReader = () => {
-      const wanted = !scannerMode.lite && (callbacksRef.current.quickGuess ?? textReaderEnabled());
-      if (wanted && !textReader) { textReader = new LabelTextReader(); if (segmentationRunner) textReader.warmUp(); }
-      else if (!wanted && textReader) { textReader.dispose(); textReader = null; probableByTrack.clear(); publishVisibleCandidates(); }
+      // Phones: only a one-visit ?ocr=on loads the reader (a remembered Settings "on" is ignored; it ran iPhones out of memory).
+      const wanted = !scannerMode.lite && !scannerMode.quickGuessTurnedOff
+        && (isPhoneUserAgent() ? textReaderEnabled() : (callbacksRef.current.quickGuess ?? textReaderEnabled()));
+      if (wanted && !textReader) { textReader = new LabelTextReader(); markTextReaderRunning(true); if (segmentationRunner) textReader.warmUp(); }
+      else if (!wanted && textReader) { textReader.dispose(); textReader = null; markTextReaderRunning(false); probableByTrack.clear(); publishVisibleCandidates(); }
     };
     const probableByTrack = new Map<number, { brand: string; at: number }>();
     let lastPhoneReadAt = 0;
@@ -1518,6 +1520,7 @@ function WebLiveCamera(props: NativeProps) {
       probableByTrack.clear();
       timingByTrack.clear();
       textReader?.dispose();
+      markTextReaderRunning(false);
       reverifyTracks.clear();
       releaseCanvas(labelSourceCanvas); releaseCanvas(labelCropCanvas); releaseCanvas(frameReadCanvas);
       labelSourceCanvas = labelCropCanvas = frameReadCanvas = null;
