@@ -63,7 +63,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
@@ -169,7 +169,7 @@ function WebLiveCamera(props: NativeProps) {
 
   useEffect(() => {
     if (!active) {
-      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
+      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [], reset: true } });
       callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'camera_paused' } });
       return;
     }
@@ -424,7 +424,7 @@ function WebLiveCamera(props: NativeProps) {
         resetCameraMotion();
         lastPublishedSignature = '';
         markScannerStopped();
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [], reset: true } });
         callbacksRef.current.onTrackingUpdate?.({ nativeEvent: { state: 'paused', reason: 'page_hidden' } });
       } else {
         if (detectorProvider) markScannerRunning(detectorProvider.backend ?? 'main-thread');
@@ -1447,7 +1447,7 @@ function WebLiveCamera(props: NativeProps) {
         lastSentFrameSignature = null;
         lastLiveReadAt = 0;
         lastLiveBottleCount = 0;
-        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
+        callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [], reset: true } });
         return;
       }
       if (detectorProvider) markScannerRunning(detectorProvider.backend ?? 'main-thread');
@@ -1461,7 +1461,7 @@ function WebLiveCamera(props: NativeProps) {
       recognitionSchedulerRef.current = null;
       // Clear the rendered overlay before the camera element is torn down so
       // no candidates from this session survive a close/reopen transition.
-      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [] } });
+      callbacksRef.current.onVisualCandidates?.({ nativeEvent: { count: 0, candidates: [], reset: true } });
       webTracks = [];
       latestLocalCandidates = [];
       labelReadsByTrack.clear();

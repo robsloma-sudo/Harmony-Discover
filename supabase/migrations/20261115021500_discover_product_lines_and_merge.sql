@@ -1,6 +1,0 @@
--- Applied on DEV as migrations "discover_product_lines_and_merge" and "discover_merge_duplicate_products_2026_11_15".
--- One shared record per real bottle: products know their line (discover_line_id, set by trigger from brand + product name);
--- discover_merge_product() folds a duplicate into another record (facts keep the more confident value; evidence, sightings,
--- packages, jobs, search counts and research outcomes move over) and logs a snapshot in discover_product_merges for undo.
--- The one-off clean-up folded unresolved copies on a known line into one record per line, and same-name copies together
--- (77 -> 43 products; E.H. Taylor 31 -> 6). See the DEV migration history for the exact SQL.

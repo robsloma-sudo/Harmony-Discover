@@ -1,3 +1,5 @@
+-- Replaced 2026-11-17 with the exact SQL recorded in the Discover DEV migration history.
+-- The earlier repo copy had been edited after it was applied (formatting, and in places statement order or checks).
 create or replace function harmony_sync.stage_eligible_menu_observations(p_limit integer default 100)
 returns integer
 language plpgsql
@@ -27,10 +29,18 @@ begin
       order by subject_id, seq desc, recorded_at desc
     )
     select
-      o.id, o.venue_name_read, o.venue_name_submitted, o.capture_source,
-      o.captured_at, o.processing_notice_version, o.min_ocr_confidence,
-      c.id as consent_record_id, c.policy_version,
-      (select count(*)::integer from public.observation_item_corrections x where x.observation_id = o.id) as correction_count
+      o.id,
+      o.venue_name_read,
+      o.venue_name_submitted,
+      o.capture_source,
+      o.captured_at,
+      o.processing_notice_version,
+      o.min_ocr_confidence,
+      c.id as consent_record_id,
+      c.policy_version,
+      (select count(*)::integer
+       from public.observation_item_corrections x
+       where x.observation_id = o.id) as correction_count
     from public.menu_observations o
     join latest_consent c on c.subject_id = o.consumer_id
     where o.status = 'complete'
@@ -44,13 +54,16 @@ begin
       and c.granted is true
       and c.withdrawn_at is null
       and not exists (
-        select 1 from harmony_sync.staged_candidates s
+        select 1
+        from harmony_sync.staged_candidates s
         where s.source_system = 'harmony_discover'
           and s.source_table = 'menu_observations'
           and s.source_record_id = o.id
-          and s.source_version = 1 + (
-            select count(*)::integer from public.observation_item_corrections x where x.observation_id = o.id
-          )
+          and s.source_version = (1 + (
+            select count(*)::integer
+            from public.observation_item_corrections x
+            where x.observation_id = o.id
+          ))
           and s.entity_type = 'menu_observation'
       )
     order by o.captured_at, o.id
@@ -63,19 +76,31 @@ begin
       'captured_at', v_obs.captured_at,
       'capture_source', v_obs.capture_source,
       'items', coalesce((
-        select jsonb_agg(jsonb_build_object(
-          'source_item_id', i.id, 'page_index', i.page_index, 'position', i.position,
-          'section', i.section, 'name', i.name, 'description', i.description,
-          'price_text', i.price_text, 'beverage_category', i.beverage_category,
-          'listed_ingredients', i.listed_ingredients, 'evidence_state', i.evidence_state,
-          'text_verified', i.text_verified,
-          'latest_correction', (
-            select x.after_values from public.observation_item_corrections x
-            where x.observation_id = i.observation_id and x.item_id = i.id
-            order by x.created_at desc, x.id desc limit 1
-          )
-        ) order by i.page_index, i.position, i.id)
-        from public.observation_items i where i.observation_id = v_obs.id
+        select jsonb_agg(
+          jsonb_build_object(
+            'source_item_id', i.id,
+            'page_index', i.page_index,
+            'position', i.position,
+            'section', i.section,
+            'name', i.name,
+            'description', i.description,
+            'price_text', i.price_text,
+            'beverage_category', i.beverage_category,
+            'listed_ingredients', i.listed_ingredients,
+            'evidence_state', i.evidence_state,
+            'text_verified', i.text_verified,
+            'latest_correction', (
+              select x.after_values
+              from public.observation_item_corrections x
+              where x.observation_id = i.observation_id
+                and x.item_id = i.id
+              order by x.created_at desc, x.id desc
+              limit 1
+            )
+          ) order by i.page_index, i.position, i.id
+        )
+        from public.observation_items i
+        where i.observation_id = v_obs.id
       ), '[]'::jsonb)
     ) into v_payload;
 
@@ -84,8 +109,10 @@ begin
       'processing_notice_version', v_obs.processing_notice_version,
       'aggregate_research_consent_record_id', v_obs.consent_record_id,
       'aggregate_research_policy_version', v_obs.policy_version,
-      'venue_confirmed', true, 'all_pages_complete', true,
-      'disputed', false, 'unresolved_flags', 0,
+      'venue_confirmed', true,
+      'all_pages_complete', true,
+      'disputed', false,
+      'unresolved_flags', 0,
       'correction_count', v_obs.correction_count
     );
 
@@ -118,14 +145,17 @@ begin
         'Explicit per-observation contribution plus current aggregate-research consent; venue confirmed; complete, non-disputed observation.',
         v_hash, '0.1.0'
       );
+
       insert into harmony_sync.sync_ledger (staged_candidate_id, status)
       values (v_candidate_id, 'blocked');
       v_count := v_count + 1;
     end if;
     v_candidate_id := null;
   end loop;
+
   return v_count;
 end;
 $$;
+
 revoke all on function harmony_sync.stage_eligible_menu_observations(integer) from public, anon, authenticated;
 grant execute on function harmony_sync.stage_eligible_menu_observations(integer) to service_role;
