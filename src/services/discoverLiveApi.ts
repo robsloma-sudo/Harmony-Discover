@@ -2,8 +2,29 @@ import { ensureDiscoverSession } from './supabase';
 
 const base = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+// The test site uses a front-door function that allows its own web address;
+// production keeps calling discover-live-read directly.
+const liveReadFunction = /^[a-z0-9-]+$/.test(process.env.EXPO_PUBLIC_DISCOVER_LIVE_READ_FUNCTION || '')
+  ? process.env.EXPO_PUBLIC_DISCOVER_LIVE_READ_FUNCTION!
+  : 'discover-live-read';
 
 export type BottleState = 'matched' | 'reported' | 'unsure';
+/**
+ * The server's brand + line + release + size identity for a saved bottle.
+ * shapeKey (brand|line|size) is what a liquid-level volume calibration belongs to;
+ * it is null when the line or size is unknown or the barcode disagrees with the label words.
+ */
+export type ResolvedIdentity = {
+  status: 'matched' | 'ambiguous' | 'new_release_candidate' | 'line_unknown' | string;
+  identityKey: string | null;
+  brand: string | null;
+  line: string | null;
+  releaseKey: string | null;
+  releaseLabel: string | null;
+  sizeMl: number | null;
+  flags: string[];
+  shapeKey: string | null;
+};
 export type BottleEdgePath = {
   kind: 'hard' | 'label' | 'print';
   points: Array<{ x: number; y: number }>;
@@ -22,16 +43,22 @@ export type BottleRead = {
   details: Record<string, string | string[]>;
   match: { id: string; brand: string | null; product: string | null; score: number } | null;
   state: BottleState;
+  /** Set once the bottle is saved and the server has resolved its identity. */
+  resolved?: ResolvedIdentity;
 };
 export class BottleReadError extends Error {
   status: number;
   constructor(message: string, status: number) { super(message); this.status = status; }
 }
 
-async function call(body: Record<string, unknown>) {
+const autosaveFunction = /^[a-z0-9-]+$/.test(process.env.EXPO_PUBLIC_DISCOVER_AUTOSAVE_FUNCTION || '')
+  ? process.env.EXPO_PUBLIC_DISCOVER_AUTOSAVE_FUNCTION!
+  : 'discover-live-autosave';
+
+async function call(body: Record<string, unknown>, functionName = liveReadFunction) {
   if (!base || !publishableKey) throw new BottleReadError('not_configured', 0);
   const session = await ensureDiscoverSession();
-  const response = await fetch(`${base}/functions/v1/discover-live-read`, {
+  const response = await fetch(`${base}/functions/v1/${functionName}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}`, apikey: publishableKey },
     body: JSON.stringify(body),
@@ -84,9 +111,27 @@ export type BottleIntelligenceProfile = {
   attributes: BottleIntelligenceAttribute[];
   evidence: BottleIntelligenceEvidence[];
   sightings: { total: number; confirmed: number };
+  /** Running total of web searches spent on this product (card only). */
+  research?: { searchesTotal: number; runs: number; researchingNow: boolean };
 };
 
 /** Loads shared product intelligence only after a user opens a bottle profile. */
+/** The product card: everything the shared record knows, found by name; the server researches the
+ * listed empty categories in the background (at most once per product every 6 hours). */
+export async function loadBottleCard(bottle: Pick<BottleRead, 'brand' | 'product' | 'category'>, fields: Array<{ key: string; label: string }>): Promise<BottleIntelligenceProfile | null> {
+  if (!bottle.brand.trim()) return null;
+  const result = await call({ action: 'card', brand: bottle.brand, product: bottle.product, category: bottle.category, fields: fields.slice(0, 40) }, autosaveFunction);
+  if (!result.found || !result.product || typeof result.product !== 'object') return null;
+  return {
+    product: result.product as BottleIntelligenceProfile['product'],
+    packages: Array.isArray(result.packages) ? result.packages : [],
+    attributes: Array.isArray(result.attributes) ? result.attributes : [],
+    evidence: Array.isArray(result.evidence) ? result.evidence : [],
+    sightings: { total: Number(result.sightings?.total) || 0, confirmed: Number(result.sightings?.confirmed) || 0 },
+    research: { searchesTotal: Number(result.research?.searches_total) || 0, runs: Number(result.research?.runs) || 0, researchingNow: result.research?.researching_now === true || result.researching === true },
+  };
+}
+
 export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'brand' | 'product' | 'category'>): Promise<BottleIntelligenceProfile | null> {
   if (!bottle.brand.trim() || !bottle.product.trim()) return null;
   const result = await call({ action: 'profile', brand: bottle.brand, product: bottle.product, category: bottle.category });
@@ -130,13 +175,21 @@ export type LabelBatchRead = {
   confidence: number;
   match: { id: string; brand: string | null; product: string | null; score: number } | null;
   state: BottleState;
+  /** First (fast) read looked unsure or like a guess: worth one second look by the stronger reader. */
+  needsSecondLook: boolean;
+  tier: 'base' | 'escalate';
 };
 
-export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: string }>): Promise<LabelBatchRead[]> {
+/** tier 'base' = fast first read (Haiku); 'escalate' = second look by the stronger reader (Sonnet), max 4 crops. */
+/** Pixel sizes only (camera and captured frame), logged by the server to check read quality on phones. */
+export type LabelBatchDiagnostics = { video_w: number; video_h: number; frame_w: number; frame_h: number; steady?: boolean; sharp?: number };
+export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: string }>, tier: 'base' | 'escalate' = 'base', diag?: LabelBatchDiagnostics): Promise<LabelBatchRead[]> {
   if (!crops.length) return [];
   const result = await call({
     action: 'label_batch',
-    crops: crops.slice(0, 8).map(crop => ({ track_id: String(crop.trackId), image: crop.image })),
+    tier,
+    crops: crops.slice(0, tier === 'escalate' ? 4 : 8).map(crop => ({ track_id: String(crop.trackId), image: crop.image })),
+    ...(diag ? { diag } : {}),
   });
   return (Array.isArray(result.reads) ? result.reads : []).map((read: Record<string, unknown>) => ({
     trackId: Number(read.track_id),
@@ -152,6 +205,8 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
     confidence: Number(read.confidence) || 0,
     match: read.match && typeof read.match === 'object' ? read.match as LabelBatchRead['match'] : null,
     state: read.state === 'matched' || read.state === 'reported' ? read.state : 'unsure',
+    needsSecondLook: read.needs_second_look === true,
+    tier: read.tier === 'escalate' ? 'escalate' : 'base',
   })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
 }
 
@@ -180,4 +235,53 @@ export function bottleErrorMessage(error: unknown): string {
   if (code === 'origin_not_allowed') return "This address isn't allowed to scan yet.";
   if (code === 'unauthorized') return 'Your session expired. Reload the page.';
   return "Couldn't read that view. Trying again.";
+}
+
+
+export type LiveSightingInput = {
+  brand: string; product: string; category: string; proof: string; size: string; origin: string;
+  words: string[]; confidence: number; agreeingReads: number;
+  details: Record<string, string | string[]>; fieldConfidence: Record<string, number>;
+};
+export type LiveSightingResult = { brand: string; product: string; status: 'saved' | 'already_saved' | 'failed'; productId: string | null; newProduct: boolean; identity: ResolvedIdentity | null; researching: boolean };
+
+function toResolvedIdentity(raw: unknown): ResolvedIdentity | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+  const size = Number(r.size_ml);
+  return {
+    status: String(r.status || 'line_unknown'),
+    identityKey: text(r.identity_key), brand: text(r.brand), line: text(r.line),
+    releaseKey: text(r.release_key), releaseLabel: text(r.release_label),
+    sizeMl: Number.isFinite(size) && size > 0 ? size : null,
+    flags: Array.isArray(r.flags) ? r.flags.map(String) : [],
+    shapeKey: text(r.shape_key),
+  };
+}
+
+/**
+ * Saves bottles the live scanner is sure of (reads agreed on the name) as
+ * sightings. The server links each to a Discover product (creating a new
+ * candidate if needed) and queues background web research for missing facts.
+ * Nothing about the image is sent.
+ */
+export async function saveLiveSightings(scanSessionId: string, bottles: LiveSightingInput[]): Promise<LiveSightingResult[]> {
+  if (!bottles.length) return [];
+  const result = await call({
+    scan_session_id: scanSessionId,
+    bottles: bottles.slice(0, 8).map(b => ({
+      brand: b.brand, product: b.product, category: b.category, proof: b.proof, size: b.size, origin: b.origin,
+      words: b.words, confidence: b.confidence, agreeing_reads: b.agreeingReads,
+      details: b.details, field_confidence: b.fieldConfidence,
+    })),
+  }, autosaveFunction);
+  return (Array.isArray(result.results) ? result.results : []).map((r: Record<string, unknown>) => ({
+    brand: String(r.brand || ''), product: String(r.product || ''),
+    status: r.status === 'saved' || r.status === 'already_saved' ? r.status : 'failed',
+    productId: typeof r.product_id === 'string' ? r.product_id : null,
+    newProduct: r.new_product === true,
+    identity: toResolvedIdentity(r.identity),
+    researching: r.researching === true,
+  }));
 }

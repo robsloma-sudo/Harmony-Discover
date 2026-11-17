@@ -9,8 +9,22 @@ export type DfineSegOutput = {
   maskHeight: number;
 };
 
+/**
+ * A non-bottle COCO class accepted only when its box looks like an upright
+ * beverage container. D-FINE's COCO head labels gift tubes and canisters
+ * (e.g. Colonel E.H. Taylor tubes) as class 73 "book"; aspect and score gates
+ * keep flat books, menus and shelves out. Measured on the 13 Nov iPhone
+ * recording: tubes scored 0.58-0.77 with height/width 1.9-2.6.
+ */
+export type ContainerClassRule = { classId: number; minAspect: number; minimumScore: number };
+
+export const UPRIGHT_CONTAINER_CLASS_RULES: readonly ContainerClassRule[] = Object.freeze([
+  { classId: 73, minAspect: 1.6, minimumScore: 0.58 },
+]);
+
 export type DfineSegAdapterOptions = {
   bottleClassIds?: number[];
+  containerClassRules?: readonly ContainerClassRule[];
   maskThreshold?: number;
   minimumScore?: number;
   nmsIoUThreshold?: number;
@@ -108,9 +122,11 @@ export function adaptDfineSegOnnxOutput(
   const nmsThreshold = options.nmsIoUThreshold ?? 0.7;
   const modelId = options.modelId ?? 'dfine-seg-coco-instance-onnx';
   const count = output.labels.length;
+  // Boxes-only output (mask head skipped): no masks at all, mask size 0.
+  const boxesOnly = output.maskWidth === 0 && output.maskHeight === 0 && output.masks.length === 0;
   if (![imageWidth, imageHeight, inputWidth, inputHeight, output.maskWidth, output.maskHeight].every(Number.isInteger) ||
       imageWidth < 2 || imageHeight < 2 || inputWidth < 2 || inputHeight < 2 ||
-      output.maskWidth < 2 || output.maskHeight < 2 ||
+      (!boxesOnly && (output.maskWidth < 2 || output.maskHeight < 2)) ||
       output.boxes.length !== count * 4 || output.scores.length !== count ||
       output.masks.length !== count * output.maskWidth * output.maskHeight ||
       !Number.isFinite(sourceTimestampMs)) return [];
@@ -126,10 +142,13 @@ export function adaptDfineSegOnnxOutput(
     bounds: { x: number; y: number; width: number; height: number };
   }> = [];
 
+  const containerRules = new Map((options.containerClassRules ?? []).map(rule => [rule.classId, rule]));
   for (let index = 0; index < count; index++) {
     const label = Number(output.labels[index]);
     const score = Number(output.scores[index]);
-    if (!bottleClassIds.has(label) || !Number.isFinite(score) || score < minimumScore) continue;
+    const containerRule = bottleClassIds.has(label) ? undefined : containerRules.get(label);
+    if ((!bottleClassIds.has(label) && !containerRule) || !Number.isFinite(score)) continue;
+    if (score < (containerRule ? Math.max(minimumScore, containerRule.minimumScore) : minimumScore)) continue;
     const raw = Array.from({ length: 4 }, (_, i) => Number(output.boxes[index * 4 + i]));
     if (!isFiniteArray(raw)) continue;
     const x1 = Math.max(0, Math.min(1, Math.min(raw[0]!, raw[2]!) / inputWidth));
@@ -137,6 +156,8 @@ export function adaptDfineSegOnnxOutput(
     const x2 = Math.max(0, Math.min(1, Math.max(raw[0]!, raw[2]!) / inputWidth));
     const y2 = Math.max(0, Math.min(1, Math.max(raw[1]!, raw[3]!) / inputHeight));
     if (x2 - x1 < 0.01 || y2 - y1 < 0.01) continue;
+    // The model input is a stretched square, so judge shape in source-image pixels.
+    if (containerRule && ((y2 - y1) * imageHeight) / ((x2 - x1) * imageWidth) < containerRule.minAspect) continue;
     candidates.push({ index, label, score, x1, y1, x2, y2, bounds: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 } });
   }
 
@@ -159,6 +180,24 @@ export function adaptDfineSegOnnxOutput(
 
   const instances: SegmentationInstance[] = [];
   for (const candidate of kept) {
+    if (boxesOnly) {
+      // Same pixel snapping as the mask crop; a solid 1x1 mask stands in.
+      const left = Math.max(0, Math.floor(candidate.bounds.x * imageWidth));
+      const top = Math.max(0, Math.floor(candidate.bounds.y * imageHeight));
+      const right = Math.min(imageWidth, Math.ceil((candidate.bounds.x + candidate.bounds.width) * imageWidth));
+      const bottom = Math.min(imageHeight, Math.ceil((candidate.bounds.y + candidate.bounds.height) * imageHeight));
+      if (right - left < 2 || bottom - top < 2) continue;
+      instances.push({
+        width: 1,
+        height: 1,
+        data: new Uint8Array([1]),
+        bounds: { x: left / imageWidth, y: top / imageHeight, width: (right - left) / imageWidth, height: (bottom - top) / imageHeight },
+        detectionConfidence: candidate.score,
+        sourceTimestampMs,
+        modelId,
+      });
+      continue;
+    }
     const maskStart = candidate.index * output.maskWidth * output.maskHeight;
     const mask = output.masks.subarray(maskStart, maskStart + output.maskWidth * output.maskHeight);
     const cropped = cropMask(mask, output.maskWidth, output.maskHeight, imageWidth, imageHeight, candidate.bounds, maskThreshold);

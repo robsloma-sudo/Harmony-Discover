@@ -1,0 +1,79 @@
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { FoundItem } from './foundTray';
+
+export type FoundFlight = { id: string; key: string; name: string; startedAt: number; from: { x: number; y: number }; to: { x: number; y: number } };
+
+/** Thin strip at the top of the scanner: one chip per identified product, newest on the right. */
+export function FoundTray({ items, hiddenKeys, unseenKeys, selectedKey, top, onSelect, onClear }: {
+  items: FoundItem[];
+  hiddenKeys: ReadonlySet<string>;
+  /** Chips with facts added since they were last opened get a small dot. */
+  unseenKeys: ReadonlySet<string>;
+  selectedKey: string | null;
+  top: number;
+  onSelect: (item: FoundItem, from: { x: number; y: number }) => void;
+  onClear: () => void;
+}) {
+  const scroll = useRef<ScrollView>(null);
+  // Newest chip is added on the right (inserting on the left made browsers
+  // keep the old scroll spot, pushing the new chip out of view): follow it.
+  if (!items.length) return null;
+  return (
+    <View pointerEvents="box-none" style={[s.wrap, { top }]}>
+      <ScrollView ref={scroll} horizontal onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })} showsHorizontalScrollIndicator={false} contentContainerStyle={s.row} style={s.scroll}>
+        {items.map(item => (
+          <Pressable
+            key={item.key}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${item.name}`}
+            onPress={event => onSelect(item, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY })}
+            style={[s.chip, item.key === selectedKey && s.chipSelected, hiddenKeys.has(item.key) && { opacity: 0 }]}
+          >
+            <Text numberOfLines={1} style={s.chipText}>{item.name}</Text>
+            {unseenKeys.has(item.key) && <View style={s.dot} />}
+          </Pressable>
+        ))}
+      </ScrollView>
+      <Pressable accessibilityRole="button" accessibilityLabel="Clear found bottles" onPress={onClear} style={s.count}>
+        <Text style={s.countText}>{items.length}</Text>
+        <Text style={s.clearText}>×</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/** The small label that flies from the bottle's green box up into the strip. */
+export function FoundFlightLabel({ flight, onDone }: { flight: FoundFlight; onDone: (flight: FoundFlight) => void }) {
+  const progress = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.timing(progress, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.cubic), useNativeDriver: false });
+    animation.start(() => onDone(flight));
+    return () => animation.stop();
+    // One animation per flight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const left = progress.interpolate({ inputRange: [0, 1], outputRange: [flight.from.x, flight.to.x] });
+  const top = progress.interpolate({ inputRange: [0, 0.15, 1], outputRange: [flight.from.y, flight.from.y - 14, flight.to.y] });
+  const scale = progress.interpolate({ inputRange: [0, 0.15, 1], outputRange: [1, 1.08, 0.86] });
+  return (
+    <Animated.View pointerEvents="none" style={[s.flight, { left, top, transform: [{ scale }] }]}>
+      <Text numberOfLines={1} style={s.chipText}>{flight.name}</Text>
+    </Animated.View>
+  );
+}
+
+const s = StyleSheet.create({
+  wrap: { position: 'absolute', left: 8, right: 8, height: 26, zIndex: 25, flexDirection: 'row', alignItems: 'center' },
+  // Explicit size: a flex-only horizontal scroller collapsed to nothing on iPhone browsers.
+  scroll: { flexGrow: 1, flexShrink: 1, minWidth: 0, height: 26 },
+  row: { alignItems: 'center', height: 26, gap: 6, paddingRight: 4, paddingLeft: 1 },
+  chip: { height: 22, maxWidth: 170, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 11, backgroundColor: 'rgba(5,15,16,0.9)', borderWidth: 1, borderColor: 'rgba(119,229,181,0.85)' },
+  chipSelected: { borderColor: '#C6A36A', backgroundColor: 'rgba(40,32,18,0.95)' },
+  dot: { position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 4, backgroundColor: '#C6A36A', borderWidth: 1, borderColor: '#05100F' },
+  chipText: { color: '#E9FFF5', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.2 },
+  count: { height: 22, marginLeft: 6, paddingHorizontal: 7, borderRadius: 11, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(8,10,13,0.75)', borderWidth: 1, borderColor: 'rgba(153,163,174,0.3)' },
+  countText: { color: '#77E5B5', fontSize: 9.5, fontWeight: '900' },
+  clearText: { color: '#99A3AE', fontSize: 12, fontWeight: '700', marginTop: -1 },
+  flight: { position: 'absolute', zIndex: 26, height: 22, maxWidth: 170, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 11, backgroundColor: 'rgba(5,15,16,0.95)', borderWidth: 1, borderColor: '#77E5B5' },
+});

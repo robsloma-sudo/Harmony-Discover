@@ -12,7 +12,21 @@ export function getCachedBottleVolumeProfile(identityKey: string): BottleVolumeP
 
 type ProfileRegistry = { version: 1; profiles: Record<string, BottleVolumeProfile> };
 
-export function getBottleCalibrationKey(match: { id: string; score: number } | null | undefined, state: string, size?: string): string | null {
+/**
+ * Which calibration a bottle's fill height may use.
+ * 1. A server-resolved identity with a shape key (brand|line|size) wins: the glass is the same
+ *    across releases, so one calibration serves every release of that line and size.
+ * 2. A resolved identity whose barcode disagrees with the label words gets no volume at all.
+ * 3. Otherwise the previous rule: a catalogue match of at least 0.90 plus the read size.
+ */
+export function getBottleCalibrationKey(
+  match: { id: string; score: number } | null | undefined,
+  state: string,
+  size?: string,
+  resolved?: { shapeKey: string | null; flags: string[] } | null,
+): string | null {
+  if (resolved?.shapeKey) return `shape:${resolved.shapeKey}`;
+  if (resolved?.flags?.includes('barcode_and_label_words_disagree')) return null;
   if (state !== 'matched' || !match || typeof match.id !== 'string' || !match.id.trim() ||
       !Number.isFinite(match.score) || match.score < 0.9) return null;
   const sizeKey = String(size ?? '').toLowerCase().replace(/([0-9])([a-z])/g, '$1 $2').replace(/([a-z])([0-9])/g, '$1 $2').replace(/[^a-z0-9]+/g, ' ').trim() || 'unspecified-size';

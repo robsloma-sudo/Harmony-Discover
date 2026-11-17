@@ -1,17 +1,41 @@
-// Harmony Discover DEV — discover-live-read v0.3.0 (11 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.4 (14 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
 // - save:  the bottles the person kept become rows in public.bottle_sightings (the shared sightings ledger).
 // Guards: signed-in Discover user (anonymous users included), exact-origin allow-list, DEV project only,
 // 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
+// v0.4.1: label and frame reads use Claude Sonnet 5.5 (Rob, 14 Nov 2026). Sonnet 5.5 does not accept a
+// forced tool choice, so it gets tool_choice auto with low effort (fast); save-time research stays on Haiku.
+// v0.5.0: two-step reading to keep cost down (Rob, 14 Nov 2026). Haiku does every first read (whole picture
+// and label crops). A label read that looks like a guess (no brand, low confidence, or a brand/product not
+// backed by the words it actually transcribed) is marked needs_second_look and downgraded to unsure; the app
+// then sends only those crops back with tier "escalate", which Sonnet 5.5 reads. Easy bottles never wait.
+// v0.5.1: logs each batch's label crop sizes (pixels only, no image or text) to check readability.
+// v0.5.2: the guess check ignores generic words (Domaine, Rosé, Bourbon...) and needs only half the
+// distinctive words to be on the label; second looks (Sonnet) are trusted and never capped as guesses.
+// v0.5.3: label reads say what "brand" means (the biggest identifying name; wine: estate or cuvee), so Haiku
+// and Sonnet name a wine the same way; a name returned only as product becomes the brand; the product never
+// repeats the brand. Logs why a crop was unreadable (blurry, too small...) and the phone's camera/frame size
+// (pixel counts only) to find why reads fail on a real phone.
+// v0.5.4: the live whole-frame read asks only for boxes and names (no edge tracing, no long fact list):
+// far fewer tokens, so the first names arrive seconds sooner.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.4";
 const PROJECT = "lqqmwqrffelgnbngrkep";
-const MODEL = Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
-const FALLBACK = "claude-haiku-4-5";
+const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
+const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
+const ESCALATION_MODEL = Deno.env.get("DISCOVER_ESCALATION_MODEL") || "claude-sonnet-5-5";
+const MAX_ESCALATION_CROPS = 4;
+const FALLBACK = "claude-haiku-5-5";
+const RESEARCH_MODEL = Deno.env.get("DISCOVER_RESEARCH_MODEL") || "claude-haiku-5-5";
+// Newer adaptive-thinking models reject a forced tool choice: ask for the tool instead, and keep thinking low for speed.
+const ADAPTIVE_MODEL = (model: string) => /sonnet-5|opus-5|fable|mythos/.test(model);
+const toolChoice = (model: string, name: string) => ADAPTIVE_MODEL(model)
+  ? { tool_choice: { type: "auto" }, output_config: { effort: "low" } }
+  : { tool_choice: { type: "tool", name } };
 const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
 const USER_SAVES_PER_DAY = 20, PROJECT_SAVES_PER_DAY = 500;
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
@@ -89,17 +113,38 @@ function headers(origin: string | null): Headers {
   return h;
 }
 const reply = (body: unknown, status = 200, origin: string | null = null) => new Response(JSON.stringify(body), { status, headers: headers(origin) });
+const foldText = (v: unknown) => String(v ?? "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+// Words that say what kind of drink or producer it is, not which one; a reader may add them
+// from what it sees (a pink wine is "Rosé") without that being a guess at the name.
+const GENERIC_WORDS = new Set(["the","de","del","della","di","du","des","la","le","les","el","los","and","of","co","company","domaine","chateau","bodega","bodegas","cantina","weingut","estate","estates","winery","wines","wine","vineyard","vineyards","cellars","cellar","distillery","distilling","distillers","brewing","brewery","colonel","jr","sr","rose","red","white","blanc","rouge","tinto","bianco","rosso","sparkling","bourbon","whiskey","whisky","straight","kentucky","vodka","gin","rum","tequila","mezcal","liqueur","beer","ale","lager","cider"]);
+// True when at least half of the distinctive words of a value appear in the words the model itself
+// transcribed. A brand or product it "knows" but did not transcribe is treated as a guess.
+function backedByWords(value: string, words: string[]): boolean {
+  const tokens = foldText(value).split(" ").filter((t) => (t.length >= 3 || /\d/.test(t)) && !GENERIC_WORDS.has(t));
+  if (!tokens.length) return true;
+  const said = foldText(words.join(" ")), squashed = said.replace(/ /g, "");
+  const hits = tokens.filter((t) => (" " + said + " ").includes(" " + t + " ") || squashed.includes(t)).length;
+  return hits >= Math.max(1, Math.ceil(tokens.length * 0.5));
+}
+// Width and height from a JPEG header (base64), or null. Only the first few KB are decoded.
+function jpegSize(b64: string): { w: number; h: number } | null {
+  try {
+    const bin = atob(b64.slice(0, 8000).replace(/=+$/, "").slice(0, 7996));
+    let i = 2;
+    while (i + 9 < bin.length) {
+      if (bin.charCodeAt(i) !== 0xff) { i++; continue; }
+      const marker = bin.charCodeAt(i + 1);
+      const len = (bin.charCodeAt(i + 2) << 8) | bin.charCodeAt(i + 3);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { h: (bin.charCodeAt(i + 5) << 8) | bin.charCodeAt(i + 6), w: (bin.charCodeAt(i + 7) << 8) | bin.charCodeAt(i + 8) };
+      }
+      i += 2 + len;
+    }
+  } catch { /* not a readable header */ }
+  return null;
+}
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
-function hasUnmodeledSkuDifferentiator(b: Record<string, unknown>): boolean {
-  const details = (b.details && typeof b.details === "object" ? b.details : b) as Record<string, unknown>;
-  const keys = ["vintage", "package_size", "sku", "barcode", "upc_ean", "batch", "lot_code",
-    "age_statement", "cask_finish", "cask_type", "barrel_number", "flavor", "style",
-    "appellation", "appellation_level", "classification", "dosage", "residual_sugar"];
-  return [...keys.map((key) => details[key]), b.size, b.proof]
-    .some((value) => value !== null && value !== undefined && clean(value, 80).length > 0);
-}
-
 
 type EdgePath = { kind: "hard" | "label" | "print"; points: Array<{x:number;y:number}>; confidence:number; inferred?:boolean };
 function bridgeSmallEdgeGaps(paths: EdgePath[]): EdgePath[] {
@@ -150,22 +195,13 @@ const TOOL = {
         properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } } },
       label_box: { type: "object", description: "tight box around the main paper, foil, or sticker label on this bottle, as fractions of the full image (0 to 1); omit if no label boundary is visible",
         properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } } },
-      edge_paths: { type: "array", maxItems: 48, description: "Visible edge polylines for this bottle, in normalized full-image coordinates. Trace observed image boundaries only; do not invent hidden edges. Classify hard structural boundaries, paper/label boundaries, and fine printed strokes separately. Points should follow the visible contour in order.", items: {
-        type: "object", required: ["kind","points","confidence"], properties: {
-          kind: { type: "string", enum: ["hard","label","print"] },
-          points: { type: "array", minItems: 2, maxItems: 32, items: { type: "object", required: ["x","y"], properties: { x: { type: "number" }, y: { type: "number" } } } },
-          confidence: { type: "number", description: "0 to 1 confidence that this edge is visibly present in the image" }
-        }
-      } },
       label_words: { type: "array", maxItems: 8, items: { type: "string" }, description: "the main words printed on the label, largest first, exactly as printed" },
-      brand: { type: "string", description: "brand name exactly as printed on the label; empty if it cannot be read" },
+      brand: { type: "string", description: "the main identifying name exactly as printed (for wine the biggest name on the label); empty if it cannot be read" },
       product: { type: "string", description: "expression or product name as printed (e.g. Blanco, Reposado, Single Barrel); empty if none" },
       category: { type: "string", enum: CATEGORIES },
       proof: { type: "string", description: "strength exactly as printed (e.g. 40% ALC/VOL or 80 PROOF); empty if not readable" },
       size: { type: "string", description: "bottle size as printed; empty if not readable" },
       origin: { type: "string", description: "place of origin as printed; empty if not readable" },
-      certifications: { type: "array", maxItems: 6, items: { type: "string" }, description: "certification marks or claims printed (e.g. USDA Organic, Kosher, Biodynamic, Vegan, Gluten Free, Additive Free)" },
-      ...Object.fromEntries(DETAIL_KEYS.map((k) => [k, { type: "string", description: DETAILS[k] + "; empty if not printed or not readable" }])),
       field_confidence: { type: "object", description: "Independent 0-to-1 confidence for each returned field. Include only fields with a value; confidence is based on legibility, not whether the answer seems plausible.", additionalProperties: { type: "number" } },
       detection_confidence: { type: "number", description: "0 to 1 confidence that this object is a beverage bottle and that the returned whole-bottle box follows its visible bounds. Judge object presence and geometry only; do not reduce this score because label text is unreadable." },
       confidence: { type: "number", description: "0 to 1 confidence that the brand was READ from the label, not guessed. This is identity/OCR confidence only and must not be used as bottle-detection confidence." },
@@ -194,6 +230,8 @@ const LABEL_TOOL = {
 };
 
 
+// Diagnostics only: why a crop could not be read (blur, size, angle...).
+const UNREADABLE_REASONS = ["", "blurry", "too_small", "glare", "turned_away", "cut_off", "no_label"];
 const LABEL_BATCH_TOOL = {
   name: "label_reads",
   description: "Read each supplied beverage label crop independently and return one result for its exact track ID.",
@@ -204,19 +242,23 @@ const LABEL_BATCH_TOOL = {
         type: "object", required: ["track_id", "brand", "product", "category", "proof", "size", "origin", "label_words", "details", "field_confidence"],
         properties: {
           track_id: { type: "string" },
-          brand: { type: "string" }, product: { type: "string" },
+          brand: { type: "string", description: "The main name that identifies this bottle, exactly as printed: the largest brand, estate, producer or cuvee name on the label. For wine this is usually the biggest name on the label; for spirits and beer the brand. Fill it whenever any identifying name is legible; empty only when no name can be read." },
+          product: { type: "string", description: "What the label adds to that name, exactly as printed: expression, cuvee, appellation, variety or style (e.g. Reposado, Pic Saint Loup, Single Barrel). Never repeat the brand. Empty if none." },
+          unreadable_reason: { type: "string", enum: UNREADABLE_REASONS, description: "Why the name could not be read clearly; empty when it was read." },
           category: { type: "string", enum: CATEGORIES },
           proof: { type: "string" }, size: { type: "string" }, origin: { type: "string" },
           label_words: { type: "array", maxItems: 12, items: { type: "string" } },
           details: { type: "object", properties: Object.fromEntries(DETAIL_KEYS.map((k) => [k, { type: "string", description: DETAILS[k] }])), additionalProperties: false },
-          field_confidence: { type: "object", additionalProperties: { type: "number" } }
+          field_confidence: { type: "object", description: "0 to 1 legibility confidence for each filled field; always include brand when brand is filled.", additionalProperties: { type: "number" } }
         }
       } }
     }
   }
 };
 
-const SYSTEM = "You read one photo taken in a bar, shop or restaurant: beverage bottles (beer, wine, spirits, anything) and printed menus. If a printed menu is in view set menu.visible true, return a tight box around the visible paper/menu card when its boundary is visible, and copy each legible item name and price exactly as printed, in order, inventing nothing; otherwise set menu.visible false. Detect every clearly visible beverage bottle even when its label is turned away, occluded, blurry, too small, or unreadable. For each bottle return a tight box around the whole visible bottle and a separate tight label_box around the paper/foil/sticker label if its boundary is visible. Detection confidence is solely about whether the object is a beverage bottle and whether the box fits it. Brand confidence is solely about whether brand text is legible. Never lower detection confidence because brand confidence is low. When brand text is not legible, leave brand and product empty and set brand confidence below 0.4; still return the bottle box and detection confidence. Also return edge_paths: short ordered polylines following ONLY visible image edges, with normalized full-image x/y coordinates and a confidence score. Use kind=hard for glass/wood/metal/container silhouette and other strong structural boundaries, kind=label for paper/foil/sticker boundaries and fine material edges, and kind=print for visible fine text strokes. Split paths at occlusions or uncertain gaps. Never draw an edge merely because a bottle is expected to be symmetrical; do not invent hidden or obscured geometry. A line should track a visible intensity/color boundary, not a conceptual object outline. Never identify a bottle from its shape, colour or cap alone: if the brand text is not legible, leave brand empty and set confidence below 0.4. Do not invent, complete or correct label text. Return an independent field_confidence score for every populated field; a low-confidence value must be left empty rather than guessed. Distinguish exact product expression from brand, producer, distillery, bottler, category, legal class, style, appellation, region, origin, package size and SKU/barcode. Extract all legible label and package facts, including bottling/distillation/harvest/disgorgement dates, mash bill/grain/agave, cask/barrel, lot/batch, vineyard/estate, dosage/residual sugar, importer, awards, organic claims and package material when printed or visibly identifiable. Do not infer a SKU or barcode from a product match. Skip glasses, glassware, taps, people, tables, shelves and background objects. A beverage bottle remains a valid detection even when its label faces away or is obscured. Never return boxes for anything except a bottle and its own label. Wine, spirits, beer and liqueurs carry different facts: copy the producer, vintage, region, appellation, grapes, class, age, cask finish, flavour, batch and any certification marks when they are printed, and leave every field that is not printed empty. Return an empty bottles list only when no beverage bottle is visibly present anywhere in the image. A visible bottle MUST receive a whole-bottle box even if its label is absent, turned away, covered, blurred, unreadable, or outside the crop; in those cases leave brand and product empty and keep detection_confidence based only on visible bottle geometry. Never use label readability as a condition for detecting the bottle. Always call the bottles tool.";
+// Live frame read is kept short for speed (v0.5.4): boxes + the name only. Edge tracing and the
+// long list of label facts were dropped here; label crops and save-time research fill in facts.
+const SYSTEM = "You read one photo taken in a bar, shop or restaurant. Detect every visible beverage bottle (beer, wine, spirits, anything), even when its label is turned away, blurred or too small to read. For each bottle return a tight box around the whole bottle and a tight label_box around its main label when visible, as fractions of the image. detection_confidence is only about whether it is a bottle and the box fits. Read only what is printed: brand is the main identifying name (for wine the biggest name on the label), product what the label adds to it (expression, cuvee, appellation, style). Never identify a bottle from shape, colour or cap; if the name is not legible leave brand and product empty and set confidence below 0.4. confidence is how sure you are the brand was read, not guessed. Give field_confidence for each filled field. If a printed menu is in view, set menu.visible true and copy each legible item name and price exactly; otherwise menu.visible false. Skip glasses, taps, people and shelves. Always call the bottles tool.";
 
 async function readFrame(key: string, model: string, b64: string, focus: string = "standard") {
   const finePrint = focus === "fine_print";
@@ -229,9 +271,9 @@ async function readFrame(key: string, model: string, b64: string, focus: string 
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({ model, max_tokens: finePrint ? 2600 : 4000, system: finePrint
-      ? "You are a careful beverage-label transcription engine. This is a close crop, so prioritize exact OCR rather than bottle detection, geometry, visual description, or product guessing. Never invent or complete obscured text. Use the label_read tool and return only directly observed text."
+      ? "You are a careful beverage-label transcription engine. This is a close crop, so prioritize exact OCR rather than bottle detection, geometry, visual description, or product guessing. Never invent or complete obscured text. Always answer by calling the label_read tool exactly once and return only directly observed text."
       : SYSTEM,
-      tools: [selectedTool], tool_choice: { type: "tool", name: selectedToolName },
+      tools: [selectedTool], ...toolChoice(model, selectedToolName),
       messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] }),
   });
   const j = await r.json().catch(() => ({}));
@@ -254,8 +296,8 @@ async function readLabelBatch(key: string, model: string, crops: Array<{track_id
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
       model, max_tokens: 4000,
-      system: "You are a precise beverage-label OCR engine. Each image is a separate crop and is associated with the immediately preceding track ID. Do not mix facts between crops. Read exact brand, product expression, category, ABV/proof, volume, origin and any legible technical details. Do not guess. Use the label_reads tool.",
-      tools: [LABEL_BATCH_TOOL], tool_choice: { type: "tool", name: "label_reads" },
+      system: "You are a precise beverage-label OCR engine. Each image is a separate crop and is associated with the immediately preceding track ID. Do not mix facts between crops. Read exact brand, product expression, category, ABV/proof, volume, origin and any legible technical details. Do not guess. Always answer by calling the label_reads tool exactly once.",
+      tools: [LABEL_BATCH_TOOL], ...toolChoice(model, "label_reads"),
       messages: [{ role: "user", content }]
     })
   });
@@ -346,7 +388,7 @@ Deno.serve(async (req: Request) => {
   try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
   catch { return reply({ error: "invalid_json" }, 400, origin); }
   const action = String(body.action || "");
-  if (action === "health") return reply({ ok: true, version: VERSION, model: MODEL }, 200, origin);
+  if (action === "health") return reply({ ok: true, version: VERSION, model: MODEL, frame_model: FRAME_MODEL, label_model: MODEL, escalation_model: ESCALATION_MODEL }, 200, origin);
 
   const match = async (queries: string[]) => {
     const { data } = await db.rpc("discover_match_products", { p_queries: queries });
@@ -429,7 +471,8 @@ Deno.serve(async (req: Request) => {
   if (!anthropicKey) return reply({ error: "discover_bottle_configuration_missing" }, 503, origin);
 
   if (action === "label_batch") {
-    const incoming = Array.isArray(body.crops) ? body.crops.slice(0, 8) as Array<Record<string, unknown>> : [];
+    const escalate = body.tier === "escalate";
+    const incoming = Array.isArray(body.crops) ? body.crops.slice(0, escalate ? MAX_ESCALATION_CROPS : 8) as Array<Record<string, unknown>> : [];
     if (!incoming.length) return reply({ error: "label_crops_required" }, 400, origin);
     const crops: Array<{track_id:string;image:string}> = [];
     let totalImageChars = 0;
@@ -449,8 +492,9 @@ Deno.serve(async (req: Request) => {
     const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
     const providerStartedAt = Date.now();
-    let model = MODEL, r = await readLabelBatch(anthropicKey, model, crops);
+    let model = escalate ? ESCALATION_MODEL : MODEL, r = await readLabelBatch(anthropicKey, model, crops);
     if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) {
+      console.log(JSON.stringify({ evt: "bottle_model_fallback", from: model, status: r.status, msg: clean(r.j?.error?.message, 160) }));
       model = FALLBACK; r = await readLabelBatch(anthropicKey, model, crops);
     }
     const usage = r.j?.usage || {};
@@ -466,9 +510,26 @@ Deno.serve(async (req: Request) => {
       const rawScores = (read.field_confidence && typeof read.field_confidence === "object" ? read.field_confidence : {}) as Record<string, unknown>;
       const fieldConfidence: Record<string, number> = {};
       for (const [key, value] of Object.entries(rawScores)) if (Number.isFinite(Number(value))) fieldConfidence[key] = unit(value);
-      const brand = clean(read.brand, 80), product = clean(read.product, 80);
+      let brand = clean(read.brand, 80), product = clean(read.product, 80);
+      // Models differ on which printed name is the "brand" (wine: estate vs cuvee).
+      // A legible name put only in product still names the bottle.
+      if (!brand && product) {
+        brand = product; product = "";
+        if (fieldConfidence.brand === undefined && fieldConfidence.product !== undefined) fieldConfidence.brand = fieldConfidence.product;
+      }
+      // Never repeat the brand inside the product ("Mescladis" / "Mescladis Rose").
+      if (brand && product) {
+        if (foldText(product) === foldText(brand)) product = "";
+        else {
+          const brandWords = foldText(brand).split(" "), productWords = product.split(/\s+/);
+          let i = 0;
+          while (i < brandWords.length && i < productWords.length && foldText(productWords[i]) === brandWords[i]) i++;
+          if (i === brandWords.length && i < productWords.length) product = clean(productWords.slice(i).join(" ").replace(/^[,:-]+\s*/, ""), 80);
+        }
+      }
       return {
         track_id: clean(read.track_id, 48), brand, product,
+        unreadable_reason: UNREADABLE_REASONS.includes(String(read.unreadable_reason)) ? String(read.unreadable_reason) : "",
         category: CATEGORIES.includes(String(read.category)) ? String(read.category) : "other",
         proof: clean(read.proof, 30), size: clean(read.size, 30), origin: clean(read.origin, 60),
         words: (Array.isArray(read.label_words) ? read.label_words : []).map(w => clean(w, 60)).filter(Boolean).slice(0, 12),
@@ -485,10 +546,24 @@ Deno.serve(async (req: Request) => {
       const matched = sameBrand && hit?.id && hit.product && (hit.score ?? 0) >= 0.72
         ? { id: hit.id, brand: hit.brand, product: hit.product, score: Math.round((hit.score ?? 0) * 100) / 100 }
         : null;
-      return { ...read, match: matched, state: !read.brand || read.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : matched ? "matched" : "reported" };
+      // Only first (Haiku) reads are checked for guessing; the careful second look is trusted.
+      const guessed = !escalate && !!read.brand && (!backedByWords(read.brand, read.words) || (!!read.product && !backedByWords(read.product, read.words)));
+      const weakProduct = !!read.product && (read.fieldConfidence.product ?? read.confidence) < MIN_LABEL_CONFIDENCE;
+      const unsure = !read.brand || read.confidence < MIN_LABEL_CONFIDENCE || guessed;
+      // Only first (Haiku) reads ask for a second look; a second look is final.
+      const needsSecondLook = !escalate && (unsure || weakProduct);
+      return { ...read, confidence: guessed ? Math.min(read.confidence, 0.5) : read.confidence, match: guessed ? null : matched,
+        state: unsure ? "unsure" : matched ? "matched" : "reported", needs_second_look: needsSecondLook, tier: escalate ? "escalate" : "base" };
     });
-    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
-    return reply({ ok: true, version: VERSION, model, reads: matchedReads, diagnostics: { provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length } }, 200, origin);
+    const sizes = crops.map((c) => jpegSize(c.image)).filter((x): x is { w: number; h: number } => !!x);
+    const shortSides = sizes.map((x) => Math.min(x.w, x.h)).sort((a, b) => a - b);
+    const secondLook = matchedReads.filter((r) => r.needs_second_look).length + (escalate ? 0 : crops.length - matchedReads.length);
+    const reasons: Record<string, number> = {};
+    for (const r of matchedReads) if (r.unreadable_reason) reasons[r.unreadable_reason] = (reasons[r.unreadable_reason] || 0) + 1;
+    const diag = (body.diag && typeof body.diag === "object" ? body.diag : {}) as Record<string, unknown>;
+    const px = (v: unknown) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 && n < 10000 ? n : 0; };
+    console.log(JSON.stringify({ evt: "bottle_label_batch_result", version: VERSION, model, tier: escalate ? "escalate" : "base", unreadable: reasons, video_w: px(diag.video_w), video_h: px(diag.video_h), frame_w: px(diag.frame_w), frame_h: px(diag.frame_h), provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, reads_confident: matchedReads.filter((r) => r.state !== "unsure").length, guessed: matchedReads.filter((r) => r.state === "unsure" && !!r.brand).length, second_look_wanted: secondLook, brand_empty: matchedReads.filter((r) => !r.brand).length, crop_short_side_min: shortSides[0] ?? 0, crop_short_side_median: shortSides[Math.floor(shortSides.length / 2)] ?? 0, input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 }));
+    return reply({ ok: true, version: VERSION, model, tier: escalate ? "escalate" : "base", reads: matchedReads, diagnostics: { provider_ms: Date.now() - providerStartedAt, crops_sent: crops.length, reads_returned: matchedReads.length, second_look_wanted: secondLook } }, 200, origin);
   }
 
   if (action === "frame") {
@@ -501,8 +576,8 @@ Deno.serve(async (req: Request) => {
 
     const providerStartedAt = Date.now();
     const focus = body.focus === "fine_print" ? "fine_print" : "standard";
-    let model = MODEL, r = await readFrame(anthropicKey, model, image, focus);
-    if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { model = FALLBACK; r = await readFrame(anthropicKey, model, image, focus); }
+    let model = focus === "fine_print" ? MODEL : FRAME_MODEL, r = await readFrame(anthropicKey, model, image, focus);
+    if (!r.ok && (r.status === 404 || (r.status === 400 && /model/i.test(String(r.j?.error?.message))))) { console.log(JSON.stringify({ evt: "bottle_model_fallback", from: model, status: r.status, msg: clean(r.j?.error?.message, 160) })); model = FALLBACK; r = await readFrame(anthropicKey, model, image, focus); }
     const usage = r.j?.usage || {};
     await db.rpc("discover_bottle_scan_tokens", { p_subject: subject, p_in: usage.input_tokens || 0, p_out: usage.output_tokens || 0 });
     if (!r.ok) { console.log(JSON.stringify({ evt: "bottle_read_error", status: r.status, msg: clean(r.j?.error?.message, 160) })); return reply({ error: "vision_provider_error" }, 502, origin); }
@@ -538,7 +613,7 @@ Deno.serve(async (req: Request) => {
           }
           for (const key of ["brand", "product", "category", "proof", "size", "origin", ...DETAIL_KEYS]) {
             const value = key === "brand" ? b.brand : key === "product" ? b.product : key === "category" ? b.category : key === "proof" ? b.proof : key === "size" ? b.size : key === "origin" ? b.origin : (pickDetails(b)[key]);
-            if (value && out[key] === undefined && key !== "brand" && key !== "product") out[key] = unit(b.confidence);
+            if (value && out[key] === undefined) out[key] = unit(b.confidence);
           }
           return out;
         })(),
@@ -546,22 +621,17 @@ Deno.serve(async (req: Request) => {
     }).filter((b) => b.box.x1 > b.box.x0 && b.box.y1 > b.box.y0);
     const queries = list.map((b) => clean(`${b.brand} ${b.product}`, 120) || b.words.slice(0, 3).join(" "));
     const found = queries.length ? await match(queries) : [];
-    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/g, " ").trim();
+    const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
     const bottles = list.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const fieldConfidence = b.fieldConfidence as Record<string, number>;
-      const brandReadIsStrong = !!b.brand && (fieldConfidence.brand ?? 0) >= 0.90;
-      const productReadIsStrong = !!b.product && (fieldConfidence.product ?? 0) >= 0.90;
-      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
-      const sameExpression = !!m?.product && normalizeIdentity(m.product) === normalizeIdentity(b.product);
-      // Keep variant-specific sightings unresolved until the catalogue can verify their SKU facts.
-      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
-      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong &&
-        sameBrand && sameExpression && !!m?.id && !!m.category && (m.score ?? 0) >= 0.90
+      // A fuzzy result is not an identity proof. Require the returned catalogue brand
+      // to agree with the printed brand and require a real product/SKU row.
+      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72
         ? { id: m.id, brand: m.brand, product: m.product, score: Math.round((m.score ?? 0) * 100) / 100 }
         : null;
-      const state = !brandReadIsStrong || !productReadIsStrong ? "unsure" : hit ? "matched" : "reported";
-      return { ...b, match: hit, state, research: null };
+      const state = !b.brand || b.confidence < MIN_LABEL_CONFIDENCE ? "unsure" : hit ? "matched" : "reported";
+      return { ...b, match: hit, state, research: null as null | { details: Record<string,string>; fieldConfidence: Record<string,number>; sources: Array<{url:string;title:string;supports:string[];source_type:string}> } };
     });
     const labelRead = focus === "fine_print" && input ? (() => {
       const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
@@ -629,7 +699,7 @@ Deno.serve(async (req: Request) => {
     const enriched = await Promise.all(incoming.map(async (b, index) => {
       if (index >= 5 || !b.brand) return b;
       try {
-        const research = await researchBottle(anthropicKey, MODEL, b);
+        const research = await researchBottle(anthropicKey, RESEARCH_MODEL, b);
         return {
           ...b,
           details: { ...b.details, ...research.details },
@@ -647,15 +717,8 @@ Deno.serve(async (req: Request) => {
     const venue = clean(body.venue_name, 120) || null;
     const rows = enriched.map((b, i) => {
       const m = found.find((f) => f.q === queries[i]);
-      const normalizeIdentity = (value: unknown) => clean(value, 120).toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/g, " ").trim();
-      const fieldConfidence = (b.field_confidence && typeof b.field_confidence === "object" ? b.field_confidence : {}) as Record<string, unknown>;
-      const brandReadIsStrong = !!b.brand && Number(fieldConfidence.brand ?? 0) >= 0.90;
-      const productReadIsStrong = !!b.product && Number(fieldConfidence.product ?? 0) >= 0.90;
-      const sameBrand = !!m?.brand && normalizeIdentity(m.brand) === normalizeIdentity(b.brand);
-      const sameExpression = !!m?.product && normalizeIdentity(m.product) === normalizeIdentity(b.product);
-      const skuDifferentiatorUnmodeled = hasUnmodeledSkuDifferentiator(b as Record<string, unknown>);
-      const hit = !skuDifferentiatorUnmodeled && brandReadIsStrong && productReadIsStrong &&
-        sameBrand && sameExpression && !!m?.id && !!m.category && (m.score ?? 0) >= 0.90;
+      const sameBrand = !!m?.brand && m.brand.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const hit = sameBrand && m?.id && m.product && m.category && (m.score ?? 0) >= 0.72;
       return { consumer_id: subject, scan_session_id: session, venue_name_submitted: venue, product_index_id: hit ? m!.id : null, match_score: hit ? m!.score : null,
         read_brand: b.brand, read_product: b.product || null, read_category: b.category, read_proof: b.proof || null, read_size: b.size || null,
         label_text: b.words.join(" ") || null, read_vintage: /^(18|19|20)\d{2}$/.test(String(b.details.vintage || "")) ? Number(b.details.vintage) : null, label_details: { ...b.details, _field_confidence: b.field_confidence, _research_sources: b.research_sources }, read_confidence: b.confidence, method: "vision_frame", evidence_state: "reported",

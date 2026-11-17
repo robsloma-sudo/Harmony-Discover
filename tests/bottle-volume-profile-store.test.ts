@@ -21,6 +21,20 @@ describe('bottle volume profile store', () => {
     expect(getBottleCalibrationKey(null,'unsure','750 ml')).toBeNull();
   });
 
+  it('uses the server-resolved bottle shape (brand|line|size) across releases', () => {
+    const resolved = { shapeKey: 'colonel e h taylor jr|barrel proof|750ml', flags: [] };
+    expect(getBottleCalibrationKey(null, 'unsure', '', resolved)).toBe('shape:colonel e h taylor jr|barrel proof|750ml');
+    expect(getBottleCalibrationKey({id:'sku-1',score:0.99}, 'matched', '750 ml', resolved)).toBe('shape:colonel e h taylor jr|barrel proof|750ml');
+  });
+
+  it('withholds volume when the barcode and the label words disagree', () => {
+    expect(getBottleCalibrationKey({id:'sku-1',score:0.99}, 'matched', '750 ml', { shapeKey: null, flags: ['barcode_and_label_words_disagree'] })).toBeNull();
+  });
+
+  it('falls back to the catalogue rule when the line is unknown', () => {
+    expect(getBottleCalibrationKey({id:'sku-1',score:0.95}, 'matched', '750 ml', { shapeKey: null, flags: [] })).toBe('sku-1::750 ml');
+  });
+
   it('parses measured height-to-volume pairs', () => {
     expect(parseBottleCalibrationSamples('0:0, 0.5:350, 1:750')).toEqual([
       {heightFraction:0,measuredMilliliters:0},

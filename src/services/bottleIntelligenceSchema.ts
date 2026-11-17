@@ -38,6 +38,20 @@ const COMMON: IntelligenceSection[] = [
     field("classification", "Classification", "Legal or producer classification"),
     field("vintage", "Vintage / release", "Vintage, batch or release year"),
   ]},
+  // Every drink gets tasting notes (Rob, 15 Nov 2026): shown right after the identity, researched first.
+  { id: "tasting", title: "Tasting notes", description: "How it smells and tastes, summarised from the producer and reviewers.", fields: [
+    field("tasting_notes", "Tasting notes", "Overall character in a sentence or two"),
+    field("nose", "Nose", "Aromas"),
+    field("palate", "Palate", "Flavours and texture"),
+    field("finish", "Finish", "Length and aftertaste"),
+    field("food_pairing", "Pairs with", "Foods or occasions it suits"),
+  ]},
+  { id: "story", title: "Story & notable facts", description: "The producer and this bottling's background.", fields: [
+    field("standout", "What makes it special", "What is unusual or worth talking about"),
+    field("notable_facts", "Notable facts", "Releases, awards, people and production details"),
+    field("release_history", "Release history", "When it was released or re-released"),
+    field("history", "History", "Founding, people and notable dates"),
+  ]},
   { id: "origin", title: "Origin & provenance", description: "Where the raw materials and finished product come from.", fields: [
     field("country", "Country", "Country of production or origin"),
     field("region", "Region", "Recognized production region"),

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView, Animated, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -7,10 +7,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
-import { WorldBottleAnchorOverlay, type WorldBottleCandidate } from '../src/live/WorldBottleAnchorOverlay';
+import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import type { BottleRead, MenuGlimpse, BottleIntelligenceProfile } from '../src/services/discoverLiveApi';
-import { loadBottleIntelligenceProfile } from '../src/services/discoverLiveApi';
+import { loadBottleCard } from '../src/services/discoverLiveApi';
+import { missingProfileFields } from '../src/home-panels/profileFields';
 import { attachBottleReadsToCandidates } from '../src/services/bottleCandidateAssociation';
 import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
@@ -22,6 +23,12 @@ import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
+import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
+import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
+import { clientLog, installClientLog } from '../src/services/clientLog';
+import { layoutBoxes } from '../src/live/boxDepth';
+import { BoxStage } from '../src/live/BoxStage';
+import { forwardOnlyStage, type ShownStage, type StageMemory } from '../src/live/boxStageProgress';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
 
@@ -32,7 +39,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const isLandscape = screenWidth > screenHeight;
   const compactDock = screenWidth < 390 || (isLandscape && screenHeight < 500);
   const [permission, requestPermission] = useCameraPermissions();
-  const [liveReadConsent, setLiveReadConsent] = useState(false);
+  // Remembered on this device: reopening the page must not silently switch recognition off.
+  const [liveReadConsent, setLiveReadConsentState] = useState(() => {
+    try { return typeof window !== 'undefined' && window.localStorage?.getItem('discover.liveRecognition') === 'on'; } catch { return false; }
+  });
+  const setLiveReadConsent = (next: boolean | ((value: boolean) => boolean)) => setLiveReadConsentState(value => {
+    const resolved = typeof next === 'function' ? next(value) : next;
+    try { if (typeof window !== 'undefined') window.localStorage?.setItem('discover.liveRecognition', resolved ? 'on' : 'off'); } catch { /* private mode */ }
+    return resolved;
+  });
   const [capturing, setCapturing] = useState(false);
   const [captureRequestId, setCaptureRequestId] = useState(0);
   const pendingCapture = useRef<'scan'|'menu_page'|null>(null);
@@ -44,7 +59,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [liveLiquidMetrics, setLiveLiquidMetrics] = useState<{jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}>({jobsDispatched:0,jobsCompleted:0,framesSkipped:0,workerErrors:0,lastWorkerMs:0,maxWorkerMs:0,segmentationMs:0,localFrameMs:0,workerAvailable:false});
   const [liveCameraPose, setLiveCameraPose] = useState<ARKitCameraPose | null>(null);
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  // Furthest step (1-4) each box has reached; boxes never step backwards (forgotten when the box goes).
+  const stageMemoryRef = useRef(new Map<number, StageMemory>());
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -64,59 +81,116 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     return () => clearInterval(expiry);
   }, [liveCandidates]);
   const [liveBottles, setLiveBottles] = useState<BottleRead[]>([]);
-  const [selectedBottle, setSelectedBottle] = useState<BottleRead | null>(null);
+  // Found strip: every fully recognised product flies up from its green box
+  // into a thin strip at the top; tapping a chip opens a static profile.
+  // Found chips survive a page reload in this tab (iPhone browsers can reload a busy camera page).
+  const [foundItems, setFoundItems] = useState<FoundItem[]>(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? window.sessionStorage?.getItem('discover.found') : null;
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.slice(-40) : [];
+    } catch { return []; }
+  });
+  useEffect(() => { installClientLog(); }, []);
+  useEffect(() => {
+    try { if (typeof window !== 'undefined') window.sessionStorage?.setItem('discover.found', JSON.stringify(foundItems.slice(-40))); } catch { /* storage full or private mode */ }
+  }, [foundItems]);
+  const [foundFlights, setFoundFlights] = useState<FoundFlight[]>([]);
+  const foundTrayTop = Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 50;
+  const foundRef = useRef<FoundItem[]>(foundItems);
+  // Scan boxes stay inside the camera view: below the found strip, above the bottom bar.
+  const [bottomAreaTop, setBottomAreaTop] = useState(0);
+  const cameraViewTop = foundTrayTop + 30;
+  // Boxes outline labels and never overlap: a bottle behind another is hidden, neighbours are trimmed (see boxDepth.ts).
+  const shownCandidates = liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
+  const boxLayout = layoutBoxes(shownCandidates);
+  for (const id of [...stageMemoryRef.current.keys()]) if (!liveCandidates.some(c => c.trackId === id)) stageMemoryRef.current.delete(id);
+  const cameraViewBottom = bottomAreaTop > cameraViewTop ? bottomAreaTop - 4 : screenHeight - 150;
+  useEffect(() => {
+    if (!liveCandidates.some(candidate => candidate.bottle)) return;
+    const { list, added } = mergeFound(foundRef.current, liveCandidates, Date.now());
+    if (list === foundRef.current) return;
+    foundRef.current = list;
+    setFoundItems(list);
+    if (added.length) {
+      clientLog({ evt: 'found_added', chips: list.length, conf: (added[0]!.candidate as { identityConfidence?: number }).identityConfidence });
+      setFoundFlights(flights => [...flights, ...added.map(({ item, candidate }, index) => ({
+        id: item.key + ':' + item.firstSeenAt,
+        key: item.key,
+        startedAt: Date.now(),
+        name: item.name,
+        from: { x: Math.max(4, Math.min(screenWidth - 120, candidate.x * screenWidth)), y: Math.max(foundTrayTop, candidate.y * screenHeight - 29) },
+        to: { x: Math.max(8, screenWidth - 236) - index * 4, y: foundTrayTop + 2 },
+      }))]);
+    }
+  }, [liveCandidates, screenWidth, screenHeight, foundTrayTop]);
+  // A chip is hidden only while its label is flying (under a second). Flights
+  // are cleared by a timer too, so a chip can never stay hidden if the
+  // animation does not report that it finished.
+  useEffect(() => {
+    if (!foundFlights.length) return;
+    const timer = setTimeout(() => setFoundFlights(flights => flights.filter(flight => Date.now() - flight.startedAt < 900)), 950);
+    return () => clearTimeout(timer);
+  }, [foundFlights]);
+  const foundKeysInFlight = new Set(foundFlights.filter(flight => Date.now() - flight.startedAt < 900).map(flight => flight.key));
+  // Profile card for a chip in the found strip. It follows that chip's entry,
+  // so new label reads fill in while it is open, and research is re-checked
+  // every 8 s. It grows out of the chip that was tapped.
+  const [selectedFoundKey, setSelectedFoundKey] = useState<string | null>(null);
+  const [selectedFrom, setSelectedFrom] = useState<{ x: number; y: number } | null>(null);
+  const [seenVersions, setSeenVersions] = useState<Record<string, number>>({});
+  const selectedFound = selectedFoundKey ? foundItems.find(item => item.key === selectedFoundKey) ?? null : null;
+  const selectedBottle: BottleRead | null = selectedFound?.bottle ?? null;
+  useEffect(() => {
+    if (!selectedFound) return;
+    setSeenVersions(seen => seen[selectedFound.key] === selectedFound.version ? seen : { ...seen, [selectedFound.key]: selectedFound.version });
+  }, [selectedFound?.key, selectedFound?.version]);
+  const unseenFoundKeys = new Set(foundItems.filter(item => item.key !== selectedFoundKey && item.version > (seenVersions[item.key] ?? 1)).map(item => item.key));
+  const openFoundItem = (item: FoundItem, from: { x: number; y: number }) => {
+    setSelectedFrom(from);
+    setSelectedFoundKey(item.key);
+  };
   const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
   const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
-  const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
-  useEffect(() => {
-    if (selectedTrackId === null) return;
-    const trackedBottle = liveCandidates.find(candidate => candidate.trackId === selectedTrackId)?.bottle;
-    if (trackedBottle) setSelectedBottle(trackedBottle);
-  }, [liveCandidates, selectedTrackId]);
+  const closeProfile = () => {
+    setSelectedFoundKey(null);
+    setSelectedBottleIntelligence(null);
+  };
+  const selectedBottleRef = useRef<BottleRead | null>(null);
+  selectedBottleRef.current = selectedBottle ?? null;
   const selectedBottleBrand = selectedBottle?.match?.brand || selectedBottle?.brand || '';
   const selectedBottleProduct = selectedBottle?.match?.product || selectedBottle?.product || '';
   const selectedBottleCategory = selectedBottle?.category || 'other';
   useEffect(() => {
     let cancelled = false;
-    if (!selectedBottleBrand.trim() || !selectedBottleProduct.trim()) {
+    if (!selectedBottleBrand.trim()) {
       setSelectedBottleIntelligence(null);
       setSelectedBottleIntelligenceLoading(false);
       return () => { cancelled = true; };
     }
     setSelectedBottleIntelligence(null);
     setSelectedBottleIntelligenceLoading(true);
-    void loadBottleIntelligenceProfile({
+    // The empty categories are sent so the server can research them (once per product every 6 h).
+    const load = (first: boolean) => loadBottleCard({
       brand: selectedBottleBrand,
       product: selectedBottleProduct,
       category: selectedBottleCategory,
-    })
-      .then(profile => { if (!cancelled) setSelectedBottleIntelligence(profile); })
-      .catch(() => { if (!cancelled) setSelectedBottleIntelligence(null); })
-      .finally(() => { if (!cancelled) setSelectedBottleIntelligenceLoading(false); });
-    return () => { cancelled = true; };
+    }, selectedBottleRef.current ? missingProfileFields(selectedBottleRef.current, null) : [])
+      // A later check only replaces what is shown when it found something.
+      .then(profile => { if (!cancelled && (first || profile)) setSelectedBottleIntelligence(profile); })
+      .catch(() => { if (!cancelled && first) setSelectedBottleIntelligence(null); })
+      .finally(() => { if (!cancelled && first) setSelectedBottleIntelligenceLoading(false); });
+    void load(true);
+    // Research runs in the background after a bottle is saved: keep checking while the card is open.
+    const refresh = setInterval(() => { void load(false); }, 8_000);
+    return () => { cancelled = true; clearInterval(refresh); };
   }, [selectedBottleBrand, selectedBottleProduct, selectedBottleCategory]);
-  const openBottleProfile = (candidate: WorldBottleCandidate) => {
-    const bottle = candidate.bottle;
-    const profileBottle: BottleRead = bottle || {
-      box: { x0: candidate.x, y0: candidate.y, x1: candidate.x + candidate.width, y1: candidate.y + candidate.height },
-      words: [],
-      brand: '',
-      product: 'Bottle detected · label reading pending',
-      category: 'other',
-      proof: '',
-      size: '',
-      origin: '',
-      confidence: 0,
-      detectionConfidence: candidate.confidence,
-      fieldConfidence: {},
-      researchSources: [],
-      details: {},
-      match: null,
-      state: 'unsure',
-    };
-    setSelectedBottle(profileBottle);
-    setSelectedTrackId(candidate.trackId);
-  };
+  const profileGrow = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!selectedFoundKey) return;
+    profileGrow.setValue(0);
+    Animated.timing(profileGrow, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [selectedFoundKey, profileGrow]);
   const [liveBarcodes, setLiveBarcodes] = useState<Array<{value:string;symbology:string}>>([]);
   const [liveLabelText, setLiveLabelText] = useState<string[]>([]);
   const [liveMenu, setLiveMenu] = useState<MenuGlimpse | null>(null);
@@ -261,14 +335,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               setLiveDepthFrame(null);
               setLiveCameraPose(null);
               setAnchorSessionKey(value => value + 1);
-              setSelectedTrackId(null);
             }
           }}
           onARReady={event => {
             if (event.nativeEvent.state === 'starting') {
               // A new camera session may reuse numeric track IDs. Keep an open
               // profile as a snapshot, but detach it from the previous session.
-              setSelectedTrackId(null);
               setAnchorSessionKey(value => value + 1);
               setLiveCandidates([]);
               setLiveDepthFrame(null);
@@ -288,7 +360,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               setAnchorSessionKey(session => session + 1);
               return;
             }
-            setLiveCandidates(attachBottleReadsToCandidates(value.candidates, liveBottles).map(candidate => ({
+            // On the web the camera surface already decides names from agreeing
+            // reads; attaching raw cloud reads here would bypass that check.
+            setLiveCandidates((Platform.OS === 'web' ? value.candidates : attachBottleReadsToCandidates(value.candidates, liveBottles)).map(candidate => ({
               ...candidate,
               source: candidate.source ?? value.source ?? (value.depthFrame?.unit === 'meters' ? 'cloud' : undefined),
               depthFrame: value.depthFrame,
@@ -304,7 +378,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             if (value.bottles) {
               setLiveBottles(value.bottles);
               setLiveReadAt(value.frameTimestamp);
-              setLiveCandidates(previous => attachBottleReadsToCandidates(previous, value.bottles || []));
+              if (Platform.OS !== 'web') setLiveCandidates(previous => attachBottleReadsToCandidates(previous, value.bottles || []));
             }
             if (value.barcodes?.length) setLiveBarcodes(previous => { const merged = [...previous]; value.barcodes!.forEach(barcode => { if (!merged.some(item => item.value === barcode.value)) merged.push(barcode); }); return merged.slice(-12); });
             if (value.text?.length) setLiveLabelText(previous => Array.from(new Set([...previous, ...value.text!])).slice(-24));
@@ -324,39 +398,70 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
-        <View pointerEvents="box-none" style={s.liveDetectionLayer}>
-          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)).map(tracked => {
+        <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}>
+        <View pointerEvents="box-none" style={[s.liveDetectionLayer, { top: -cameraViewTop, height: screenHeight, bottom: undefined }]}>
+          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp))
+            // Draw big boxes first so a smaller (nearer or front) bottle's box sits on top and can be tapped.
+            .slice().sort((a, b) => b.width * b.height - a.width * a.height)
+            .map(tracked => {
             const bottle = tracked.bottle;
-            const left = Math.max(0, Math.min(1, tracked.x));
-            const top = Math.max(0, Math.min(1, tracked.y));
-            const trackedWidth = Math.max(0.035, Math.min(1 - left, tracked.width));
-            const trackedHeight = Math.max(0.045, Math.min(1 - top, tracked.height));
-            const name = bottle ? [bottle.match?.brand || bottle.brand, bottle.match?.product || bottle.product].filter(Boolean).join(' ').trim() : 'BOTTLE DETECTED';
+            const placed = boxLayout.get(tracked.trackId);
+            if (!placed) return null;   // behind a bottle in front of it
+            const left = Math.max(0, Math.min(1, placed.x));
+            const top = Math.max(0, Math.min(1, placed.y));
+            const trackedWidth = Math.max(0.03, Math.min(1 - left, placed.width));
+            const trackedHeight = Math.max(0.04, Math.min(1 - top, placed.height));
+            const identifying = !bottle && typeof tracked.identifying === 'number';
+            const provisional = !bottle ? tracked.provisional : undefined;
+            const readName = (read?: BottleRead) => read ? displayName(read.match?.brand || read.brand, read.match?.product || read.product) : '';
+            const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,
               width: ((trackedWidth * 100) + '%') as `${number}%`,
               height: ((trackedHeight * 100) + '%') as `${number}%`,
             };
-            return (
-              <View key={tracked.trackId} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={bottle ? `Open bottle profile for ${name}` : 'Open detected bottle profile'}
-                  onPress={() => openBottleProfile(tracked)}
-                  style={[s.liveDetectionBox, boxStyle]}
-                >
-                  <View style={s.liveDetectionLabel}>
-                    <Text numberOfLines={1} style={s.liveDetectionName}>{name || (bottle ? bottle.category.replace(/_/g, ' ').toUpperCase() : 'BOTTLE DETECTED')}</Text>
-                    <Text style={s.liveDetectionConfidence}>{bottle ? `TAP FOR PROFILE · ${Math.round(bottle.confidence * 100)}%` : `TAP TO IDENTIFY · ${Math.round(tracked.confidence * 100)}%`}</Text>
+            const boxPx = trackedWidth * screenWidth;   // box width in points (stage text fits inside it)
+            // Where this bottle is in the 1-2-3-4 steps; a box never goes back to an earlier step.
+            // A name confirmed but not yet saved stays at step 3 (99%); once saved, a new bottle shows step 4
+            // (researching) and a known bottle shows its name.
+            const current: ShownStage = bottle
+              ? (tracked.stage?.name === 'researching' ? { stage: 'researching', since: tracked.stage.since }
+                : tracked.saved ? { stage: 'found' } : { stage: 'identifying', value: 0.99 })
+              : tracked.stage?.name === 'reading' ? { stage: 'recognizing', since: tracked.stage.since }
+              : identifying ? { stage: 'identifying', value: tracked.identifying }
+              : tracked.stage?.name === 'zoom' ? { stage: 'zoom', value: tracked.stage.value }
+              : { stage: 'scanning', value: tracked.confidence };
+            const staged = forwardOnlyStage(stageMemoryRef.current.get(tracked.trackId), current, Date.now());
+            stageMemoryRef.current.set(tracked.trackId, staged.memory);
+            const shownStage = staged.shown;
+            if (bottle) {
+              // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
+              return (
+                <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
+                    <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
                   </View>
-                </Pressable>
+                </View>
+              );
+            }
+            // Boxes only show what the scanner sees; they are not tappable.
+            // Identified bottles are opened from the found strip at the top.
+            return (
+              <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
+                <View style={[s.liveDetectionBox, boxStyle]}>
+                  {/* What the scanner is doing with this bottle right now, with its progress. */}
+                  <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
+                </View>
               </View>
             );
           })}
         </View>
+        </View>
       )}
-      {permission.granted && !scanPhotos && <WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} onSelectBottle={openBottleProfile} />}
+      {permission.granted && !scanPhotos && <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}><View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: -cameraViewTop, height: screenHeight }}><WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} /></View></View>}
+      {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} unseenKeys={unseenFoundKeys} selectedKey={selectedFoundKey} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); closeProfile(); }} />}
+      {foundFlights.map(flight => <FoundFlightLabel key={flight.id} flight={flight} onDone={done => setFoundFlights(flights => flights.filter(f => f.id !== done.id))} />)}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
         <View><Text style={s.wordmark}>HARMONY</Text><Text style={s.wordmarkSub}>D I S C O V E R</Text></View>
@@ -366,7 +471,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         <View style={[s.corner, s.tl]} /><View style={[s.corner, s.tr]} /><View style={[s.corner, s.bl]} /><View style={[s.corner, s.br]} />
         <Text style={s.centerHintText}>FIND THE DRINK WORTH TALKING ABOUT</Text>
       </View>
-      <View style={[s.bottomArea, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + (isLandscape ? 5 : 7), paddingTop: isLandscape ? 6 : 8, left: isLandscape ? 22 : 10, right: isLandscape ? 22 : 10 }]}>
+      <View onLayout={event => setBottomAreaTop(event.nativeEvent.layout.y)} style={[s.bottomArea, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + (isLandscape ? 5 : 7), paddingTop: isLandscape ? 6 : 8, left: isLandscape ? 22 : 10, right: isLandscape ? 22 : 10 }]}>
         <View style={s.controls}>
           <Pressable accessibilityRole="button" accessibilityLabel="Favorites" style={s.utilityControl} onPress={() => setActivePanel('favorites')}><Ionicons name="heart-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>FAVORITES</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Nearby discoveries" style={s.utilityControl} onPress={() => setActivePanel('nearby')}><Ionicons name="compass-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>NEARBY</Text></Pressable>
@@ -400,17 +505,31 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           </>}
         </View>
       </>}
-      {selectedBottle && (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <View
+      {selectedBottle && (() => {
+        const cardBottom = Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 6) + 76;
+        const cardHeight = Math.min(screenHeight * 0.62, 620);
+        const from = selectedFrom ?? { x: screenWidth / 2, y: foundTrayTop };
+        // Grows out of the tapped chip: start centred on the chip, small, then settle in place.
+        const startX = from.x - screenWidth / 2;
+        const startY = from.y - (screenHeight - cardBottom - cardHeight / 2);
+        return (
+        // zIndex here too: on the web every view starts its own layer, so without it the scan boxes drew over the card.
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 69 }]}>
+          <Animated.View
             pointerEvents="box-none"
             style={{
+              opacity: profileGrow.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 0.9, 1] }),
+              transform: [
+                { translateX: profileGrow.interpolate({ inputRange: [0, 1], outputRange: [startX, 0] }) },
+                { translateY: profileGrow.interpolate({ inputRange: [0, 1], outputRange: [startY, 0] }) },
+                { scale: profileGrow.interpolate({ inputRange: [0, 1], outputRange: [0.08, 1] }) },
+              ],
               position:'absolute',
               zIndex:69,
               left:8,
               right:8,
-              bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,
-              height:Math.min(screenHeight*0.62,620),
+              bottom:cardBottom,
+              height:cardHeight,
               borderRadius:18,
               overflow:'hidden',
               borderWidth:1,
@@ -422,15 +541,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               bottle={selectedBottle}
               intelligence={selectedBottleIntelligence}
               intelligenceLoading={selectedBottleIntelligenceLoading}
-              onClose={() => {
-                setSelectedBottle(null);
-                setSelectedTrackId(null);
-                setSelectedBottleIntelligence(null);
-              }}
+              onClose={closeProfile}
             />
-          </View>
+          </Animated.View>
         </View>
-      )}
+        );
+      })()}
       {activeJourney && <JourneyPlayerOverlay item={activeJourney} onClose={()=>setActiveJourney(null)}/>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
@@ -449,7 +565,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable style={s.menuRow} onPress={startMenuScan}><Ionicons name="document-text-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Read a menu</Text><Text style={s.menuDesc}>Capture menu pages, review extracted items and corrections</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={startBottleScan}><Ionicons name="wine-outline" size={18} color={C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Scan a bottle</Text><Text style={s.menuDesc}>Identify labels, products, SKUs, vintages and research details</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
-          <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>setLiveReadConsent(value=>!value)}><Ionicons name="scan-outline" size={18} color={liveReadConsent?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live Recognition</Text><Text style={s.menuDesc}>Send cropped live frames to Discover and Anthropic for bottle and menu reading. Images are not saved; sightings save only when you choose.</Text></View><Text style={[s.menuValue,{color:liveReadConsent?'#77E5B5':C.muted}]}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
+          <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>setLiveReadConsent(value=>!value)}><Ionicons name="scan-outline" size={18} color={liveReadConsent?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live Recognition</Text><Text style={s.menuDesc}>Send cropped live frames to Discover and Anthropic for bottle and menu reading. Images are not saved. Bottles the scanner is sure of are saved as sightings to build the shared catalogue, and their missing facts are looked up on the web.</Text></View><Text style={[s.menuValue,{color:liveReadConsent?'#77E5B5':C.muted}]}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
           </ScrollView>
         </View>
       </>}
@@ -459,7 +575,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 const s = StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg},menuRow:{minHeight:48,flexDirection:'row',alignItems:'center',gap:11,paddingVertical:7,borderBottomWidth:1,borderBottomColor:'rgba(153,163,174,0.12)'},menuTitle:{color:C.ivory,fontSize:11,fontWeight:'800'},menuDesc:{color:C.muted,fontSize:9,marginTop:3},menuValue:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:1},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
  permissionFallback:{backgroundColor:'#090B0F',alignItems:'center',justifyContent:'center'},permissionCard:{position:'absolute',left:28,right:28,top:'35%',padding:22,borderRadius:18,backgroundColor:'rgba(9,11,14,0.92)',borderWidth:1,borderColor:C.line},permissionTitle:{color:C.ivory,fontSize:23,fontWeight:'700',marginTop:12},permissionBody:{color:C.muted,fontSize:13,lineHeight:20,marginTop:7},permissionButton:{backgroundColor:C.brass,padding:14,borderRadius:10,alignItems:'center',marginTop:18},permissionButtonText:{color:'#111',fontSize:11,fontWeight:'900',letterSpacing:1.5},
- viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:-1,top:-29,maxWidth:210,minWidth:96,paddingHorizontal:8,paddingVertical:4,borderTopLeftRadius:6,borderTopRightRadius:6,borderBottomRightRadius:6,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionName:{color:'#E9FFF5',fontSize:9,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:7,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
+ viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
  centerHint:{position:'absolute',left:26,right:26,justifyContent:'center',alignItems:'center'},centerHintText:{color:'rgba(240,241,242,0.68)',fontSize:9,letterSpacing:2.4,fontWeight:'700'},corner:{position:'absolute',width:25,height:25,borderColor:'rgba(198,163,106,0.8)'},tl:{top:0,left:0,borderTopWidth:1,borderLeftWidth:1},tr:{top:0,right:0,borderTopWidth:1,borderRightWidth:1},bl:{bottom:0,left:0,borderBottomWidth:1,borderLeftWidth:1},br:{bottom:0,right:0,borderBottomWidth:1,borderRightWidth:1},
  bottomArea:{position:'absolute',bottom:0,backgroundColor:'rgba(7,9,12,0.92)',borderTopWidth:1,borderColor:C.line,borderTopLeftRadius:20,borderTopRightRadius:20,paddingHorizontal:8},controls:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:4},utilityControl:{alignItems:'center',justifyContent:'center',gap:5,minWidth:42,paddingVertical:7},utilityLabel:{color:C.ivory,fontSize:7,fontWeight:'800',letterSpacing:0.7},centerControls:{flexDirection:'row',alignItems:'center',gap:8},primaryControl:{width:36,height:36,borderRadius:18,borderWidth:1,borderColor:C.line,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(20,24,30,0.9)'},primaryControlHalf:{width:30,height:30},primaryControlActive:{borderColor:C.brass},shutterOuter:{width:66,height:66,borderRadius:33,borderWidth:2,borderColor:C.ivory,alignItems:'center',justifyContent:'center'},shutterOuterCompact:{width:58,height:58},shutterInner:{width:52,height:52,borderRadius:26,backgroundColor:C.ivory},shutterInnerCompact:{width:44,height:44},shutterBusy:{opacity:0.55},shutterBusyText:{color:'#111',textAlign:'center',fontSize:20,fontWeight:'900',lineHeight:50}
 });
