@@ -89,6 +89,11 @@ jobs:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-official-research-budget-smoke.sql
 
+      - name: Smoke-test venue check-in and public venue feed migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-venue-checkins-smoke.sql
+
       - name: TypeScript validation
         run: npm run typecheck
 

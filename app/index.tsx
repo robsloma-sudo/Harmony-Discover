@@ -18,6 +18,8 @@ import { BottleProfilePanel } from '../src/home-panels/BottleProfilePanel';
 import { shouldEnableLiveRecognition } from '../src/live/recognitionPolicy';
 import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
+import VenueCheckinPrompt from '../src/home-panels/VenueCheckinPrompt';
+import { useVenueCheckin } from '../src/services/useVenueCheckin';
 import JourneyPlayerOverlay, { type JourneyScanItem } from '../src/home-panels/JourneyPlayerOverlay';
 import { MartyPanel } from '../src/home-panels/MartyPanel';
 import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
@@ -159,6 +161,15 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     setSelectedFrom(from);
     setSelectedFoundKey(item.key);
   };
+  // Venue check-in: after a scan, suggest the closest venue and ask (never silent).
+  const venueCheckin = useVenueCheckin();
+  const lastLiveCheckinPrompt = useRef(0);
+  useEffect(() => {
+    if (!liveBottles.length || Date.now() - lastLiveCheckinPrompt.current < 2 * 60 * 1000) return;
+    lastLiveCheckinPrompt.current = Date.now();
+    void venueCheckin.afterScan('live_scan');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveBottles.length > 0]);
   const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
   const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
   const closeProfile = () => {
@@ -285,8 +296,11 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     if (kind === 'menu_page') {
       appendPages([uri], 'camera');
       setCameraMessage('MENU PAGE CAPTURED');
+      void venueCheckin.afterScan('menu_scan');
       return;
     }
+    // Camera captures only (gallery photos may be from somewhere else).
+    void venueCheckin.afterScan(scanMode === 'menu' ? 'menu_scan' : 'bottle_scan');
     if (scanMode === 'menu') addPages([uri], 'camera');
     setScanSource('camera');
     setScanPhotos([uri]);
@@ -502,6 +516,11 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
+      {venueCheckin.active && !venueCheckin.prompt && <View style={{position:'absolute',zIndex:30,top:insets.top+8,alignSelf:'center',flexDirection:'row',alignItems:'center',paddingHorizontal:11,paddingVertical:6,borderRadius:14,backgroundColor:'rgba(6,14,30,0.88)',borderWidth:1,borderColor:'rgba(255,209,102,0.7)'}}>
+        <Text style={{color:'#FFD166',fontSize:10,fontWeight:'900'}}>AT {venueCheckin.active.venueName.toUpperCase().slice(0,26)}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Undo check-in" onPress={()=>void venueCheckin.undo()} style={{marginLeft:9}}><Text style={{color:'#8DBBFF',fontSize:10,fontWeight:'900'}}>UNDO</Text></Pressable>
+      </View>}
+      {venueCheckin.prompt && <VenueCheckinPrompt state={venueCheckin.prompt} busy={venueCheckin.busy} error={venueCheckin.error} onConfirm={(venue,selection,share)=>void venueCheckin.confirm(venue,selection,share)} onDismiss={venueCheckin.dismiss}/>}
       {scanPhotos && <View style={{position:'absolute',zIndex:50,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveScanner photos={scanPhotos} source={scanSource} mode={scanMode} onClose={()=>setScanPhotos(null)} onJourneyItems={setJourneyItems} onKeepMenu={()=>{setScanPhotos(null);setActivePanel('menu');}} /></View>}
       {activePanel === 'menu' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><PreviewPanel onClose={()=>setActivePanel(null)} onAddPages={addMenuPages} /></View>}
       {activePanel === 'inventory' && <View style={{position:'absolute',zIndex:40,left:8,right:8,bottom:Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76,height:Math.min(screenHeight*0.78,760),borderRadius:20,overflow:'hidden',borderWidth:1,borderColor:'rgba(198,163,106,0.55)',backgroundColor:C.bg}}><LiveInventoryPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} liquidMetrics={liveLiquidMetrics} candidates={liveCandidates} bottles={liveBottles} barcodes={liveBarcodes} labelText={liveLabelText} menu={liveMenu} lastReadAt={liveReadAt} /></View>}
@@ -513,7 +532,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
           {activePanel!=='lidar' && activePanel!=='nearby' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
-          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
+          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney} checkedInVenueRef={venueCheckin.active?.venueRef ?? null}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
           {activePanel==='marty' && martyConsentOpen && <>
             <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
             <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
