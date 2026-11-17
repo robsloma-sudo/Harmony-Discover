@@ -178,6 +178,8 @@ export type LabelBatchRead = {
   /** First (fast) read looked unsure or like a guess: worth one second look by the stronger reader. */
   needsSecondLook: boolean;
   tier: 'base' | 'escalate';
+  /** Why the name could not be read (blurry, too_small, glare, turned_away, cut_off, no_label, not_a_drink); empty when read. */
+  unreadableReason?: string;
 };
 
 /** tier 'base' = fast first read (Haiku); 'escalate' = second look by the stronger reader (Sonnet), max 4 crops. */
@@ -207,6 +209,7 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
     state: read.state === 'matched' || read.state === 'reported' ? read.state : 'unsure',
     needsSecondLook: read.needs_second_look === true,
     tier: read.tier === 'escalate' ? 'escalate' : 'base',
+    unreadableReason: typeof read.unreadable_reason === 'string' ? read.unreadable_reason : '',
   })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
 }
 

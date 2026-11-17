@@ -14,6 +14,7 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
 import { LabelTextReader, OCR_MAX_EDGE, PHONE_READ_GAP_MS, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
 import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, probableFromFragments, sameBrand } from './letterGuess';
+import { looksLikeNoDrink } from './labelBatch';
 import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
@@ -296,6 +297,9 @@ function WebLiveCamera(props: NativeProps) {
     const textReader = !scannerMode.lite && textReaderEnabled() ? new LabelTextReader() : null;
     const probableByTrack = new Map<number, { brand: string; at: number }>();
     let lastPhoneReadAt = 0;
+    // Boxes the label reader said are not drinks at all (a book, sign, phone...): hidden and not read again.
+    const notDrinkTracks = new Set<number>();
+    const noLabelVotes = new Map<number, number>();
     // How fast each bottle was named (no photos): one row per bottle per scan session.
     type TimingDraft = { startedAt: number; labelPx: number; ocrMs?: number; textAt?: number; guessAt?: number; guess?: string; words?: string[] };
     const timingByTrack = new Map<number, TimingDraft>();
@@ -416,6 +420,8 @@ function WebLiveCamera(props: NativeProps) {
         probableByTrack.clear();
         timingByTrack.clear();
         loggedTimingTracks.clear();
+        notDrinkTracks.clear();
+        noLabelVotes.clear();
         resetAutoSave();
         reverifyTracks.clear();
         nextWebTrackId = 1;
@@ -678,6 +684,7 @@ function WebLiveCamera(props: NativeProps) {
         liquidGuard.bump(source);
         liquidGuard.bump(target);
         if (reverifyTracks.delete(source)) reverifyTracks.add(target);
+        if (notDrinkTracks.delete(source)) notDrinkTracks.add(target);
       }
     };
 
@@ -734,7 +741,7 @@ function WebLiveCamera(props: NativeProps) {
           }
           return withEvidence(candidate);
         });
-      const visibleCandidates = [...cloudCandidates, ...localCandidates];
+      const visibleCandidates = [...cloudCandidates, ...localCandidates].filter(candidate => !notDrinkTracks.has(candidate.trackId));
       // Skip identical updates (nothing moved, nothing renamed): the camera
       // screen re-renders on every update.
       const signature = visibleCandidates.map(candidate => {
@@ -967,7 +974,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter(local => !isVerifiedRead(local.trackId))
           .map(candidate => ({ ...candidate, bottle: undefined })),
       ];
-      const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 6_000);
+      const eligible = selectLabelBatchCandidates(candidates.filter(candidate => !notDrinkTracks.has(candidate.trackId)), lastLabelReadAt, now, 8, 6_000);
       const crops: Array<{ trackId: number; image: string }> = [];
       const planned: Array<{ trackId: number; crop: NonNullable<ReturnType<typeof calculateLabelCrop>>; samples: number; best: HTMLCanvasElement | null; bestSharp: number; bottle: { x: number; width: number } }> = [];
       for (const candidate of eligible) {
@@ -1066,6 +1073,15 @@ function WebLiveCamera(props: NativeProps) {
       const applyReads = (reads: LabelBatchRead[], readAt: number) => {
         for (const read of reads) readingSince.delete(read.trackId);
         for (const read of reads) {
+          if (looksLikeNoDrink(read)) {
+            const votes = (noLabelVotes.get(read.trackId) ?? 0) + 1;
+            noLabelVotes.set(read.trackId, votes);
+            // Two reads (usually the quick one and the careful second look) saw no label and no words:
+            // not a drink (a book, box, sign...). Its box goes and it is not read again.
+            if (votes >= 2 || read.unreadableReason === 'not_a_drink') {
+              notDrinkTracks.add(read.trackId); probableByTrack.delete(read.trackId); timingByTrack.delete(read.trackId);
+            }
+          } else if (read.brand) noLabelVotes.delete(read.trackId);
           // A blank second look adds nothing; keep what the first read had.
           if (read.tier === 'escalate' && !read.brand) continue;
           labelReadsByTrack.set(read.trackId, read);

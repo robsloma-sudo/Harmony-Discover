@@ -57,3 +57,13 @@ export function selectSecondLookCrops<T extends { trackId: number }>(
     })
     .slice(0, Math.max(0, Math.min(4, Math.floor(maximum))));
 }
+
+/**
+ * A read that suggests the box is not around a drink at all: no name, at most one word, and the reader
+ * said there is no label (or no drink). A drink whose label is blurry, cut off or turned away does not count.
+ */
+export function looksLikeNoDrink(read: { brand?: string; words?: string[]; unreadableReason?: string }): boolean {
+  if (read.brand) return false;
+  if ((read.words?.length ?? 0) > 1) return false;
+  return read.unreadableReason === 'no_label' || read.unreadableReason === 'not_a_drink';
+}
