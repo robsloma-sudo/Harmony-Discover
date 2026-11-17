@@ -32,20 +32,32 @@ export function cylinderForCrop(bottle: { x: number; width: number }, crop: Pixe
   return radius > 4 ? { centerX, radius } : null;
 }
 
-/** Off with ?ocr=off or localStorage 'discover.ocr' = 'off'. */
-export function textReaderEnabled(): boolean {
+/**
+ * On a computer it is on by default. On phones it is OFF by default (17 Nov 2026: on an iPhone it took
+ * ~0.7 s per read and slowed the bottle boxes, because it shares the phone's processor with the bottle
+ * detector). Turn it on with ?ocr=on (or localStorage 'discover.ocr' = 'on'); off with ?ocr=off.
+ */
+export function textReaderEnabled(userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : ''): boolean {
   try {
     const fromUrl = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('ocr') : null;
-    if (fromUrl === 'off') return false;
-    if (fromUrl === 'on') return true;
+    if (fromUrl === 'off') { try { localStorage.setItem('discover.ocr', 'off'); } catch { /* storage blocked */ } return false; }
+    if (fromUrl === 'on') { try { localStorage.setItem('discover.ocr', 'on'); } catch { /* storage blocked */ } return true; }
   } catch { /* no URL */ }
   try {
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('discover.ocr') === 'off') return false;
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('discover.ocr') : null;
+    if (stored === 'off') return false;
+    if (stored === 'on') return true;
   } catch { /* storage blocked */ }
-  return true;
+  return !/iPhone|iPad|iPod|Android|Mobile/i.test(userAgent);
 }
 
-type Reply = { type: 'ready' | 'result' | 'error'; id: number; message?: string } & Partial<TextRead>;
+/** Phone reads are spaced out so the bottle detector keeps the processor (ms between reads). */
+export const PHONE_READ_GAP_MS = 3_000;
+/** The reader only needs the biggest words: crops are shrunk to this long edge before reading. */
+export const OCR_MAX_EDGE = 640;
+
+type Reply = { type: 'ready' | 'result' | 'error' | 'fallback'; id: number; message?: string; reason?: string; backend?: TextBackend; warmMs?: number } & Partial<TextRead>;
+export type TextBackend = 'webgpu' | 'wasm';
 export type TextWorkerLike = {
   postMessage(message: unknown, transfer?: Transferable[]): void;
   terminate(): void;
@@ -53,7 +65,21 @@ export type TextWorkerLike = {
   onerror: ((event: Event) => void) | null;
 };
 
-/** One worker, one read at a time; extra requests while busy are dropped (the next label batch retries). */
+/** How much to read. Phones read the 2 biggest words on a 320 px picture (about half the work). */
+export function readSettings(userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '') {
+  return /iPhone|iPad|iPod|Android|Mobile/i.test(userAgent) ? { detLongSide: 320, maxWords: 2 } : { detLongSide: 480, maxWords: 4 };
+}
+
+/** The GPU self-check (drawing and reading one word) must finish within this, or the processor is used. */
+export const MAX_GPU_WARM_MS = 150;
+
+const hasWebGpu = () => typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
+
+/**
+ * One worker, one read at a time; extra requests while busy are dropped (the next label batch retries).
+ * The graphics chip (WebGPU) is tried first, so reading does not compete with the bottle detector for the
+ * processor; if the chip is missing or fails its self-check, the processor (WASM) is used.
+ */
 export class LabelTextReader {
   private worker: TextWorkerLike | null = null;
   private starting: Promise<void> | null = null;
@@ -61,33 +87,55 @@ export class LabelTextReader {
   private busy = false;
   private nextId = 1;
   private pending = new Map<number, { resolve: (read: TextRead) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  backend: TextBackend | null = null;
+  gpuNote = '';
 
   constructor(
     private readonly factory: () => TextWorkerLike = () => new Worker(OCR_WORKER_URL, { type: 'module', name: 'discover-label-text' }) as unknown as TextWorkerLike,
-    private readonly startTimeoutMs = 20_000,
+    private readonly startTimeoutMs = 25_000,
     private readonly readTimeoutMs = 4_000,
+    private readonly settings = readSettings(),
+    private readonly tryGpu = hasWebGpu(),
   ) {}
 
   get available() { return !this.failed; }
   get isBusy() { return this.busy || !!this.starting; }
 
+  private boot(backend: TextBackend): Promise<{ worker: TextWorkerLike; reply: Reply }> {
+    return new Promise((resolve, reject) => {
+      const worker = this.factory();
+      const timer = setTimeout(() => { worker.terminate(); reject(new Error('The label text reader took too long to start.')); }, this.startTimeoutMs);
+      worker.onerror = () => { clearTimeout(timer); worker.terminate(); reject(new Error('The label text reader could not start.')); };
+      worker.onmessage = event => {
+        if (event.data.id !== 0) return;
+        clearTimeout(timer);
+        if (event.data.type === 'error') { worker.terminate(); reject(new Error(event.data.message || 'The label text reader could not start.')); }
+        else resolve({ worker, reply: event.data });
+      };
+      worker.postMessage({ type: 'init', id: 0, backend, ...OCR_MODELS });
+    });
+  }
+
   private start(): Promise<void> {
     if (this.worker) return Promise.resolve();
     if (this.starting) return this.starting;
-    this.starting = new Promise<void>((resolve, reject) => {
-      const worker = this.factory();
-      const timer = setTimeout(() => reject(new Error('The label text reader took too long to start.')), this.startTimeoutMs);
-      worker.onerror = () => { clearTimeout(timer); reject(new Error('The label text reader could not start.')); };
-      worker.onmessage = event => {
-        const reply = event.data;
-        if (reply.id === 0) {
-          clearTimeout(timer);
-          if (reply.type === 'ready') { this.worker = worker; this.attach(worker); resolve(); }
-          else reject(new Error(reply.message || 'The label text reader could not start.'));
+    this.starting = (async () => {
+      if (this.tryGpu) {
+        try {
+          const { worker, reply } = await this.boot('webgpu');
+          // A slow graphics chip (its self-check read took long) is no help: use the processor instead.
+          if (reply.type === 'ready' && !((reply.warmMs ?? 0) > MAX_GPU_WARM_MS)) { this.worker = worker; this.backend = 'webgpu'; this.attach(worker); return; }
+          this.gpuNote = reply.type === 'ready' ? 'gpu_slow_' + Math.round(reply.warmMs ?? 0) + 'ms' : reply.reason || 'gpu_fallback';
+          worker.terminate();
+        } catch (error) {
+          this.gpuNote = error instanceof Error ? error.message : String(error);
         }
-      };
-      worker.postMessage({ type: 'init', id: 0, ...OCR_MODELS });
-    }).catch(error => {
+      }
+      const { worker } = await this.boot('wasm');
+      this.worker = worker;
+      this.backend = 'wasm';
+      this.attach(worker);
+    })().catch(error => {
       this.failed = true;
       throw error;
     }).finally(() => { this.starting = null; });
@@ -126,7 +174,7 @@ export class LabelTextReader {
       return await new Promise<TextRead>((resolve, reject) => {
         const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('label_text_read_timeout')); }, this.readTimeoutMs);
         this.pending.set(id, { resolve, reject, timer });
-        worker.postMessage({ type: 'read', id, buffer, width: image.width, height: image.height, cylinder }, [buffer]);
+        worker.postMessage({ type: 'read', id, buffer, width: image.width, height: image.height, cylinder, ...this.settings }, [buffer]);
       });
     } finally {
       this.busy = false;

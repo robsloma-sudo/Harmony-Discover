@@ -12,8 +12,9 @@ import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker, isSameBottle, type LocalBottleCandidate } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
-import { LabelTextReader, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
+import { LabelTextReader, OCR_MAX_EDGE, PHONE_READ_GAP_MS, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
 import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, probableFromFragments, sameBrand } from './letterGuess';
+import { looksLikeNoDrink } from './labelBatch';
 import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
@@ -57,6 +58,8 @@ export type ARKitCameraPose = { width: number; height: number; cameraIntrinsics:
 type NativeProps = ViewProps & {
   active?: boolean;
   recognitionEnabled?: boolean;
+  /** Settings > Quick Guess: the phone reads the biggest label words for an instant "Probably …". */
+  quickGuess?: boolean;
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number; depthEstimate?: ARKitDepthFrame } }) => void;
@@ -131,8 +134,8 @@ function WebLiveCamera(props: NativeProps) {
   const [digitalZoom, setDigitalZoom] = useState(1);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
   const containerRef = useRef<any>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess };
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -293,8 +296,18 @@ function WebLiveCamera(props: NativeProps) {
     // Instant "Probably …" (17 Nov 2026): the phone reads the biggest words on a label crop and the letter
     // catalogue turns them into a guess, shown until the cloud read names the bottle. A guess is never saved
     // and never counts as evidence. Skipped after an out-of-memory crash, or with ?ocr=off.
-    const textReader = !scannerMode.lite && textReaderEnabled() ? new LabelTextReader() : null;
+    // Switched on and off from Settings > Quick Guess while the camera runs.
+    let textReader: LabelTextReader | null = null;
+    const syncTextReader = () => {
+      const wanted = !scannerMode.lite && (callbacksRef.current.quickGuess ?? textReaderEnabled());
+      if (wanted && !textReader) { textReader = new LabelTextReader(); if (segmentationRunner) textReader.warmUp(); }
+      else if (!wanted && textReader) { textReader.dispose(); textReader = null; probableByTrack.clear(); publishVisibleCandidates(); }
+    };
     const probableByTrack = new Map<number, { brand: string; at: number }>();
+    let lastPhoneReadAt = 0;
+    // Boxes the label reader said are not drinks at all (a book, sign, phone...): hidden and not read again.
+    const notDrinkTracks = new Set<number>();
+    const noLabelVotes = new Map<number, number>();
     // How fast each bottle was named (no photos): one row per bottle per scan session.
     type TimingDraft = { startedAt: number; labelPx: number; ocrMs?: number; textAt?: number; guessAt?: number; guess?: string; words?: string[] };
     const timingByTrack = new Map<number, TimingDraft>();
@@ -315,7 +328,7 @@ function WebLiveCamera(props: NativeProps) {
         ms_to_name: draft.guessAt ? draft.guessAt - draft.startedAt : null,
         ms_to_confirm: confirmedBrand ? Date.now() - draft.startedAt : null,
         brand: confirmedBrand || null, product: read?.product || null,
-        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'scanner-ocr-1',
+        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'ocr2-' + (textReader?.backend ?? 'none'),
         guess_brand: draft.guess ?? null, guess_agreed: draft.guess && confirmedBrand ? sameBrand(draft.guess, confirmedBrand) : null,
         ocr_ms: draft.ocrMs ?? null, ocr_words: draft.words ?? [],
       });
@@ -415,6 +428,8 @@ function WebLiveCamera(props: NativeProps) {
         probableByTrack.clear();
         timingByTrack.clear();
         loggedTimingTracks.clear();
+        notDrinkTracks.clear();
+        noLabelVotes.clear();
         resetAutoSave();
         reverifyTracks.clear();
         nextWebTrackId = 1;
@@ -677,6 +692,7 @@ function WebLiveCamera(props: NativeProps) {
         liquidGuard.bump(source);
         liquidGuard.bump(target);
         if (reverifyTracks.delete(source)) reverifyTracks.add(target);
+        if (notDrinkTracks.delete(source)) notDrinkTracks.add(target);
       }
     };
 
@@ -733,7 +749,7 @@ function WebLiveCamera(props: NativeProps) {
           }
           return withEvidence(candidate);
         });
-      const visibleCandidates = [...cloudCandidates, ...localCandidates];
+      const visibleCandidates = [...cloudCandidates, ...localCandidates].filter(candidate => !notDrinkTracks.has(candidate.trackId));
       // Skip identical updates (nothing moved, nothing renamed): the camera
       // screen re-renders on every update.
       const signature = visibleCandidates.map(candidate => {
@@ -917,6 +933,7 @@ function WebLiveCamera(props: NativeProps) {
     }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
     const readCandidateLabels = async () => {
+      syncTextReader();
       // Label reads no longer wait behind the slower whole-frame read: a new bottle gets its first name fast.
       if (disposed || !pageVisible || !callbacksRef.current.recognitionEnabled || labelBatchBusy || Date.now() < nextLabelBatchAt) return;
       // Wait (at most 0.7 s) for the phone to be still and the picture sharp.
@@ -966,7 +983,7 @@ function WebLiveCamera(props: NativeProps) {
           .filter(local => !isVerifiedRead(local.trackId))
           .map(candidate => ({ ...candidate, bottle: undefined })),
       ];
-      const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 6_000);
+      const eligible = selectLabelBatchCandidates(candidates.filter(candidate => !notDrinkTracks.has(candidate.trackId)), lastLabelReadAt, now, 8, 6_000);
       const crops: Array<{ trackId: number; image: string }> = [];
       const planned: Array<{ trackId: number; crop: NonNullable<ReturnType<typeof calculateLabelCrop>>; samples: number; best: HTMLCanvasElement | null; bestSharp: number; bottle: { x: number; width: number } }> = [];
       for (const candidate of eligible) {
@@ -1015,22 +1032,33 @@ function WebLiveCamera(props: NativeProps) {
           else releaseCanvas(scratch);
         }
       }
-      // The phone's own text reader looks at up to two bottles that have no name or guess yet.
-      let phoneReads = 0;
+      // The phone's own text reader looks at one bottle with no name or guess yet, at most every 3 s,
+      // and only while the reader is free (it shares the processor with the bottle detector).
+      // Only at a quiet moment: phone held still (the detector then steps back while the text is read).
+      let phoneReads = textReader && !textReader.isBusy && steadyCapture && now - lastPhoneReadAt >= PHONE_READ_GAP_MS ? 0 : 1;
       for (const plan of planned) {
         if (!plan.best) continue;
         if (!timingByTrack.has(plan.trackId) && !loggedTimingTracks.has(plan.trackId)) {
           timingByTrack.set(plan.trackId, { startedAt: now, labelPx: Math.round(Math.max(plan.crop.sw, plan.crop.sh)) });
         }
-        if (textReader && phoneReads < 2 && !probableByTrack.has(plan.trackId) && !labelReadsByTrack.get(plan.trackId)?.brand) {
-          const context = plan.best.getContext('2d');
-          if (context && textReader.available) {
-            try {
-              const image = context.getImageData(0, 0, plan.best.width, plan.best.height);
-              readTextForGuess(plan.trackId, image, cylinderForCrop(plan.bottle, plan.crop, frameCanvas.width), generation);
+        if (textReader && phoneReads < 1 && textReader.available && !probableByTrack.has(plan.trackId) && !labelReadsByTrack.get(plan.trackId)?.brand) {
+          try {
+            // Shrunk copy: the biggest words read fine at 640 px, and it is less to copy and process.
+            const scale = Math.min(1, OCR_MAX_EDGE / Math.max(plan.best.width, plan.best.height));
+            const small = document.createElement('canvas');
+            small.width = Math.max(2, Math.round(plan.best.width * scale));
+            small.height = Math.max(2, Math.round(plan.best.height * scale));
+            const context = small.getContext('2d', { willReadFrequently: true });
+            if (context) {
+              context.drawImage(plan.best, 0, 0, small.width, small.height);
+              const image = context.getImageData(0, 0, small.width, small.height);
+              const cylinder = cylinderForCrop(plan.bottle, plan.crop, frameCanvas.width);
+              readTextForGuess(plan.trackId, image, cylinder ? { centerX: cylinder.centerX * scale, radius: cylinder.radius * scale } : null, generation);
               phoneReads += 1;
-            } catch { /* canvas unreadable: the cloud read carries on */ }
-          }
+              lastPhoneReadAt = now;
+            }
+            releaseCanvas(small);
+          } catch { /* canvas unreadable: the cloud read carries on */ }
         }
         // Best quality that fits this crop's share of the server's batch limit.
         const budget = Math.min(99_000, Math.max(38_000, Math.floor(340_000 / Math.max(1, eligible.length))));
@@ -1054,6 +1082,15 @@ function WebLiveCamera(props: NativeProps) {
       const applyReads = (reads: LabelBatchRead[], readAt: number) => {
         for (const read of reads) readingSince.delete(read.trackId);
         for (const read of reads) {
+          if (looksLikeNoDrink(read)) {
+            const votes = (noLabelVotes.get(read.trackId) ?? 0) + 1;
+            noLabelVotes.set(read.trackId, votes);
+            // Two reads (usually the quick one and the careful second look) saw no label and no words:
+            // not a drink (a book, box, sign...). Its box goes and it is not read again.
+            if (votes >= 2 || read.unreadableReason === 'not_a_drink') {
+              notDrinkTracks.add(read.trackId); probableByTrack.delete(read.trackId); timingByTrack.delete(read.trackId);
+            }
+          } else if (read.brand) noLabelVotes.delete(read.trackId);
           // A blank second look adds nothing; keep what the first read had.
           if (read.tier === 'escalate' && !read.brand) continue;
           labelReadsByTrack.set(read.trackId, read);
@@ -1215,7 +1252,11 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
         void runLocalDetection().finally(() => {
-          scheduleLocalDetection(Math.max(30, segmentationRunner?.msUntilReady() ?? 250));
+          // While the phone reads label text on the processor, the detector steps back a little (the camera is
+          // steady then, and camera motion keeps the boxes on the bottles).
+          const readingText = !!textReader?.isBusy;
+          const yieldMs = readingText ? (textReader?.backend === 'webgpu' ? 120 : 350) : 0;
+          scheduleLocalDetection(Math.max(30, yieldMs, segmentationRunner?.msUntilReady() ?? 250));
         });
       }, delay);
     };

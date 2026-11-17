@@ -233,50 +233,89 @@ function installWorker(scope) {
     return bytes;
   };
 
+  /**
+   * Self-check for the graphics-chip path: draw "JAMESON" and read it back. A backend that cannot read
+   * it (or a browser without worker canvases) is not used; the processor path is used instead.
+   */
+  const selfTest = async () => {
+    if (typeof OffscreenCanvas === 'undefined') return { ok: false, reason: 'no OffscreenCanvas' };
+    const canvas = new OffscreenCanvas(320, 96);
+    const g = canvas.getContext('2d');
+    if (!g) return { ok: false, reason: 'no 2d context' };
+    g.fillStyle = '#f4ecd8'; g.fillRect(0, 0, 320, 96);
+    g.fillStyle = '#1a120a'; g.font = 'bold 56px sans-serif'; g.textBaseline = 'middle';
+    g.fillText('JAMESON', 20, 50);
+    const image = g.getImageData(0, 0, 320, 96);
+    const started = performance.now();
+    const result = await readPixels(image.data, 320, 96, { detLongSide: 320, maxWords: 2 });
+    const ms = performance.now() - started;
+    const text = result.words.map(word => word.text).join(' ').toUpperCase().replace(/[^A-Z]/g, '');
+    return { ok: text.includes('JAMESON'), ms, text };
+  };
+
   const init = async (message) => {
     const [detBytes, recBytes, dictBytes] = await Promise.all([
       fetchChecked(message.detUrl, message.detSha256),
       fetchChecked(message.recUrl, message.recSha256),
       fetchChecked(message.dictUrl, message.dictSha256),
     ]);
-    ort = await import('./ort.wasm.bundle.min.mjs');
+    chars = recogniserChars(new TextDecoder().decode(dictBytes));
+    const gpu = message.backend === 'webgpu';
+    if (gpu && !(scope.navigator?.gpu && await scope.navigator.gpu.requestAdapter().catch(() => null))) {
+      return { fallback: true, reason: 'No WebGPU adapter.' };
+    }
+    // One ONNX Runtime build per worker: the graphics-chip build, or the processor (WASM) build.
+    ort = await import(gpu ? './ort.webgpu.bundle.min.mjs' : './ort.wasm.bundle.min.mjs');
     ort.env.wasm.wasmPaths = new URL('./', import.meta.url).href;
     ort.env.wasm.numThreads = 1;
     ort.env.wasm.proxy = false;
-    const options = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
-    det = await ort.InferenceSession.create(detBytes, options);
-    rec = await ort.InferenceSession.create(recBytes, options);
-    chars = recogniserChars(new TextDecoder().decode(dictBytes));
-    return { classes: chars.length };
+    const options = { executionProviders: gpu ? ['webgpu'] : ['wasm'], graphOptimizationLevel: 'all' };
+    try {
+      det = await ort.InferenceSession.create(detBytes, options);
+      rec = await ort.InferenceSession.create(recBytes, options);
+    } catch (error) {
+      if (gpu) return { fallback: true, reason: error instanceof Error ? error.message : String(error) };
+      throw error;
+    }
+    if (gpu) {
+      await selfTest().catch(() => null); // first run compiles the GPU shaders
+      const check = await selfTest().catch(error => ({ ok: false, reason: String(error) }));
+      if (!check.ok) {
+        await det?.release?.(); await rec?.release?.(); det = null; rec = null;
+        return { fallback: true, reason: 'GPU self-check failed: ' + (check.reason || check.text || '') };
+      }
+      return { backend: 'webgpu', classes: chars.length, warmMs: check.ms };
+    }
+    return { backend: 'wasm', classes: chars.length };
   };
 
-  const read = async (message) => {
-    if (!det || !rec) throw new Error('Text reader is not ready.');
+  const recognise = async (pixels, pixelWidth, pixelHeight, box) => {
+    const prepared = recInput(pixels, pixelWidth, pixelHeight, box);
+    if (!prepared) return null;
+    const tensor = new ort.Tensor('float32', prepared.data, [1, 3, prepared.height, prepared.width]);
+    const out = await rec.run({ [rec.inputNames[0]]: tensor });
+    tensor.dispose?.();
+    const logits = out[rec.outputNames[0]];
+    const [, steps, classes] = logits.dims;
+    const data = logits.getData ? await logits.getData() : logits.data;
+    const decoded = ctcDecode(data, steps, classes, chars);
+    for (const value of Object.values(out)) value?.dispose?.();
+    return decoded;
+  };
+
+  const readPixels = async (rgba, width, height, settings = {}) => {
     const started = performance.now();
-    const rgba = new Uint8ClampedArray(message.buffer);
-    const { width, height } = message;
-    const input = detInput(rgba, width, height, message.detLongSide || OCR_DEFAULTS.detLongSide);
+    const input = detInput(rgba, width, height, settings.detLongSide || OCR_DEFAULTS.detLongSide);
     const detTensor = new ort.Tensor('float32', input.data, [1, 3, input.height, input.width]);
     const detOut = await det.run({ [det.inputNames[0]]: detTensor });
     detTensor.dispose?.();
     const probTensor = detOut[det.outputNames[0]];
-    const boxes = largestBoxes(boxesFromProbability(probTensor.data, input.width, input.height, width, height), message.maxWords || OCR_DEFAULTS.maxWords);
+    const prob = probTensor.getData ? await probTensor.getData() : probTensor.data;
+    const boxes = largestBoxes(boxesFromProbability(prob, input.width, input.height, width, height), settings.maxWords || OCR_DEFAULTS.maxWords);
     for (const value of Object.values(detOut)) value?.dispose?.();
     const detMs = performance.now() - started;
-    const recognise = async (pixels, pixelWidth, pixelHeight, box) => {
-      const prepared = recInput(pixels, pixelWidth, pixelHeight, box);
-      if (!prepared) return null;
-      const tensor = new ort.Tensor('float32', prepared.data, [1, 3, prepared.height, prepared.width]);
-      const out = await rec.run({ [rec.inputNames[0]]: tensor });
-      tensor.dispose?.();
-      const logits = out[rec.outputNames[0]];
-      const [, steps, classes] = logits.dims;
-      const decoded = ctcDecode(logits.data, steps, classes, chars);
-      for (const value of Object.values(out)) value?.dispose?.();
-      return decoded;
-    };
     // Round bottle: words towards the edge are read a second time from the unrolled label; the surer read wins.
-    const cylinder = message.cylinder && message.cylinder.radius > 4 ? message.cylinder : null;
+    const cylinder = settings.cylinder && settings.cylinder.radius > 4 ? settings.cylinder : null;
     let unrolled = null, unrolledReads = 0;
     const words = [];
     for (const box of boxes) {
@@ -299,11 +338,20 @@ function installWorker(scope) {
     return { words, detMs, unrolledReads, totalMs: performance.now() - started };
   };
 
+  const read = async (message) => {
+    if (!det || !rec) throw new Error('Text reader is not ready.');
+    return readPixels(new Uint8ClampedArray(message.buffer), message.width, message.height,
+      { detLongSide: message.detLongSide, maxWords: message.maxWords, cylinder: message.cylinder });
+  };
+
   scope.onmessage = (event) => {
     const message = event.data || {};
     queue = queue.then(async () => {
       try {
-        if (message.type === 'init') scope.postMessage({ type: 'ready', id: message.id, ...(await init(message)) });
+        if (message.type === 'init') {
+          const result = await init(message);
+          scope.postMessage({ type: result.fallback ? 'fallback' : 'ready', id: message.id, ...result });
+        }
         else if (message.type === 'read') scope.postMessage({ type: 'result', id: message.id, ...(await read(message)) });
         else if (message.type === 'dispose') {
           await det?.release?.(); await rec?.release?.();
