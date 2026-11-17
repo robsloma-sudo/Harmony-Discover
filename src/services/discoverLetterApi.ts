@@ -4,6 +4,7 @@
  */
 import { ensureDiscoverSession } from './supabase';
 import type { FragmentMatch, LetterMatch } from '../live/letterGuess';
+import type { NameCandidate } from '../live/partialEvidence';
 
 const base = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
@@ -49,10 +50,23 @@ export async function fragmentLookup(fragments: string[], limit = 5): Promise<Fr
   })).filter(row => row.brand);
 }
 
+/**
+ * Names (label approvals and the Harmony catalogue) containing any of the part-words a partly hidden label showed,
+ * across brand and product. Candidates only: the app scores them (see partialEvidence.ts).
+ */
+export async function partialLookup(anchors: string[], limit = 150): Promise<NameCandidate[]> {
+  if (!anchors.length) return [];
+  const rows = await rpc<Array<Record<string, unknown>>>('discover_partial_lookup', { p_anchors: anchors.slice(0, 6), p_limit: limit }, 4_000);
+  return (rows || []).map(row => ({
+    brand: String(row.brand ?? ''), product: String(row.product ?? ''), classType: row.class_type == null ? null : String(row.class_type),
+    labels: toNumber(row.labels), source: row.source === 'harmony' ? 'harmony' as const : 'label' as const,
+  })).filter(row => row.brand);
+}
+
 export type ScanTimingRow = {
   scan_session_id: string;
   track_id: string;
-  named_by: 'letters' | 'ai_label' | 'none';
+  named_by: 'letters' | 'partial' | 'ai_label' | 'none';
   ms_to_text?: number | null;
   ms_to_name?: number | null;
   ms_to_confirm?: number | null;
@@ -66,6 +80,12 @@ export type ScanTimingRow = {
   guess_agreed?: boolean | null;
   ocr_ms?: number | null;
   ocr_words?: string[];
+  /** The label was partly hidden or cut off at some read. */
+  partial?: boolean | null;
+  /** Where the first "Probably …" came from. */
+  guess_source?: 'letters' | 'partial' | null;
+  verify_calls?: number | null;
+  verify_verdict?: 'match' | 'none' | 'error' | null;
 };
 
 /** Records how fast bottles were named (no photos). At most 50 rows per call. */

@@ -14,6 +14,12 @@ export type IdentityRead = {
   confidence: number;
   state?: string;
   match?: { id?: string | null; brand?: string | null; product?: string | null; score?: number } | null;
+  /**
+   * Read from a label that was partly hidden or cut off (17 Nov 2026): a clue, not proof. It adds to the
+   * evidence, but a name is confirmed only once at least one read of it saw the label whole (or a targeted
+   * check of the leading name agreed).
+   */
+  partial?: boolean;
 };
 
 export type TrackIdentity<T extends IdentityRead> = {
@@ -24,7 +30,7 @@ export type TrackIdentity<T extends IdentityRead> = {
   agreeingReads: number;
 };
 
-type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number };
+type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number; fullReads: number };
 /**
  * locked: the vote key once a name has been confirmed. A confirmed bottle keeps
  * its name (and its number never goes down) while it stays the same tracked
@@ -140,17 +146,19 @@ export class TrackEvidence<T extends IdentityRead> {
     // "Colonel E.H. Taylor, Jr.").
     const key = [...entry.votes.keys()].find(existing => sameBottleIdentity(entry.votes.get(existing)!.read, read)) ?? own;
     const matched = read.state === 'matched' && (read.match?.score ?? 0) >= 0.9;
-    const strength = clamp(read.confidence) * (matched ? 0.8 : 0.7);
-    const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0, best: 0 };
+    const partial = read.partial === true;
+    const strength = clamp(read.confidence) * (matched ? 0.8 : 0.7) * (partial ? 0.6 : 1);
+    const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0, best: 0, fullReads: 0 };
     // Show the most informative read: catalogue match first, then a read with
-    // an expression, then the most legible.
-    const rank = (r: T) => (r.match?.id ? 2 : 0) + (clean(r.product) ? 1 : 0) + clamp(r.confidence) * 0.5;
+    // an expression, then the most legible; a read of a whole label beats a partial one.
+    const rank = (r: T) => (r.match?.id ? 2 : 0) + (clean(r.product) ? 1 : 0) + clamp(r.confidence) * 0.5 - (r.partial ? 1.5 : 0);
     // Each read can see a different part of the label: keep the best read and
     // fill in what it missed (proof, size, origin, details, words) from the others.
     vote.read = vote.reads === 0 ? read : rank(read) >= rank(vote.read) ? mergeReads(read, vote.read) : mergeReads(vote.read, read);
     vote.weight += clamp(read.confidence);
     vote.reads += 1;
-    if (read.state !== 'unsure') vote.best = Math.max(vote.best, clamp(read.confidence));
+    if (!partial) vote.fullReads += 1;
+    if (read.state !== 'unsure' && !partial) vote.best = Math.max(vote.best, clamp(read.confidence));
     vote.evidence = 1 - (1 - vote.evidence) * (1 - strength);
     entry.votes.set(key, vote);
   }
@@ -178,7 +186,8 @@ export class TrackEvidence<T extends IdentityRead> {
     // A clear majority (85%+) counts fully; closer contests lower the confidence.
     let confidence = top!.evidence * Math.min(1, share / 0.85);
     const strongSingle = top!.best >= CONFIDENT_SINGLE_READ && share >= RELIABLE_SHARE;
-    let reliable = (confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2) || strongSingle;
+    // Clues from partly hidden labels alone never confirm a name.
+    let reliable = top!.fullReads >= 1 && ((confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2) || strongSingle);
     if (strongSingle) confidence = Math.max(confidence, top!.best);
     if (entry.locked === topKey) reliable = true;
     else if (reliable) entry.locked = topKey;
@@ -204,6 +213,7 @@ export class TrackEvidence<T extends IdentityRead> {
         existing.best = Math.max(existing.best, vote.best);
         existing.weight += vote.weight;
         existing.reads += vote.reads;
+        existing.fullReads += vote.fullReads;
         existing.evidence = 1 - (1 - existing.evidence) * (1 - vote.evidence);
       }
     }

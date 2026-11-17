@@ -45,6 +45,8 @@ export type BottleRead = {
   state: BottleState;
   /** Set once the bottle is saved and the server has resolved its identity. */
   resolved?: ResolvedIdentity;
+  /** Read from a label partly hidden or cut off: a clue that cannot confirm a name on its own. */
+  partial?: boolean;
 };
 export class BottleReadError extends Error {
   status: number;
@@ -211,6 +213,33 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
     tier: read.tier === 'escalate' ? 'escalate' : 'base',
     unreadableReason: typeof read.unreadable_reason === 'string' ? read.unreadable_reason : '',
   })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
+}
+
+export type LabelCheck = {
+  verdict: 'match' | 'none';
+  /** 1-based index into the candidates sent; 0 when none fits. */
+  choice: number;
+  level: 'product' | 'brand' | 'none';
+  confidence: number;
+  visibleWords: string[];
+  reason: string;
+};
+
+/**
+ * Targeted check of a partly hidden label (step 4): which of these (at most 3) names does the visible text belong
+ * to, if any? One crop; counts toward the daily scan limit. The server accepts a choice only when the words it
+ * says it can see back that name.
+ */
+export async function verifyLabelRead(image: string, candidates: Array<{ brand: string; product: string }>): Promise<LabelCheck> {
+  const result = await call({ image, candidates: candidates.slice(0, 3) }, 'discover-verify-read');
+  const level = result.level === 'product' || result.level === 'brand' ? result.level : 'none';
+  return {
+    verdict: result.verdict === 'match' ? 'match' : 'none',
+    choice: Number.isInteger(result.choice) ? result.choice : 0,
+    level, confidence: Number(result.confidence) || 0,
+    visibleWords: Array.isArray(result.visible_words) ? result.visible_words.map(String) : [],
+    reason: String(result.reason || ''),
+  };
 }
 
 export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; productsLinked: number; productsCreated: number; researchEvidenceSaved: number; researchAttributesAdded: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {

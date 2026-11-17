@@ -11,3 +11,7 @@ verify_jwt = true
 
 [functions.discover-enrichment-worker]
 verify_jwt = false
+
+# Partial evidence, step 4: checks the user's JWT itself (the gateway check would block CORS preflight).
+[functions.discover-verify-read]
+verify_jwt = false

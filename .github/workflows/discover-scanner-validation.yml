@@ -74,6 +74,9 @@ jobs:
       - name: Type-check enrichment worker Edge Function
         run: deno check --node-modules-dir=auto supabase/functions/discover-enrichment-worker/index.ts
 
+      - name: Type-check label check (partial evidence) Edge Function
+        run: deno check --node-modules-dir=auto supabase/functions/discover-verify-read/index.ts
+
       - name: Smoke-test strict sighting attachment and queue-claim migrations
         env:
           PGPASSWORD: postgres
@@ -93,6 +96,11 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-venue-checkins-smoke.sql
+
+      - name: Smoke-test partial-evidence lookup and scan-timing metrics migrations
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/sql/discover-partial-evidence-smoke.sql
 
       - name: TypeScript validation
         run: npm run typecheck

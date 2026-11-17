@@ -157,3 +157,33 @@ describe('flies up at 80%', () => {
     expect(evidence.identity(4)!.reliable).toBe(true);
   });
 });
+
+describe('reads of a partly hidden label are clues, not proof (17 Nov 2026)', () => {
+  const taylor = (confidence: number, partial: boolean, product = '') => ({ brand: 'Taylor', product, confidence, state: 'reported', match: null, partial });
+
+  it('never confirms a name from partial reads alone, however many agree', () => {
+    const evidence = new TrackEvidence();
+    // The canister behind the Knob Creek 21 read as plain "Taylor" (the rest of its label was hidden).
+    for (let i = 0; i < 5; i++) evidence.observeIdentity(-2, taylor(0.9, true), 'label:' + i);
+    const identity = evidence.identity(-2)!;
+    expect(identity.reliable).toBe(false);
+    expect(identity.agreeingReads).toBe(5);
+  });
+
+  it('confirms once a read of the whole label (or the targeted check) agrees, and shows that read', () => {
+    const evidence = new TrackEvidence();
+    evidence.observeIdentity(-2, taylor(0.85, true, 'Kentucky Straight Bourbon'), 'label:1');
+    evidence.observeIdentity(-2, { brand: 'Colonel E.H. Taylor', product: 'Cured Oak', confidence: 0.85, state: 'reported', match: null }, 'check:2');
+    const identity = evidence.identity(-2)!;
+    expect(identity.reliable).toBe(true);
+    expect(identity.read.brand).toBe('Colonel E.H. Taylor');
+    expect(identity.read.product).toBe('Cured Oak');
+  });
+
+  it('a partial read counts for less than a whole one', () => {
+    const whole = new TrackEvidence(), part = new TrackEvidence();
+    whole.observeIdentity(-1, taylor(0.7, false), 'a');
+    part.observeIdentity(-1, taylor(0.7, true), 'a');
+    expect(part.identity(-1)!.confidence).toBeLessThan(whole.identity(-1)!.confidence);
+  });
+});

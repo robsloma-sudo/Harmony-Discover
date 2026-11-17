@@ -20,6 +20,8 @@ import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
 import VenueCheckinPrompt from '../src/home-panels/VenueCheckinPrompt';
 import { useVenueCheckin } from '../src/services/useVenueCheckin';
+import { fetchVenueFeed } from '../src/services/discoverVenueApi';
+import { sceneFromVenueFeed, type PriorName } from '../src/live/partialEvidence';
 import JourneyPlayerOverlay, { type JourneyScanItem } from '../src/home-panels/JourneyPlayerOverlay';
 import { MartyPanel } from '../src/home-panels/MartyPanel';
 import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
@@ -172,6 +174,16 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     void venueCheckin.afterScan('live_scan');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveBottles.length > 0]);
+  // While checked in: the bottles seen at this venue and the items on its scanned menus tip close calls on
+  // partly hidden labels ("Probably …" only; nothing is saved from them).
+  const [sceneNames, setSceneNames] = useState<PriorName[]>([]);
+  const checkedInVenueRef = venueCheckin.active?.venueRef ?? null;
+  useEffect(() => {
+    if (!checkedInVenueRef) { setSceneNames([]); return; }
+    let live = true;
+    fetchVenueFeed(checkedInVenueRef).then(feed => { if (live) setSceneNames(sceneFromVenueFeed(feed)); }).catch(() => { if (live) setSceneNames([]); });
+    return () => { live = false; };
+  }, [checkedInVenueRef]);
   const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
   const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
   const closeProfile = () => {
@@ -348,6 +360,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           quickGuess={quickGuess}
+          sceneNames={sceneNames}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => {
             const tracking = event.nativeEvent;
@@ -447,8 +460,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const provisional = !bottle ? tracked.provisional : undefined;
             const readName = (read?: BottleRead) => read ? displayName(read.match?.brand || read.brand, read.match?.product || read.product) : '';
             const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
-            // The phone's instant guess from the biggest label letters, until the cloud read names the bottle.
-            const guess = !bottle && !identifying && tracked.probable ? tracked.probable : undefined;
+            // "Probably …" until the bottle is confirmed: the phone's quick guess, or the leading name from a
+            // partly hidden label's clues (the camera surface decides when there is one).
+            const guess = !bottle && tracked.probable ? tracked.probable : undefined;
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,
