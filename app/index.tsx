@@ -61,7 +61,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
   // Furthest step (1-4) each box has reached; boxes never step backwards (forgotten when the box goes).
   const stageMemoryRef = useRef(new Map<number, StageMemory>());
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;probable?:string;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -415,6 +415,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const provisional = !bottle ? tracked.provisional : undefined;
             const readName = (read?: BottleRead) => read ? displayName(read.match?.brand || read.brand, read.match?.product || read.product) : '';
             const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
+            // The phone's instant guess from the biggest label letters, until the cloud read names the bottle.
+            const guess = !bottle && !identifying && tracked.probable ? tracked.probable : undefined;
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,
@@ -451,7 +453,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <View style={[s.liveDetectionBox, boxStyle]}>
                   {/* What the scanner is doing with this bottle right now, with its progress. */}
-                  <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
+                  <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} guess={guess} boxWidth={boxPx} />
                 </View>
               </View>
             );

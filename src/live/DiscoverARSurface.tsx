@@ -12,6 +12,9 @@ import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker, isSameBottle, type LocalBottleCandidate } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
+import { LabelTextReader, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
+import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, probableFromFragments, sameBrand } from './letterGuess';
+import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { hasBottleIdentityConflict, isConfirmedWebBottleTrack, mergeBottleRead } from './webTrackPolicy';
@@ -287,6 +290,79 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
     const autoSaveTimer = window.setInterval(() => { void flushAutoSave(); }, 2_500);
+    // Instant "Probably …" (17 Nov 2026): the phone reads the biggest words on a label crop and the letter
+    // catalogue turns them into a guess, shown until the cloud read names the bottle. A guess is never saved
+    // and never counts as evidence. Skipped after an out-of-memory crash, or with ?ocr=off.
+    const textReader = !scannerMode.lite && textReaderEnabled() ? new LabelTextReader() : null;
+    const probableByTrack = new Map<number, { brand: string; at: number }>();
+    // How fast each bottle was named (no photos): one row per bottle per scan session.
+    type TimingDraft = { startedAt: number; labelPx: number; ocrMs?: number; textAt?: number; guessAt?: number; guess?: string; words?: string[] };
+    const timingByTrack = new Map<number, TimingDraft>();
+    const loggedTimingTracks = new Set<number>();
+    let timingQueue: ScanTimingRow[] = [];
+    const deviceName = (() => { try { return (navigator.userAgent.match(/\(([^;)]+)/)?.[1] ?? 'web').slice(0, 60); } catch { return 'web'; } })();
+    const finishTiming = (trackId: number, read: { brand?: string; product?: string } | null) => {
+      const draft = timingByTrack.get(trackId);
+      if (!draft || loggedTimingTracks.has(trackId)) return;
+      timingByTrack.delete(trackId);
+      loggedTimingTracks.add(trackId);
+      const confirmedBrand = read?.brand || '';
+      const guessFirst = !!draft.guessAt && (!confirmedBrand || !!draft.guess && sameBrand(draft.guess, confirmedBrand));
+      timingQueue.push({
+        scan_session_id: scanSessionId, track_id: String(trackId),
+        named_by: guessFirst ? 'letters' : confirmedBrand ? 'ai_label' : 'none',
+        ms_to_text: draft.textAt ? draft.textAt - draft.startedAt : null,
+        ms_to_name: draft.guessAt ? draft.guessAt - draft.startedAt : null,
+        ms_to_confirm: confirmedBrand ? Date.now() - draft.startedAt : null,
+        brand: confirmedBrand || null, product: read?.product || null,
+        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'scanner-ocr-1',
+        guess_brand: draft.guess ?? null, guess_agreed: draft.guess && confirmedBrand ? sameBrand(draft.guess, confirmedBrand) : null,
+        ocr_ms: draft.ocrMs ?? null, ocr_words: draft.words ?? [],
+      });
+    };
+    const flushTimings = () => {
+      // Bottles never named within 20 s are recorded as unnamed.
+      const now = Date.now();
+      for (const [trackId, draft] of timingByTrack) if (now - draft.startedAt > 20_000) finishTiming(trackId, null);
+      if (!timingQueue.length || !callbacksRef.current.recognitionEnabled) return;
+      const batch = timingQueue.slice(0, 50);
+      timingQueue = timingQueue.slice(50);
+      void logScanTimings(batch).catch(() => { /* timing records are best effort */ });
+    };
+    const timingTimer = window.setInterval(flushTimings, 15_000);
+    const guessFromWords = async (rawWords: string[], cutAtEdge: boolean): Promise<string | null> => {
+      const words = brandWords(rawWords).slice(0, 4);
+      const pieces = fragmentWords(rawWords);
+      // Whole words and part-words are looked up together (round bottles hide the letters at their edges).
+      const [letters, fragments] = await Promise.all([
+        words.length ? letterLookup(words, 5) : Promise.resolve([]),
+        pieces.length ? fragmentLookup(pieces, 5) : Promise.resolve([]),
+      ]);
+      const wholeBrand = probableBrand(letters, words);
+      const partBrand = probableFromFragments(fragments);
+      const labelsOf = (brand: string | null, rows: Array<{ brand: string; labels: number }>) =>
+        brand ? { brand, labels: rows.find(row => row.brand === brand)?.labels ?? 0 } : null;
+      return chooseGuess(labelsOf(wholeBrand, letters), labelsOf(partBrand, fragments), cutAtEdge);
+    };
+    const readTextForGuess = (trackId: number, image: ImageData, cylinder: Cylinder | null, generation: number) => {
+      if (!textReader) return;
+      void textReader.read(image, cylinder).then(async read => {
+        if (!read || disposed || generation !== recognitionGeneration) return;
+        const draft = timingByTrack.get(trackId);
+        if (draft) { draft.ocrMs = Math.round(read.totalMs); draft.textAt = Date.now(); draft.words = read.words.map(word => word.text).slice(0, 6); }
+        const words = biggestWords(read.words, 4);
+        if (!words.length) return;
+        const biggest = read.words.slice().sort((a, b) => b.height - a.height).slice(0, 2);
+        const brand = await guessFromWords(words, biggest.some(word => !!word.edge));
+        if (!brand || disposed || generation !== recognitionGeneration) return;
+        // The cloud read got there first, or the name is already confirmed: nothing to hint.
+        if (labelReadsByTrack.get(trackId)?.brand || evidence.identity(trackId)) return;
+        probableByTrack.set(trackId, { brand, at: Date.now() });
+        const timing = timingByTrack.get(trackId);
+        if (timing && !timing.guessAt) { timing.guessAt = Date.now(); timing.guess = brand; }
+        publishVisibleCandidates();
+      }).catch(() => { /* the cloud read carries on */ });
+    };
     const labelReadToBottle = (read: LabelBatchRead): BottleRead => ({
       box: { x0: 0, y0: 0, x1: 0, y1: 0 }, label_box: null, edgePaths: [], words: read.words,
       brand: read.brand, product: read.product, category: read.category,
@@ -336,6 +412,9 @@ function WebLiveCamera(props: NativeProps) {
         lastLabelReadAt.clear();
         evidence.clear();
         lastHitsByLocalTrack.clear();
+        probableByTrack.clear();
+        timingByTrack.clear();
+        loggedTimingTracks.clear();
         resetAutoSave();
         reverifyTracks.clear();
         nextWebTrackId = 1;
@@ -378,6 +457,8 @@ function WebLiveCamera(props: NativeProps) {
         detectorProvider = provider as { backend?: string; gpuTrialResult?: string };
         const backend = detectorProvider.backend ?? 'main-thread';
         if (pageVisible) markScannerRunning(backend);
+        // The text reader loads after the bottle detector, so the first boxes are never slowed down.
+        textReader?.warmUp();
         segmentationRunner = new SegmentationRunner(provider, {
           // Run as often as the device allows: the worker keeps the camera view
           // smooth, and camera motion moves late results to the current view,
@@ -626,7 +707,9 @@ function WebLiveCamera(props: NativeProps) {
         const stage = readAt !== undefined ? { name: 'reading' as const, since: readAt }
           : identity ? { name: 'identifying' as const }
           : small !== undefined ? { name: 'zoom' as const, value: small } : { name: 'scanning' as const };
-        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined, stage };
+        // "Probably …" only until the cloud has read something for this bottle.
+        const probable = identity ? undefined : probableByTrack.get(candidate.trackId)?.brand;
+        return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined, probable, stage };
       };
       const cloudCandidates = webTracks
         // A bottle whose name is already confirmed shows at once; it does not wait for a second whole-picture read.
@@ -656,8 +739,9 @@ function WebLiveCamera(props: NativeProps) {
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
-        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; stage?: { name: string; since?: number; value?: number } };
+        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; probable?: string; stage?: { name: string; since?: number; value?: number } };
         return [
+          shown.probable ?? '',
           shown.saved ? 'S' : '', shown.stage ? shown.stage.name + (shown.stage.since ?? '') + (shown.stage.value !== undefined ? Math.round(shown.stage.value * 100) : '') : '',
           Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
           candidate.trackId,
@@ -884,7 +968,7 @@ function WebLiveCamera(props: NativeProps) {
       ];
       const eligible = selectLabelBatchCandidates(candidates, lastLabelReadAt, now, 8, 6_000);
       const crops: Array<{ trackId: number; image: string }> = [];
-      const planned: Array<{ trackId: number; crop: NonNullable<ReturnType<typeof calculateLabelCrop>>; samples: number; best: HTMLCanvasElement | null; bestSharp: number }> = [];
+      const planned: Array<{ trackId: number; crop: NonNullable<ReturnType<typeof calculateLabelCrop>>; samples: number; best: HTMLCanvasElement | null; bestSharp: number; bottle: { x: number; width: number } }> = [];
       for (const candidate of eligible) {
         if (planned.length >= 8) break;
         const capturedBottle = candidate.bottle as { label_box?: { x0: number; y0: number; x1: number; y1: number } | null; box?: { x0: number; y0: number; x1: number; y1: number } } | undefined;
@@ -908,7 +992,7 @@ function WebLiveCamera(props: NativeProps) {
         const longEdge = Math.max(crop.sw, crop.sh), shortEdge = Math.min(crop.sw, crop.sh);
         if (!isReadableLabel(longEdge, shortEdge)) { tooSmall.set(candidate.trackId, zoomReadiness(longEdge, shortEdge)); continue; }
         tooSmall.delete(candidate.trackId);
-        planned.push({ trackId: candidate.trackId, crop, samples: samplesForLabel(longEdge, zoomRef.current), best: null, bestSharp: -1 });
+        planned.push({ trackId: candidate.trackId, crop, samples: samplesForLabel(longEdge, zoomRef.current), best: null, bestSharp: -1, bottle: { x: candidate.x, width: candidate.width } });
       }
       // Far labels: look at several frames and keep the sharpest (more frames the smaller the label).
       const maxSamples = planned.reduce((n, plan) => Math.max(n, plan.samples), 0);
@@ -931,8 +1015,23 @@ function WebLiveCamera(props: NativeProps) {
           else releaseCanvas(scratch);
         }
       }
+      // The phone's own text reader looks at up to two bottles that have no name or guess yet.
+      let phoneReads = 0;
       for (const plan of planned) {
         if (!plan.best) continue;
+        if (!timingByTrack.has(plan.trackId) && !loggedTimingTracks.has(plan.trackId)) {
+          timingByTrack.set(plan.trackId, { startedAt: now, labelPx: Math.round(Math.max(plan.crop.sw, plan.crop.sh)) });
+        }
+        if (textReader && phoneReads < 2 && !probableByTrack.has(plan.trackId) && !labelReadsByTrack.get(plan.trackId)?.brand) {
+          const context = plan.best.getContext('2d');
+          if (context && textReader.available) {
+            try {
+              const image = context.getImageData(0, 0, plan.best.width, plan.best.height);
+              readTextForGuess(plan.trackId, image, cylinderForCrop(plan.bottle, plan.crop, frameCanvas.width), generation);
+              phoneReads += 1;
+            } catch { /* canvas unreadable: the cloud read carries on */ }
+          }
+        }
         // Best quality that fits this crop's share of the server's batch limit.
         const budget = Math.min(99_000, Math.max(38_000, Math.floor(340_000 / Math.max(1, eligible.length))));
         let image = '';
@@ -959,6 +1058,7 @@ function WebLiveCamera(props: NativeProps) {
           if (read.tier === 'escalate' && !read.brand) continue;
           labelReadsByTrack.set(read.trackId, read);
           reverifyTracks.delete(read.trackId);
+          if (read.brand) { probableByTrack.delete(read.trackId); finishTiming(read.trackId, read); }
           evidence.observeIdentity(read.trackId, labelReadToBottle(read), 'label:' + read.tier + ':' + readAt + ':' + read.trackId);
           const cloudTrack = webTracks.find(track => track.id === read.trackId);
           if (cloudTrack) {
@@ -1370,8 +1470,13 @@ function WebLiveCamera(props: NativeProps) {
         liquidGuard.clear();
       evidence.clear();
       lastHitsByLocalTrack.clear();
+      flushTimings();
       resetAutoSave();
       window.clearInterval(autoSaveTimer);
+      window.clearInterval(timingTimer);
+      probableByTrack.clear();
+      timingByTrack.clear();
+      textReader?.dispose();
       reverifyTracks.clear();
       releaseCanvas(labelSourceCanvas); releaseCanvas(labelCropCanvas); releaseCanvas(frameReadCanvas);
       labelSourceCanvas = labelCropCanvas = frameReadCanvas = null;

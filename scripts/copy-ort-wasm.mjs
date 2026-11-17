@@ -20,6 +20,8 @@ const loaderSource = path.resolve('scripts/ort-loader.js');
 if (!fs.existsSync(loaderSource)) throw new Error('Standalone ONNX Runtime browser loader is missing.');
 const workerSource = path.resolve('scripts/dfine-worker.mjs');
 if (!fs.existsSync(workerSource)) throw new Error('Bottle detector worker is missing.');
+const ocrWorkerSource = path.resolve('scripts/ocr-worker.mjs');
+if (!fs.existsSync(ocrWorkerSource)) throw new Error('Label text reader worker is missing.');
 
 fs.mkdirSync(destination, { recursive: true });
 for (const file of required) {
@@ -27,5 +29,6 @@ for (const file of required) {
 }
 fs.copyFileSync(loaderSource, path.join(destination, 'ort-loader.js'));
 fs.copyFileSync(workerSource, path.join(destination, 'dfine-worker.mjs'));
+fs.copyFileSync(ocrWorkerSource, path.join(destination, 'ocr-worker.mjs'));
 
-console.log('Copied ONNX Runtime Web assets, standalone loader and detector worker to public/ort.');
+console.log('Copied ONNX Runtime Web assets, standalone loader, detector worker and label text reader to public/ort.');
