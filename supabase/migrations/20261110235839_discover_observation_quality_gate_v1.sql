@@ -1,6 +1,8 @@
+-- Replaced 2026-11-17 with the exact SQL recorded in the Discover DEV migration history.
+-- The earlier repo copy had been edited after it was applied (formatting, and in places statement order or checks).
 -- Reconcile the canonical Discover observation quality gate.
--- Venue confirmation is a consumer-confirmed venue name, not a resolved venue UUID.
--- Retain the existing 0.90 minimum OCR-confidence threshold.
+-- Venue confirmation is currently a consumer-confirmed venue name, not a resolved venue UUID.
+-- Keep the existing calibrated OCR threshold (0.90) and require a non-empty confirmed venue name.
 
 create or replace function public.discover_observation_qualifies(
   o public.menu_observations,
@@ -38,7 +40,8 @@ begin
   end if;
 
   if not exists (
-    select 1 from public.menu_observations o
+    select 1
+    from public.menu_observations o
     where o.id = p_observation
       and o.consumer_id = p_subject
       and o.status = 'ready_for_review'
@@ -54,7 +57,9 @@ begin
 
   insert into public.observation_contribution_grant_events(
     grant_id,observation_id,consumer_id,event_type,policy_version
-  ) values (v_grant,p_observation,p_subject,'granted',trim(p_policy_version));
+  ) values (
+    v_grant,p_observation,p_subject,'granted',trim(p_policy_version)
+  );
 
   return v_grant;
 end;
@@ -91,7 +96,8 @@ begin
       o.id, o.venue_name_read, o.venue_name_submitted, o.capture_source,
       o.captured_at, o.processing_notice_version, o.min_ocr_confidence,
       g.id as grant_id, g.policy_version,
-      (select count(*)::integer from public.observation_item_corrections x
+      (select count(*)::integer
+       from public.observation_item_corrections x
        where x.observation_id = o.id) as correction_count
     from public.menu_observations o
     join public.observation_contribution_grants g
@@ -101,12 +107,14 @@ begin
       and public.discover_observation_qualifies(o)
       and g.withdrawn_at is null
       and not exists (
-        select 1 from harmony_sync.staged_candidates s
+        select 1
+        from harmony_sync.staged_candidates s
         where s.source_system = 'harmony_discover'
           and s.source_table = 'menu_observations'
           and s.source_record_id = o.id
           and s.source_version = 1 + (
-            select count(*)::integer from public.observation_item_corrections x
+            select count(*)::integer
+            from public.observation_item_corrections x
             where x.observation_id = o.id
           )
           and s.entity_type = 'menu_observation'
@@ -122,18 +130,27 @@ begin
       'capture_source', v_obs.capture_source,
       'items', coalesce((
         select jsonb_agg(jsonb_build_object(
-          'source_item_id', i.id, 'page_index', i.page_index, 'position', i.position,
-          'section', i.section, 'name', i.name, 'description', i.description,
-          'price_text', i.price_text, 'beverage_category', i.beverage_category,
-          'listed_ingredients', i.listed_ingredients, 'evidence_state', i.evidence_state,
+          'source_item_id', i.id,
+          'page_index', i.page_index,
+          'position', i.position,
+          'section', i.section,
+          'name', i.name,
+          'description', i.description,
+          'price_text', i.price_text,
+          'beverage_category', i.beverage_category,
+          'listed_ingredients', i.listed_ingredients,
+          'evidence_state', i.evidence_state,
           'text_verified', i.text_verified,
           'latest_correction', (
-            select x.after_values from public.observation_item_corrections x
+            select x.after_values
+            from public.observation_item_corrections x
             where x.observation_id = i.observation_id and x.item_id = i.id
-            order by x.created_at desc, x.id desc limit 1
+            order by x.created_at desc, x.id desc
+            limit 1
           )
         ) order by i.page_index, i.position, i.id)
-        from public.observation_items i where i.observation_id = v_obs.id
+        from public.observation_items i
+        where i.observation_id = v_obs.id
       ), '[]'::jsonb)
     ) into v_payload;
 
@@ -153,7 +170,10 @@ begin
       'correction_count', v_obs.correction_count
     );
 
-    v_hash := encode(extensions.digest(convert_to(v_payload::text, 'UTF8'), 'sha256'), 'hex');
+    v_hash := encode(
+      extensions.digest(convert_to(v_payload::text, 'UTF8'), 'sha256'),
+      'hex'
+    );
     v_key := 'harmony_discover:menu_observations:' || v_obs.id::text || ':' || v_version::text;
 
     insert into harmony_sync.staged_candidates (
@@ -182,12 +202,16 @@ begin
         'Explicit observation-specific contribution grant; consumer-confirmed venue; complete, high-confidence, non-disputed observation.',
         v_hash, '0.1.0'
       );
+
       insert into harmony_sync.sync_ledger (staged_candidate_id, status)
       values (v_candidate_id, 'blocked');
+
       v_count := v_count + 1;
     end if;
+
     v_candidate_id := null;
   end loop;
+
   return v_count;
 end;
 $$;

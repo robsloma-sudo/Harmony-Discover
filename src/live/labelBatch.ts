@@ -57,3 +57,32 @@ export function selectSecondLookCrops<T extends { trackId: number }>(
     })
     .slice(0, Math.max(0, Math.min(4, Math.floor(maximum))));
 }
+
+/**
+ * A read that suggests the box is not around a drink at all: no name, at most one word, and the reader
+ * said there is no label (or no drink). A drink whose label is blurry, cut off or turned away does not count.
+ */
+export function looksLikeNoDrink(read: { brand?: string; words?: string[]; unreadableReason?: string }): boolean {
+  if (read.brand) return false;
+  if ((read.words?.length ?? 0) > 1) return false;
+  return read.unreadableReason === 'no_label' || read.unreadableReason === 'not_a_drink';
+}
+
+/** How long a box whose label could not be seen twice waits before it is read again (ms). */
+export const NO_LABEL_REST_MS = 20_000;
+
+/**
+ * Two "no label, no words" reads in a row pause reading that box for a while; the box stays on screen.
+ * (17 Nov 2026: hiding such boxes for good dropped real bottles: E.H. Taylor canisters standing behind
+ * a Knob Creek 21 showed no label until the phone moved.) A read with a name clears the count.
+ */
+export function noLabelStep(
+  votes: number,
+  read: { brand?: string; words?: string[]; unreadableReason?: string },
+  now: number,
+): { votes: number; restUntil: number | null } {
+  if (read.brand) return { votes: 0, restUntil: null };
+  if (!looksLikeNoDrink(read)) return { votes, restUntil: null };
+  const next = votes + 1;
+  return next >= 2 ? { votes: 0, restUntil: now + NO_LABEL_REST_MS } : { votes: next, restUntil: null };
+}

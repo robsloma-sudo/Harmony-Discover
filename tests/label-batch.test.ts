@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { selectLabelBatchCandidates, type LabelBatchCandidate } from '../src/live/labelBatch';
+import { looksLikeNoDrink } from '../src/live/labelBatch';
 
 const candidate = (trackId: number, confidence = 0.8, bottle?: LabelBatchCandidate['bottle']): LabelBatchCandidate => ({
   trackId, x: 0.1, y: 0.1, width: 0.2, height: 0.5, confidence, bottle,
@@ -65,5 +66,18 @@ describe('selectSecondLookCrops (Haiku first, Sonnet second look)', () => {
     const last = new Map([[2, 5_000]]);
     expect(selectSecondLookCrops(crops.slice(1, 3), reads, last, 10_000).map(c => c.trackId)).toEqual([3]);
     expect(selectSecondLookCrops(crops.slice(1, 3), reads, last, 13_000).map(c => c.trackId)).toEqual([2, 3]);
+  });
+});
+
+describe('boxes around things that are not drinks', () => {
+  it('a read with no label and no words looks like no drink', () => {
+    expect(looksLikeNoDrink({ brand: '', words: [], unreadableReason: 'no_label' })).toBe(true);
+    expect(looksLikeNoDrink({ brand: '', words: [], unreadableReason: 'not_a_drink' })).toBe(true);
+  });
+  it('an unreadable drink is kept', () => {
+    expect(looksLikeNoDrink({ brand: '', words: [], unreadableReason: 'blurry' })).toBe(false);
+    expect(looksLikeNoDrink({ brand: '', words: [], unreadableReason: 'turned_away' })).toBe(false);
+    expect(looksLikeNoDrink({ brand: '', words: ['RESERVE', 'KENTUCKY'], unreadableReason: 'no_label' })).toBe(false);
+    expect(looksLikeNoDrink({ brand: 'Jameson', words: [], unreadableReason: 'no_label' })).toBe(false);
   });
 });

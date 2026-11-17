@@ -6,6 +6,7 @@
 //   RECOGNIZING  the label is being read; % grows with the time a read usually takes (~1-3 s)
 //   IDENTIFYING  a name was read and is being confirmed; % = how sure the name is
 //   RESEARCHING  a new bottle is being looked up on the web; % grows with the time research usually takes (~20-40 s)
+// While the cloud read is on its way, the phone's own quick guess may show instead: "2/4 PROBABLY JAMESON…".
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { LABEL, STAGE_STEP, TYPICAL_MS, stagePercent, type BoxStageName } from './boxStageProgress';
@@ -18,11 +19,13 @@ type Props = {
   since?: number;
   /** Shown on a found bottle. */
   name?: string;
+  /** The phone's instant guess ("Probably Jameson"), shown until the cloud read names the bottle. */
+  guess?: string;
   /** Box width in screen points (text shrinks to fit). */
   boxWidth: number;
 };
 
-export function BoxStage({ stage, value, since, name, boxWidth }: Props) {
+export function BoxStage({ stage, value, since, name, guess, boxWidth }: Props) {
   const timed = !!TYPICAL_MS[stage] && !!since;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -36,7 +39,9 @@ export function BoxStage({ stage, value, since, name, boxWidth }: Props) {
     Animated.timing(fill, { toValue: pct, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
   }, [pct, fill]);
   // Steps 1-4 are numbered so the order is clear: "2/4 RECOGNIZING 64%".
-  const text = stage === 'found' ? '✓ ' + (name || '') : STAGE_STEP[stage] + '/4 ' + LABEL[stage] + ' ' + pct + '%';
+  const text = stage === 'found' ? '✓ ' + (name || '')
+    : guess ? STAGE_STEP[stage] + '/4 PROBABLY ' + guess.toUpperCase() + '…'
+    : STAGE_STEP[stage] + '/4 ' + LABEL[stage] + ' ' + pct + '%';
   // One line that always fits inside the box: the font shrinks with the box width.
   // Bold capitals are about 0.8 em wide, plus 0.3 pt letter spacing; 16 pt go to the tag's padding and the box margins.
   const chars = Math.max(1, text.length);

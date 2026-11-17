@@ -28,8 +28,25 @@ export type WorkerFactory = () => WorkerLike;
 
 const defaultWorkerFactory: WorkerFactory = () => new Worker(DFINE_WORKER_URL, { type: 'module', name: 'discover-bottle-detector' }) as unknown as WorkerLike;
 
-/** Reads an optional override (?detector=wasm|webgpu, or localStorage 'discover.detector'). */
-export function detectorBackendPreference(): DetectorBackendPreference {
+/**
+ * iPhone and iPad (every browser there runs on Apple's WebKit). Rob's side-by-side test, 17 Nov 2026: on an
+ * iPhone the graphics-chip detector made boxes jitter and starved label reading (0 bottles named vs 6 in the
+ * same 25 s with the processor detector), so Apple phones and tablets use the processor by default.
+ */
+export function isAppleMobileDevice(
+  userAgent = typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '') : '',
+  maxTouchPoints = typeof navigator !== 'undefined' ? Number((navigator as Navigator).maxTouchPoints ?? 0) : 0,
+): boolean {
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return true;
+  // iPadOS asks for desktop sites and reports itself as a Mac; a touch screen gives it away.
+  return /Macintosh/i.test(userAgent) && maxTouchPoints > 1;
+}
+
+/**
+ * Reads an optional override (?detector=wasm|webgpu, or localStorage 'discover.detector').
+ * Without one: processor on iPhone/iPad, otherwise auto (graphics chip when it passes its check).
+ */
+export function detectorBackendPreference(appleMobile = isAppleMobileDevice()): DetectorBackendPreference {
   const valid = (value: unknown): value is DetectorBackendPreference => value === 'wasm' || value === 'webgpu' || value === 'auto';
   try {
     const fromUrl = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('detector') : null;
@@ -39,7 +56,7 @@ export function detectorBackendPreference(): DetectorBackendPreference {
     const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('discover.detector') : null;
     if (valid(stored)) return stored;
   } catch { /* storage blocked */ }
-  return 'auto';
+  return appleMobile ? 'wasm' : 'auto';
 }
 
 const hasWebGpu = () => typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
