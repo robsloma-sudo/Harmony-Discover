@@ -1,0 +1,7 @@
+Text reader models used by Harmony Discover's on-phone label reading:
+  ppocr_v3_det.onnx      PP-OCRv3 mobile text detection
+  ppocr_v5_en_rec.onnx   PP-OCRv5 mobile English text recognition
+  ppocr_v5_en_dict.txt   its character list
+Source: PaddlePaddle PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR), ONNX conversion
+published at https://huggingface.co/monkt/paddleocr-onnx (detection/v3, languages/english).
+Licence: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
