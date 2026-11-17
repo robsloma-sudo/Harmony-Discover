@@ -28,6 +28,8 @@ export type TrackIdentity<T extends IdentityRead> = {
   confidence: number;
   reliable: boolean;
   agreeingReads: number;
+  /** The person scanning picked this name (it stands until they pick another). */
+  confirmed?: boolean;
 };
 
 type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number; fullReads: number; matched?: boolean };
@@ -38,7 +40,7 @@ type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best:
  * peak: highest confidence shown for the current leading name, so the number
  * on screen only climbs while reads agree.
  */
-type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<string>; locked?: string; peak: number; peakKey?: string };
+type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<string>; locked?: string; peak: number; peakKey?: string; userConfirmed?: boolean };
 
 /** One clear read at 80% or more confirms a name straight away (Rob: fly up as soon as it hits 80%). */
 export const CONFIDENT_SINGLE_READ = 0.8;
@@ -199,7 +201,18 @@ export class TrackEvidence<T extends IdentityRead> {
     // The number shown never drops while the same name leads.
     if (entry.peakKey !== topKey) { entry.peakKey = topKey; entry.peak = 0; }
     entry.peak = Math.max(entry.peak, confidence);
-    return { read: top!.read, confidence: entry.peak, reliable, agreeingReads: top!.reads };
+    return { read: top!.read, confidence: entry.peak, reliable, agreeingReads: top!.reads, ...(entry.userConfirmed && entry.locked === topKey ? { confirmed: true } : {}) };
+  }
+
+  /** The person scanning said which bottle this is: that name replaces every read and stays. */
+  confirm(trackId: number, read: T): void {
+    const entry = this.entry(trackId);
+    const key = 'user:' + (identityKey(read) ?? 'unknown');
+    entry.votes = new Map([[key, { read, weight: 100, reads: 1, evidence: 1, best: 1, fullReads: 1, matched: true }]]);
+    entry.locked = key;
+    entry.peak = 1;
+    entry.peakKey = key;
+    entry.userConfirmed = true;
   }
 
   /** Evidence follows a bottle whose track merged into another. */
@@ -209,6 +222,7 @@ export class TrackEvidence<T extends IdentityRead> {
     const target = this.entry(to);
     target.detection = Math.max(target.detection, source.detection);
     if (!target.locked && source.locked) target.locked = source.locked;
+    if (source.userConfirmed && !target.userConfirmed) { target.userConfirmed = true; target.locked = source.locked; }
     target.peak = Math.max(target.peak, source.peak);
     if (!target.peakKey) target.peakKey = source.peakKey;
     for (const [key, vote] of source.votes) {

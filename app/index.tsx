@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView, Animated, Easing } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView, Animated, Easing, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
-import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
+import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose, type UserChoice } from '../src/live/DiscoverARSurface';
 import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
 import { emptyCandidatesAction } from '../src/live/worldAnchorFramePolicy';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
@@ -78,7 +78,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
   // Furthest step (1-4) each box has reached; boxes never step backwards (forgotten when the box goes).
   const stageMemoryRef = useRef(new Map<number, StageMemory>());
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;probable?:string;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;probable?:string;saved?:boolean;ask?:{choices:Array<{brand:string;product:string}>};stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found'|'confirm';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -197,6 +197,16 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   // While checked in: the bottles seen at this venue and the items on its scanned menus tip close calls on
   // partly hidden labels ("Probably …" only; nothing is saved from them).
   const [sceneNames, setSceneNames] = useState<PriorName[]>([]);
+  // "Which one is it?": the bottle the person tapped, and what they picked (sent to the camera surface).
+  const [userChoices, setUserChoices] = useState<UserChoice[]>([]);
+  const [askingTrack, setAskingTrack] = useState<{ trackId: number; seen: string; choices: Array<{ brand: string; product: string }> } | null>(null);
+  const [typedName, setTypedName] = useState('');
+  const answerAsk = (choice: { brand?: string; product?: string; none?: boolean }) => {
+    if (!askingTrack) return;
+    setUserChoices(previous => [...previous.slice(-40), { trackId: askingTrack.trackId, at: Date.now(), ...choice }]);
+    setAskingTrack(null);
+    setTypedName('');
+  };
   const checkedInVenueRef = venueCheckin.active?.venueRef ?? null;
   useEffect(() => {
     if (!checkedInVenueRef) { setSceneNames([]); return; }
@@ -381,6 +391,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           captureRequestId={captureRequestId}
           quickGuess={quickGuess}
           sceneNames={sceneNames}
+          userChoices={userChoices}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => {
             const tracking = event.nativeEvent;
@@ -463,7 +474,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
       {permission.granted && !scanPhotos && shownCandidates.length > 0 && (
-        <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}>
+        <View pointerEvents="box-none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}>
         <View pointerEvents="box-none" style={[s.liveDetectionLayer, { top: -cameraViewTop, height: screenHeight, bottom: undefined }]}>
           {shownCandidates
             // Draw big boxes first so a smaller (nearer or front) bottle's box sits on top and can be tapped.
@@ -504,6 +515,19 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const staged = forwardOnlyStage(stageMemoryRef.current.get(tracked.trackId), current, Date.now());
             stageMemoryRef.current.set(tracked.trackId, staged.memory);
             const shownStage = staged.shown;
+            if (tracked.ask) {
+              // Known maker, not sure which bottle: amber box the person taps to say which one it is.
+              const seen = readName(provisional);
+              return (
+                <View key={tracked.trackId} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={'Which bottle is this? ' + seen}
+                    onPress={() => setAskingTrack({ trackId: tracked.trackId, seen, choices: tracked.ask!.choices })}
+                    style={[s.liveDetectionBox, s.liveDetectionBoxAsk, boxStyle, BOX_GLIDE]}>
+                    <View pointerEvents="none" style={s.askTag}><Text numberOfLines={1} style={s.askTagText}>{'WHICH ONE? TAP · ' + (seen.split(' ').slice(0, 3).join(' ') || '').toUpperCase()}</Text></View>
+                  </Pressable>
+                </View>
+              );
+            }
             // Three looks (Rob, 17 Nov 2026): thin white = still looking; amber dashed = "Probably …";
             // solid green with ✓ = done (named and saved). Boxes glide to their new place instead of jumping.
             if (bottle) {
@@ -533,12 +557,33 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       {permission.granted && !scanPhotos && <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}><View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: -cameraViewTop, height: screenHeight }}><WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} /></View></View>}
       {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} unseenKeys={unseenFoundKeys} selectedKey={selectedFoundKey} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); closeProfile(); }} />}
       {permission.granted && !scanPhotos && (foundItems.length > 0 || shownCandidates.length > 0) && (() => {
-        const working = shownCandidates.filter(track => !isDone(track)).length;
+        const asking = shownCandidates.filter(track => !!track.ask).length;
+        const working = shownCandidates.filter(track => !isDone(track) && !track.ask).length;
         return <View pointerEvents="none" style={[s.scanCount, { top: cameraViewTop + 4 }]}>
           <Text style={s.scanCountDone}>✓ {foundItems.length} DONE</Text>
+          {asking > 0 && <Text style={s.scanCountAsk}>  ·  {asking} TO CONFIRM</Text>}
           {working > 0 && <Text style={s.scanCountWorking}>  ·  {working} READING</Text>}
         </View>;
       })()}
+      {askingTrack && <>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => setAskingTrack(null)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 60, backgroundColor: 'rgba(0,0,0,0.45)' }} />
+        <View style={[s.askSheet, { bottom: Math.max(insets.bottom, 8) + 76 }]}>
+          <Text style={s.askTitle}>WHICH BOTTLE IS THIS?</Text>
+          {!!askingTrack.seen && <Text style={s.askSeen}>The label reads like: {askingTrack.seen}</Text>}
+          {askingTrack.choices.length === 0 && <Text style={s.askSeen}>Looking up choices…</Text>}
+          {askingTrack.choices.map((choice, index) => (
+            <Pressable key={index} accessibilityRole="button" onPress={() => answerAsk({ brand: choice.brand, product: choice.product })} style={s.askChoice}>
+              <Text style={s.askChoiceText}>{displayName(choice.brand, choice.product)}</Text>
+            </Pressable>
+          ))}
+          <View style={s.askTypeRow}>
+            <TextInput value={typedName} onChangeText={setTypedName} placeholder="Something else? Type the name" placeholderTextColor={C.muted} style={s.askInput} returnKeyType="done"
+              onSubmitEditing={() => typedName.trim() && answerAsk({ brand: typedName.trim(), product: '' })} />
+            <Pressable accessibilityRole="button" disabled={!typedName.trim()} onPress={() => answerAsk({ brand: typedName.trim(), product: '' })} style={[s.askOk, !typedName.trim() && { opacity: 0.4 }]}><Text style={s.askOkText}>OK</Text></Pressable>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => answerAsk({ none: true })} style={s.askSkip}><Text style={s.askSkipText}>Not sure / skip this bottle</Text></Pressable>
+        </View>
+      </>}
       {foundFlights.map(flight => <FoundFlightLabel key={flight.id} flight={flight} onDone={done => setFoundFlights(flights => flights.filter(f => f.id !== done.id))} />)}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
@@ -659,7 +704,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 const s = StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg},menuRow:{minHeight:48,flexDirection:'row',alignItems:'center',gap:11,paddingVertical:7,borderBottomWidth:1,borderBottomColor:'rgba(153,163,174,0.12)'},menuTitle:{color:C.ivory,fontSize:11,fontWeight:'800'},menuDesc:{color:C.muted,fontSize:9,marginTop:3},menuValue:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:1},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
  permissionFallback:{backgroundColor:'#090B0F',alignItems:'center',justifyContent:'center'},permissionCard:{position:'absolute',left:28,right:28,top:'35%',padding:22,borderRadius:18,backgroundColor:'rgba(9,11,14,0.92)',borderWidth:1,borderColor:C.line},permissionTitle:{color:C.ivory,fontSize:23,fontWeight:'700',marginTop:12},permissionBody:{color:C.muted,fontSize:13,lineHeight:20,marginTop:7},permissionButton:{backgroundColor:C.brass,padding:14,borderRadius:10,alignItems:'center',marginTop:18},permissionButtonText:{color:'#111',fontSize:11,fontWeight:'900',letterSpacing:1.5},
- viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveDetectionBoxLooking:{borderWidth:1,borderColor:'rgba(233,255,245,0.55)',backgroundColor:'transparent'},liveDetectionBoxGuess:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#FFC857',backgroundColor:'rgba(255,200,87,0.04)'},liveDetectionBoxNamed:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#77E5B5',backgroundColor:'transparent'},liveDetectionBoxDone:{borderWidth:2.5,borderColor:'#3EF0A0',backgroundColor:'rgba(62,240,160,0.07)'},scanCount:{position:'absolute',zIndex:6,alignSelf:'center',flexDirection:'row',paddingHorizontal:9,paddingVertical:3,borderRadius:10,backgroundColor:'rgba(5,15,16,0.78)'},scanCountDone:{color:'#3EF0A0',fontSize:9,fontWeight:'900',letterSpacing:0.8},scanCountWorking:{color:'rgba(233,255,245,0.75)',fontSize:9,fontWeight:'800',letterSpacing:0.8},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
+ viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveDetectionBoxLooking:{borderWidth:1,borderColor:'rgba(233,255,245,0.55)',backgroundColor:'transparent'},liveDetectionBoxGuess:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#FFC857',backgroundColor:'rgba(255,200,87,0.04)'},liveDetectionBoxNamed:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#77E5B5',backgroundColor:'transparent'},liveDetectionBoxAsk:{borderWidth:2,borderColor:'#FFB020',backgroundColor:'rgba(255,176,32,0.08)'},askTag:{position:'absolute',left:0,right:0,top:3,alignItems:'center'},askTagText:{color:'#FFD27A',fontSize:7,fontWeight:'900',letterSpacing:0.3,backgroundColor:'rgba(5,15,16,0.88)',paddingHorizontal:5,paddingVertical:1.5,borderRadius:4,overflow:'hidden'},scanCountAsk:{color:'#FFB020',fontSize:9,fontWeight:'900',letterSpacing:0.8},askSheet:{position:'absolute',zIndex:61,left:10,right:10,maxHeight:'70%',padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(255,176,32,0.7)'},askTitle:{color:'#FFD27A',fontSize:12,fontWeight:'900',letterSpacing:1.4,marginBottom:4},askSeen:{color:C.muted,fontSize:11,marginBottom:8},askChoice:{paddingVertical:11,paddingHorizontal:12,borderRadius:12,borderWidth:1,borderColor:'rgba(240,241,242,0.22)',marginBottom:7},askChoiceText:{color:C.ivory,fontSize:14,fontWeight:'800'},askTypeRow:{flexDirection:'row',alignItems:'center',gap:8,marginTop:2},askInput:{flex:1,color:C.ivory,fontSize:13,paddingVertical:9,paddingHorizontal:11,borderRadius:12,borderWidth:1,borderColor:'rgba(240,241,242,0.22)'},askOk:{paddingVertical:9,paddingHorizontal:14,borderRadius:12,backgroundColor:'#3EF0A0'},askOkText:{color:'#05100A',fontWeight:'900',fontSize:12},askSkip:{alignSelf:'center',marginTop:10,padding:6},askSkipText:{color:C.muted,fontSize:12,fontWeight:'700'},liveDetectionBoxDone:{borderWidth:2.5,borderColor:'#3EF0A0',backgroundColor:'rgba(62,240,160,0.07)'},scanCount:{position:'absolute',zIndex:6,alignSelf:'center',flexDirection:'row',paddingHorizontal:9,paddingVertical:3,borderRadius:10,backgroundColor:'rgba(5,15,16,0.78)'},scanCountDone:{color:'#3EF0A0',fontSize:9,fontWeight:'900',letterSpacing:0.8},scanCountWorking:{color:'rgba(233,255,245,0.75)',fontSize:9,fontWeight:'800',letterSpacing:0.8},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
  centerHint:{position:'absolute',left:26,right:26,justifyContent:'center',alignItems:'center'},centerHintText:{color:'rgba(240,241,242,0.68)',fontSize:9,letterSpacing:2.4,fontWeight:'700'},corner:{position:'absolute',width:25,height:25,borderColor:'rgba(198,163,106,0.8)'},tl:{top:0,left:0,borderTopWidth:1,borderLeftWidth:1},tr:{top:0,right:0,borderTopWidth:1,borderRightWidth:1},bl:{bottom:0,left:0,borderBottomWidth:1,borderLeftWidth:1},br:{bottom:0,right:0,borderBottomWidth:1,borderRightWidth:1},
  bottomArea:{position:'absolute',bottom:0,backgroundColor:'rgba(7,9,12,0.92)',borderTopWidth:1,borderColor:C.line,borderTopLeftRadius:20,borderTopRightRadius:20,paddingHorizontal:8},controls:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:4},utilityControl:{alignItems:'center',justifyContent:'center',gap:5,minWidth:42,paddingVertical:7},utilityLabel:{color:C.ivory,fontSize:7,fontWeight:'800',letterSpacing:0.7},centerControls:{flexDirection:'row',alignItems:'center',gap:8},primaryControl:{width:36,height:36,borderRadius:18,borderWidth:1,borderColor:C.line,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(20,24,30,0.9)'},primaryControlHalf:{width:30,height:30},primaryControlActive:{borderColor:C.brass},shutterOuter:{width:66,height:66,borderRadius:33,borderWidth:2,borderColor:C.ivory,alignItems:'center',justifyContent:'center'},shutterOuterCompact:{width:58,height:58},shutterInner:{width:52,height:52,borderRadius:26,backgroundColor:C.ivory},shutterInnerCompact:{width:44,height:44},shutterBusy:{opacity:0.55},shutterBusyText:{color:'#111',textAlign:'center',fontSize:20,fontWeight:'900',lineHeight:50}
 });

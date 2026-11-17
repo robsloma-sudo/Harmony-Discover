@@ -1,4 +1,5 @@
 import { ensureDiscoverSession } from './supabase';
+import { keepBackedMatch } from '../live/identityBacking';
 
 const base = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
@@ -154,7 +155,7 @@ export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'br
 export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fine_print' = 'standard'): Promise<LiveRead> {
   const result = await call({ action: 'frame', image: jpegBase64, focus });
   const menu = result.menu && typeof result.menu === 'object' ? result.menu as MenuGlimpse : { visible: false, title: '', items: [] };
-  const bottles = Array.isArray(result.bottles) ? result.bottles.map((b: Record<string, unknown>) => ({ ...b, researchSources: Array.isArray(b.research_sources) ? b.research_sources : [] })) as BottleRead[] : [];
+  const bottles = Array.isArray(result.bottles) ? result.bottles.map((b: Record<string, unknown>) => keepBackedMatch({ ...b, researchSources: Array.isArray(b.research_sources) ? b.research_sources : [] } as unknown as BottleRead)) : [];
   const d = result.diagnostics && typeof result.diagnostics === 'object' ? result.diagnostics : {};
   const rawLabel = result.label_read && typeof result.label_read === 'object' ? result.label_read as Record<string, unknown> : null;
   const labelRead: LabelRead | null = rawLabel ? { words: Array.isArray(rawLabel.words) ? rawLabel.words.map(String) : [], brand: String(rawLabel.brand || ''), product: String(rawLabel.product || ''), category: String(rawLabel.category || 'other'), proof: String(rawLabel.proof || ''), size: String(rawLabel.size || ''), origin: String(rawLabel.origin || ''), details: (rawLabel.details && typeof rawLabel.details === 'object' ? rawLabel.details : {}) as Record<string, string | string[]>, fieldConfidence: (rawLabel.fieldConfidence && typeof rawLabel.fieldConfidence === 'object' ? rawLabel.fieldConfidence : {}) as Record<string, number> } : null;
@@ -212,7 +213,7 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
     needsSecondLook: read.needs_second_look === true,
     tier: read.tier === 'escalate' ? 'escalate' : 'base',
     unreadableReason: typeof read.unreadable_reason === 'string' ? read.unreadable_reason : '',
-  })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
+  })).map((read: LabelBatchRead) => keepBackedMatch(read)).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
 }
 
 export type LabelCheck = {

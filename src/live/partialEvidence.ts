@@ -157,7 +157,7 @@ export function anchorsFor(pieces: Piece[]): string[] {
 // "Daniel's" / "Daniel", "Blanton's" / "Blanton": one maker.
 const stem = (word: string) => word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word;
 
-function familyWordsOf(brand: string): string[] {
+export function familyWordsOf(brand: string): string[] {
   let words = nameWords(brand);
   // "Jane Walker by Johnnie Walker": the maker is the part after "by".
   const by = words.lastIndexOf('by');

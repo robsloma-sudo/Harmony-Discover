@@ -18,6 +18,8 @@ import { NO_LABEL_REST_MS, noLabelStep } from './labelBatch';
 import { fragmentLookup, letterLookup, logScanTimings, partialLookup, type ScanTimingRow } from '../services/discoverLetterApi';
 import { anchorsFor, checkNames, guessLabel, nameWords, partialGuess, pieceFit, piecesFromWords, rankNames, type PartialGuess, type PriorName } from './partialEvidence';
 import { occlusionForAll, type Occlusion } from './occlusion';
+import { confirmChoices, type ConfirmChoice } from './confirmChoices';
+import { expressionShown } from './identityBacking';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { detectorBackendPreference } from './dfineWorkerProvider';
@@ -52,6 +54,8 @@ export type ARTrackingUpdate = {
   reason: string;
 };
 
+export type UserChoice = { trackId: number; at: number; brand?: string; product?: string; none?: boolean };
+
 export type ARViewEvent = { nativeEvent: { state?: string; reason?: string; message?: string } };
 
 export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
@@ -65,6 +69,8 @@ type NativeProps = ViewProps & {
   quickGuess?: boolean;
   /** What the scene already shows (the checked-in venue's bottles and menus): tips close calls on partly hidden labels. */
   sceneNames?: PriorName[];
+  /** What the person scanning picked for a bottle the scanner asked about ("Which one is it?"); none = not a bottle / skip. */
+  userChoices?: UserChoice[];
   captureRequestId?: number;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number; depthEstimate?: ARKitDepthFrame } }) => void;
@@ -139,8 +145,8 @@ function WebLiveCamera(props: NativeProps) {
   const [digitalZoom, setDigitalZoom] = useState(1);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
   const containerRef = useRef<any>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess, sceneNames: props.sceneNames });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess, sceneNames: props.sceneNames };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess, sceneNames: props.sceneNames, userChoices: props.userChoices });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess, sceneNames: props.sceneNames, userChoices: props.userChoices };
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -247,6 +253,11 @@ function WebLiveCamera(props: NativeProps) {
     let saveRetryAt = 0;
     // Names confirmed in this scan session: the scene that tips close calls on partly hidden labels.
     const sessionNames = new Map<string, PriorName>();
+    // "Which one is it?" (Rob, 17 Nov 2026): a bottle whose maker is known but not for certain which bottle it is
+    // is never put in the found strip or saved on its own; its box asks the person scanning, with these choices.
+    const choicesByTrack = new Map<number, { key: string; choices: ConfirmChoice[] }>();
+    const choicesBusy = new Set<number>();
+    const handledChoices = new Set<string>();
     // Brands saved in this session with a product name: a later brand-only read of the same bottle (a different
     // box on the same George T. Stagg) is not saved again as a second, vaguer bottle.
     const savedFullBrands = new Set<string>();
@@ -342,7 +353,7 @@ function WebLiveCamera(props: NativeProps) {
     const MAX_CHECKS_PER_BOTTLE = 2, CHECK_GAP_MS = 4_000, CROP_FRESH_MS = 6_000;
     const clearPartialEvidence = () => {
       occlusionByTrack.clear(); clueWordsByTrack.clear(); partialGuessByTrack.clear(); partialKeyByTrack.clear();
-      partialLookupBusy.clear(); lastCropByTrack.clear(); checksByTrack.clear(); partialReadsByTrack.clear();
+      partialLookupBusy.clear(); choicesByTrack.clear(); lastCropByTrack.clear(); checksByTrack.clear(); partialReadsByTrack.clear();
     };
     // Boxes the label reader said are not drinks at all (a book, sign, phone...): hidden and not read again.
     // Boxes whose label could not be seen twice: not read again until this time (the box stays on screen).
@@ -754,8 +765,50 @@ function WebLiveCamera(props: NativeProps) {
       }
     };
 
+    // Fully identified: the person scanning picked it, or the label's own words show the expression, the
+    // catalogue knows that exact bottle, and two reads agree. Anything less is asked about, never assumed.
+    const fullyIdentified = (identity: { read: BottleRead; agreeingReads: number; confirmed?: boolean }) =>
+      !!identity.confirmed || (expressionShown(identity.read) && !!identity.read.match?.id && identity.agreeingReads >= 2);
+    const ensureChoices = (trackId: number, read: BottleRead) => {
+      const key = identityKey(read) ?? '';
+      if (choicesByTrack.get(trackId)?.key === key || choicesBusy.has(trackId)) return;
+      const words = [read.match?.brand || read.brand, ...(read.words ?? [])];
+      const anchors = anchorsFor(piecesFromWords(words));
+      const settle = (candidates: Parameters<typeof confirmChoices>[1]) => {
+        choicesByTrack.set(trackId, { key, choices: confirmChoices({ brand: read.match?.brand || read.brand, product: read.match?.product || read.product, words: read.words }, candidates, scenePriors()) });
+        publishVisibleCandidates();
+      };
+      if (!anchors.length) { settle([]); return; }
+      choicesBusy.add(trackId);
+      partialLookup(anchors).then(settle, () => settle([])).finally(() => choicesBusy.delete(trackId));
+    };
+    // The person scanning answered: their pick becomes the bottle's name (and it is saved); "none" drops the read.
+    const applyUserChoices = () => {
+      for (const choice of callbacksRef.current.userChoices ?? []) {
+        const id = choice.trackId + ':' + choice.at;
+        if (handledChoices.has(id)) continue;
+        handledChoices.add(id);
+        const current = evidence.identity(choice.trackId)?.read;
+        if (choice.none || !choice.brand) {
+          evidence.delete(choice.trackId);
+          choicesByTrack.delete(choice.trackId);
+          restingUntil.set(choice.trackId, Date.now() + 30_000);
+          continue;
+        }
+        const picked: BottleRead = {
+          ...(current ?? { box: { x0: 0, y0: 0, x1: 0, y1: 0 }, label_box: null, edgePaths: [], words: [], category: 'other', proof: '', size: '', origin: '', detectionConfidence: 1, fieldConfidence: {}, researchSources: [], details: {} } as unknown as BottleRead),
+          brand: choice.brand, product: choice.product ?? '', confidence: 1, match: null, state: 'reported',
+          fieldConfidence: { brand: 1, product: choice.product ? 1 : 0 },
+          details: { ...(current?.details ?? {}), confirmed_by: 'person_scanning' },
+        };
+        evidence.confirm(choice.trackId, picked);
+        choicesByTrack.delete(choice.trackId);
+      }
+    };
+
     const publishVisibleCandidates = () => {
       lastPublishAt = performance.now();
+      applyUserChoices();
       // Local geometry (detector + camera motion) is preferred; a confirmed
       // cloud box is shown only where no local box covers the same bottle.
       const now = Date.now();
@@ -765,6 +818,13 @@ function WebLiveCamera(props: NativeProps) {
       const withEvidence = <C extends { trackId: number; confidence: number }>(candidate: C) => {
         const identity = evidence.identity(candidate.trackId);
         const confidence = evidence.detection(candidate.trackId) || candidate.confidence;
+        if (identity?.reliable && !fullyIdentified(identity)) {
+          // Known maker, not certain which bottle: ask ("Which one is it?") instead of naming or saving it.
+          ensureChoices(candidate.trackId, identity.read);
+          const asked = choicesByTrack.get(candidate.trackId);
+          return { ...candidate, confidence, bottle: undefined, identifying: identity.confidence, provisional: identity.read,
+            ask: { choices: asked?.choices ?? [] }, stage: { name: 'confirm' as const } };
+        }
         if (identity?.reliable) {
           queueAutoSave(identity.read, identity.confidence, identity.agreeingReads);
           rememberSessionName(identity.read);
@@ -819,8 +879,9 @@ function WebLiveCamera(props: NativeProps) {
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
-        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; probable?: string; stage?: { name: string; since?: number; value?: number } };
+        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; probable?: string; ask?: { choices: ConfirmChoice[] }; stage?: { name: string; since?: number; value?: number } };
         return [
+          shown.ask ? 'ask' + shown.ask.choices.length : '',
           shown.probable ?? '',
           shown.saved ? 'S' : '', shown.stage ? shown.stage.name + (shown.stage.since ?? '') + (shown.stage.value !== undefined ? Math.round(shown.stage.value * 100) : '') : '',
           Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
