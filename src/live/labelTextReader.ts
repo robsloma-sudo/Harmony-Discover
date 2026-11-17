@@ -32,18 +32,29 @@ export function cylinderForCrop(bottle: { x: number; width: number }, crop: Pixe
   return radius > 4 ? { centerX, radius } : null;
 }
 
-/** Off with ?ocr=off or localStorage 'discover.ocr' = 'off'. */
-export function textReaderEnabled(): boolean {
+/**
+ * On a computer it is on by default. On phones it is OFF by default (17 Nov 2026: on an iPhone it took
+ * ~0.7 s per read and slowed the bottle boxes, because it shares the phone's processor with the bottle
+ * detector). Turn it on with ?ocr=on (or localStorage 'discover.ocr' = 'on'); off with ?ocr=off.
+ */
+export function textReaderEnabled(userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : ''): boolean {
   try {
     const fromUrl = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('ocr') : null;
-    if (fromUrl === 'off') return false;
-    if (fromUrl === 'on') return true;
+    if (fromUrl === 'off') { try { localStorage.setItem('discover.ocr', 'off'); } catch { /* storage blocked */ } return false; }
+    if (fromUrl === 'on') { try { localStorage.setItem('discover.ocr', 'on'); } catch { /* storage blocked */ } return true; }
   } catch { /* no URL */ }
   try {
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('discover.ocr') === 'off') return false;
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('discover.ocr') : null;
+    if (stored === 'off') return false;
+    if (stored === 'on') return true;
   } catch { /* storage blocked */ }
-  return true;
+  return !/iPhone|iPad|iPod|Android|Mobile/i.test(userAgent);
 }
+
+/** Phone reads are spaced out so the bottle detector keeps the processor (ms between reads). */
+export const PHONE_READ_GAP_MS = 3_000;
+/** The reader only needs the biggest words: crops are shrunk to this long edge before reading. */
+export const OCR_MAX_EDGE = 640;
 
 type Reply = { type: 'ready' | 'result' | 'error'; id: number; message?: string } & Partial<TextRead>;
 export type TextWorkerLike = {

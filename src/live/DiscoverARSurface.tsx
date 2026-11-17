@@ -12,7 +12,7 @@ import { extractMaskContour } from './maskContour';
 import { LocalBottleTracker, isSameBottle, type LocalBottleCandidate } from './localBottleTracker';
 import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
-import { LabelTextReader, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
+import { LabelTextReader, OCR_MAX_EDGE, PHONE_READ_GAP_MS, cylinderForCrop, textReaderEnabled, type Cylinder } from './labelTextReader';
 import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, probableFromFragments, sameBrand } from './letterGuess';
 import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
@@ -295,6 +295,7 @@ function WebLiveCamera(props: NativeProps) {
     // and never counts as evidence. Skipped after an out-of-memory crash, or with ?ocr=off.
     const textReader = !scannerMode.lite && textReaderEnabled() ? new LabelTextReader() : null;
     const probableByTrack = new Map<number, { brand: string; at: number }>();
+    let lastPhoneReadAt = 0;
     // How fast each bottle was named (no photos): one row per bottle per scan session.
     type TimingDraft = { startedAt: number; labelPx: number; ocrMs?: number; textAt?: number; guessAt?: number; guess?: string; words?: string[] };
     const timingByTrack = new Map<number, TimingDraft>();
@@ -1015,22 +1016,32 @@ function WebLiveCamera(props: NativeProps) {
           else releaseCanvas(scratch);
         }
       }
-      // The phone's own text reader looks at up to two bottles that have no name or guess yet.
-      let phoneReads = 0;
+      // The phone's own text reader looks at one bottle with no name or guess yet, at most every 3 s,
+      // and only while the reader is free (it shares the processor with the bottle detector).
+      let phoneReads = textReader && !textReader.isBusy && now - lastPhoneReadAt >= PHONE_READ_GAP_MS ? 0 : 1;
       for (const plan of planned) {
         if (!plan.best) continue;
         if (!timingByTrack.has(plan.trackId) && !loggedTimingTracks.has(plan.trackId)) {
           timingByTrack.set(plan.trackId, { startedAt: now, labelPx: Math.round(Math.max(plan.crop.sw, plan.crop.sh)) });
         }
-        if (textReader && phoneReads < 2 && !probableByTrack.has(plan.trackId) && !labelReadsByTrack.get(plan.trackId)?.brand) {
-          const context = plan.best.getContext('2d');
-          if (context && textReader.available) {
-            try {
-              const image = context.getImageData(0, 0, plan.best.width, plan.best.height);
-              readTextForGuess(plan.trackId, image, cylinderForCrop(plan.bottle, plan.crop, frameCanvas.width), generation);
+        if (textReader && phoneReads < 1 && textReader.available && !probableByTrack.has(plan.trackId) && !labelReadsByTrack.get(plan.trackId)?.brand) {
+          try {
+            // Shrunk copy: the biggest words read fine at 640 px, and it is less to copy and process.
+            const scale = Math.min(1, OCR_MAX_EDGE / Math.max(plan.best.width, plan.best.height));
+            const small = document.createElement('canvas');
+            small.width = Math.max(2, Math.round(plan.best.width * scale));
+            small.height = Math.max(2, Math.round(plan.best.height * scale));
+            const context = small.getContext('2d', { willReadFrequently: true });
+            if (context) {
+              context.drawImage(plan.best, 0, 0, small.width, small.height);
+              const image = context.getImageData(0, 0, small.width, small.height);
+              const cylinder = cylinderForCrop(plan.bottle, plan.crop, frameCanvas.width);
+              readTextForGuess(plan.trackId, image, cylinder ? { centerX: cylinder.centerX * scale, radius: cylinder.radius * scale } : null, generation);
               phoneReads += 1;
-            } catch { /* canvas unreadable: the cloud read carries on */ }
-          }
+              lastPhoneReadAt = now;
+            }
+            releaseCanvas(small);
+          } catch { /* canvas unreadable: the cloud read carries on */ }
         }
         // Best quality that fits this crop's share of the server's batch limit.
         const budget = Math.min(99_000, Math.max(38_000, Math.floor(340_000 / Math.max(1, eligible.length))));

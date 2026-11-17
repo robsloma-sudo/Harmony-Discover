@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as workerModule from '../scripts/ocr-worker.mjs';
-import { LabelTextReader, cylinderForCrop, type TextWorkerLike } from '../src/live/labelTextReader';
+import { LabelTextReader, cylinderForCrop, textReaderEnabled, type TextWorkerLike } from '../src/live/labelTextReader';
 
 type Box = { x0: number; y0: number; x1: number; y1: number; score?: number };
 const w = workerModule as unknown as {
@@ -142,5 +142,13 @@ describe('label text reader', () => {
     await tick(); await tick();
     expect(reader.available).toBe(false);
     expect(await reader.read(image, null)).toBeNull();
+  });
+});
+
+describe('where the phone text reader runs', () => {
+  it('is off by default on phones and on by default on computers', () => {
+    expect(textReaderEnabled('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148')).toBe(false);
+    expect(textReaderEnabled('Mozilla/5.0 (Linux; Android 14) Mobile Safari')).toBe(false);
+    expect(textReaderEnabled('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1.15')).toBe(true);
   });
 });
