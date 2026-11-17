@@ -1,0 +1,24 @@
+name: Harmony push
+on:
+  push:
+    branches: [Upload-probably]
+permissions:
+  contents: write
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push claude/discover-consolidated (no merge, no deploy)
+        run: |
+          set -euo pipefail
+          if [ ! -f discover-consolidated.bundle ]; then echo "Bundle not on this branch. Nothing done."; exit 0; fi
+          HEAD_ID=befeff0fef615a2a3556c3335c11454a6ed7b6bb
+          git fetch origin main
+          git fetch discover-consolidated.bundle refs/heads/claude/discover-consolidated:refs/remotes/bundle/consolidated
+          [ "$(git rev-parse refs/remotes/bundle/consolidated)" = "$HEAD_ID" ] || { echo "Wrong update file"; exit 1; }
+          git merge-base --is-ancestor origin/main refs/remotes/bundle/consolidated || { echo "STOP: main changed since the bundle was made. Nothing pushed. Tell Harmony."; exit 1; }
+          git push origin refs/remotes/bundle/consolidated:refs/heads/claude/discover-consolidated
+          echo "SUCCESS: claude/discover-consolidated is on GitHub at $HEAD_ID. Nothing merged, nothing deployed."
