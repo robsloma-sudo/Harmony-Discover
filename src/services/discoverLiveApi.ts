@@ -1,4 +1,5 @@
 import { ensureDiscoverSession } from './supabase';
+import { keepBackedMatch } from '../live/identityBacking';
 
 const base = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
@@ -45,6 +46,8 @@ export type BottleRead = {
   state: BottleState;
   /** Set once the bottle is saved and the server has resolved its identity. */
   resolved?: ResolvedIdentity;
+  /** Read from a label partly hidden or cut off: a clue that cannot confirm a name on its own. */
+  partial?: boolean;
 };
 export class BottleReadError extends Error {
   status: number;
@@ -152,7 +155,7 @@ export async function loadBottleIntelligenceProfile(bottle: Pick<BottleRead, 'br
 export async function readLiveFrame(jpegBase64: string, focus: 'standard' | 'fine_print' = 'standard'): Promise<LiveRead> {
   const result = await call({ action: 'frame', image: jpegBase64, focus });
   const menu = result.menu && typeof result.menu === 'object' ? result.menu as MenuGlimpse : { visible: false, title: '', items: [] };
-  const bottles = Array.isArray(result.bottles) ? result.bottles.map((b: Record<string, unknown>) => ({ ...b, researchSources: Array.isArray(b.research_sources) ? b.research_sources : [] })) as BottleRead[] : [];
+  const bottles = Array.isArray(result.bottles) ? result.bottles.map((b: Record<string, unknown>) => keepBackedMatch({ ...b, researchSources: Array.isArray(b.research_sources) ? b.research_sources : [] } as unknown as BottleRead)) : [];
   const d = result.diagnostics && typeof result.diagnostics === 'object' ? result.diagnostics : {};
   const rawLabel = result.label_read && typeof result.label_read === 'object' ? result.label_read as Record<string, unknown> : null;
   const labelRead: LabelRead | null = rawLabel ? { words: Array.isArray(rawLabel.words) ? rawLabel.words.map(String) : [], brand: String(rawLabel.brand || ''), product: String(rawLabel.product || ''), category: String(rawLabel.category || 'other'), proof: String(rawLabel.proof || ''), size: String(rawLabel.size || ''), origin: String(rawLabel.origin || ''), details: (rawLabel.details && typeof rawLabel.details === 'object' ? rawLabel.details : {}) as Record<string, string | string[]>, fieldConfidence: (rawLabel.fieldConfidence && typeof rawLabel.fieldConfidence === 'object' ? rawLabel.fieldConfidence : {}) as Record<string, number> } : null;
@@ -210,7 +213,34 @@ export async function readLiveLabelBatch(crops: Array<{ trackId: number; image: 
     needsSecondLook: read.needs_second_look === true,
     tier: read.tier === 'escalate' ? 'escalate' : 'base',
     unreadableReason: typeof read.unreadable_reason === 'string' ? read.unreadable_reason : '',
-  })).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
+  })).map((read: LabelBatchRead) => keepBackedMatch(read)).filter((read: LabelBatchRead) => Number.isSafeInteger(read.trackId) && read.trackId !== 0);
+}
+
+export type LabelCheck = {
+  verdict: 'match' | 'none';
+  /** 1-based index into the candidates sent; 0 when none fits. */
+  choice: number;
+  level: 'product' | 'brand' | 'none';
+  confidence: number;
+  visibleWords: string[];
+  reason: string;
+};
+
+/**
+ * Targeted check of a partly hidden label (step 4): which of these (at most 3) names does the visible text belong
+ * to, if any? One crop; counts toward the daily scan limit. The server accepts a choice only when the words it
+ * says it can see back that name.
+ */
+export async function verifyLabelRead(image: string, candidates: Array<{ brand: string; product: string }>): Promise<LabelCheck> {
+  const result = await call({ image, candidates: candidates.slice(0, 3) }, 'discover-verify-read');
+  const level = result.level === 'product' || result.level === 'brand' ? result.level : 'none';
+  return {
+    verdict: result.verdict === 'match' ? 'match' : 'none',
+    choice: Number.isInteger(result.choice) ? result.choice : 0,
+    level, confidence: Number(result.confidence) || 0,
+    visibleWords: Array.isArray(result.visible_words) ? result.visible_words.map(String) : [],
+    reason: String(result.reason || ''),
+  };
 }
 
 export async function saveBottleSightings(scanSessionId: string, venueName: string, bottles: BottleRead[]): Promise<{ saved: number; matched: number; productsLinked: number; productsCreated: number; researchEvidenceSaved: number; researchAttributesAdded: number; enriched: Array<Partial<BottleRead> & { brand: string; product: string; fieldConfidence: Record<string,number>; researchSources: Array<{url:string;title:string;supports:string[];source_type:string}> }> }> {
