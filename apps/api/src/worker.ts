@@ -64,6 +64,13 @@ async function processValidation(job: Job) {
   }
 }
 
+async function processExtraction(job: Job) {
+  const result = await extractObservation(job.observation_id);
+  await recordEvent(job.observation_id, null, 'extract_menu_result', {
+    itemCount: result.items.length, pagesProcessed: result.pagesProcessed
+  });
+}
+
 async function runOnce() {
   const { data, error } = await db.rpc('claim_observation_job', { p_worker:workerId }).maybeSingle();
   if (error) throw error;
@@ -80,6 +87,7 @@ async function runOnce() {
         if (enqueueError) throw enqueueError;
       }
     }
+    else if (job.job_type === 'extract_menu') await processExtraction(job);
     else throw new Error(`Unsupported job type: ${job.job_type}`);
     const { error: finishError } = await db.from('observation_jobs').update({
       status:'complete', locked_at:null, locked_by:null, last_error:null, updated_at:new Date().toISOString()
@@ -94,6 +102,11 @@ async function runOnce() {
       available_at:new Date(Date.now() + Math.min(60_000 * 2 ** job.attempts, 60 * 60_000)).toISOString(),
       locked_at:null, locked_by:null, last_error:message.slice(0,1000), updated_at:new Date().toISOString()
     }).eq('id',job.id);
+    if (terminal && job.job_type === 'extract_menu') {
+      // Leave a clear trail on the page rows instead of 'ocr_unconfigured' forever.
+      await db.from('observation_extractions').update({ extraction_status:'failed' })
+        .eq('observation_id', job.observation_id).neq('extraction_status','extracted');
+    }
     await recordEvent(job.observation_id, null, terminal ? 'job_failed' : 'job_retry', {
       jobType:job.job_type, error:message, attempt:job.attempts
     });
