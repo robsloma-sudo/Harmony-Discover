@@ -13,6 +13,8 @@ on:
       - "app/**"
       - "src/**"
       - "modules/discover-arkit/**"
+      - "plugins/**"
+      - "docs/native-dfine-ios-coreml-spike.md"
       - "package.json"
       - "package-lock.json"
       - "app.json"
@@ -30,11 +32,16 @@ concurrency:
 jobs:
   ios-native-build:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Select Xcode 26.3
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.3.app
+          xcodebuild -version
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -51,12 +58,17 @@ jobs:
       - name: Install CocoaPods dependencies
         run: pod install --project-directory=ios
 
+      - name: Verify ONNX Runtime framework-header workaround
+        run: |
+          grep -n -A 7 "Harmony Discover: ONNX Runtime quoted-framework-header runtime workaround" ios/Podfile
+          grep -n "CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER.*NO" ios/Podfile
+
       - name: Compile iOS simulator target
         run: |
           workspace="ios/HarmonyDiscover.xcworkspace"
           test -d "$workspace"
           schemes="$(xcodebuild -list -json -workspace "$workspace" | /usr/bin/python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["workspace"]["schemes"]))')"
-          printf '%s\\n' "$schemes"
+          printf '%s\n' "$schemes"
           printf '%s\n' "$schemes" | grep -Fxq "HarmonyDiscover"
           xcodebuild \
             -workspace "$workspace" \

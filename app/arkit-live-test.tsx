@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useCameraPermissions } from 'expo-camera';
 import { Screen, styles } from '../src/ui';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitDepthFrame } from '../src/live/DiscoverARSurface';
+import { downloadAndInitializeDfineNativeRuntime, runDfineNativeSmokeTest } from '../modules/discover-arkit';
 
 export default function ARKitLiveTest() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -13,6 +14,39 @@ export default function ARKitLiveTest() {
   const [candidates, setCandidates] = useState<Array<{ trackId: number; confidence: number }>>([]);
   const [depthFrame, setDepthFrame] = useState<ARKitDepthFrame | null>(null);
   const [depthStatus, setDepthStatus] = useState('waiting_for_lidar_depth');
+  const [dfineBusy, setDfineBusy] = useState(false);
+  const [dfineReady, setDfineReady] = useState(false);
+  const [dfineResult, setDfineResult] = useState<Record<string, unknown> | null>(null);
+  const [dfineError, setDfineError] = useState('');
+
+  const initializeDfine = async () => {
+    setDfineBusy(true);
+    setDfineError('');
+    setDfineResult(null);
+    try {
+      const result = await downloadAndInitializeDfineNativeRuntime();
+      setDfineResult(result as Record<string, unknown>);
+      setDfineReady(result.ready === true);
+    } catch (reason) {
+      setDfineReady(false);
+      setDfineError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDfineBusy(false);
+    }
+  };
+
+  const runDfineSmokeTest = async () => {
+    setDfineBusy(true);
+    setDfineError('');
+    try {
+      const result = await runDfineNativeSmokeTest();
+      setDfineResult(previous => ({ ...(previous || {}), ...(result as Record<string, unknown>) }));
+    } catch (reason) {
+      setDfineError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDfineBusy(false);
+    }
+  };
 
   const start = async () => {
     setError('');
@@ -65,6 +99,23 @@ export default function ARKitLiveTest() {
         <Text style={styles.categoryDesc}>Blue rectangles are generic Vision regions, not confirmed bottles. IDs persist while frame-to-frame overlap remains sufficient. Confidence is rectangle-detection confidence, not bottle identity confidence.</Text>
         {candidates.slice(0, 4).map(candidate => <Text key={candidate.trackId} style={styles.categoryDesc}>Track #{candidate.trackId} · {Math.round(candidate.confidence * 100)}% rectangle confidence</Text>)}
       </View>
+      {Platform.OS === 'ios' && (
+        <View style={[styles.item, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+          <Text style={styles.itemTitle}>Native D-FINE / CoreML runtime</Text>
+          <Text style={styles.categoryDesc}>Research-only device test. Downloads the pinned 16 MB model, verifies SHA-256, initializes one cached CoreML-first session, then runs a synthetic tensor. It does not change live bottle detection.</Text>
+          <Text style={styles.price}>{dfineReady ? 'NATIVE MODEL SESSION READY' : 'NOT INITIALIZED'}</Text>
+          {!!dfineResult?.inferenceMs && <Text style={styles.categoryDesc}>Synthetic inference: {Number(dfineResult.inferenceMs).toFixed(1)} ms</Text>}
+          {!!dfineResult?.outputNames && <Text style={styles.categoryDesc}>Outputs: {(dfineResult.outputNames as string[]).join(', ')}</Text>}
+          {!!dfineResult?.outputShapes && <Text style={styles.categoryDesc}>Output shapes: {JSON.stringify(dfineResult.outputShapes)}</Text>}
+          {!!dfineError && <Text style={styles.categoryDesc}>{dfineError}</Text>}
+          <Pressable disabled={dfineBusy} style={[styles.primary, dfineBusy && { opacity: 0.5 }]} onPress={() => void initializeDfine()}>
+            <Text style={styles.primaryText}>{dfineBusy ? 'INITIALIZING…' : 'DOWNLOAD & INITIALIZE D-FINE'}</Text>
+          </Pressable>
+          <Pressable disabled={dfineBusy || !dfineReady} style={[styles.item, { justifyContent: 'center', opacity: dfineBusy || !dfineReady ? 0.45 : 1 }]} onPress={() => void runDfineSmokeTest()}>
+            <Text style={styles.itemTitle}>Run synthetic inference test</Text>
+          </Pressable>
+        </View>
+      )}
       {!!error && <Text style={styles.categoryDesc}>{error}</Text>}
       {!permission && <ActivityIndicator />}
       <Pressable style={styles.primary} onPress={() => void start()}><Text style={styles.primaryText}>START AR SESSION</Text></Pressable>
