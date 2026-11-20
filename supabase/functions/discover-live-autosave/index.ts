@@ -83,7 +83,7 @@ const FIELDS_BY_CATEGORY: Record<string, string[]> = {
 
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
-const norm = (v: unknown) => clean(v, 160).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (v: unknown) => clean(v, 160).toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 function originOk(origin: string | null) { return !!origin && ORIGINS.some((re) => re.test(origin)); }
 function headers(origin: string | null) {
