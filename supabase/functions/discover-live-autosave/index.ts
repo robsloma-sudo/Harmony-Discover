@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.6.0
+// Harmony Discover DEV: discover-live-autosave v0.6.1
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,9 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.6.1 (fix kit FIX-003): a fact is kept only when the answer itself cites a real search-result URL for it and gives
+// it a score. Facts are no longer attached to the first two search pages when uncited, and a missing score is no longer
+// treated as 0.75 (it is dropped as "no_score").
 // v0.6.0: known facts first. Every saved bottle and every opened card is linked to Harmony's catalogue (barcode, then
 // name) and to the US label approvals (discover_prefill_known); what they already know (ABV, origin, bottler/importer,
 // class, Harmony category, approved brand history, label package) fills empty card fields before any web research,
@@ -35,7 +38,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -80,7 +83,7 @@ const FIELDS_BY_CATEGORY: Record<string, string[]> = {
 
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
-const norm = (v: unknown) => clean(v, 160).toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (v: unknown) => clean(v, 160).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 function originOk(origin: string | null) { return !!origin && ORIGINS.some((re) => re.test(origin)); }
 function headers(origin: string | null) {
@@ -256,15 +259,6 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     supports.forEach((f) => supported.add(f));
     sources.push({ url: u, title: found.get(u) || clean(s.title, 180), supports, kind: String(s.source_type || "reference") });
   }
-  // No usable citation: fall back to returned search pages that are about this brand (title or address names it).
-  if (!sources.length) {
-    const brandWords = norm(identity.brand).split(" ").filter((w) => w.length >= 4);
-    for (const [u, title] of found) {
-      const text = norm(title + " " + u);
-      if (brandWords.length && brandWords.every((w) => text.includes(w))) sources.push({ url: u, title, supports: [], kind: "reference" });
-      if (sources.length >= 2) break;
-    }
-  }
   // Facts normally sit under "fields"; some answers put them at the top level instead.
   const topLevel = Object.fromEntries(Object.entries(input).filter(([k, v]) => allowed.has(k) && typeof v === "string"));
   const nested = input.fields && typeof input.fields === "object" && !Array.isArray(input.fields) ? input.fields as Record<string, unknown> : {};
@@ -272,17 +266,17 @@ async function research(apiKey: string, model: string, identity: Record<string, 
   const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
   const facts: Record<string, { value: string; confidence: number }> = {};
   const dropped: Record<string, string> = {};
-  // A fact needs a real search-result URL behind it: its own, or (when the model did not map
-  // sources to fields) the product page sources it returned for this search. Tasting summaries are
-  // judgement by nature, so they need 0.5 (still source-backed); hard facts need 0.7.
+  // A fact needs a real search-result URL that the answer itself cites for that fact, and a score the
+  // answer gave (FIX-003: no borrowed sources, no default score). Tasting summaries are judgement by
+  // nature, so they need 0.5 (still source-backed); hard facts need 0.7.
   for (const [field, value] of Object.entries(rawFields)) {
-    const v = clean(value, LIST_FIELDS.has(field) ? 700 : 240), c = unit(rawScores[field] ?? 0.75);
+    const scored = rawScores[field] !== undefined && rawScores[field] !== null && rawScores[field] !== "" && Number.isFinite(Number(rawScores[field]));
+    const v = clean(value, LIST_FIELDS.has(field) ? 700 : 240), c = scored ? unit(rawScores[field]) : 0;
     const floor = TASTING.has(field) ? 0.5 : LIST_FIELDS.has(field) ? 0.6 : 0.7;
-    const why = !allowed.has(field) ? "not_wanted" : !v ? "empty" : c < floor ? "low_" + c.toFixed(2) : !(supported.has(field) || sources.length > 0) ? "no_source" : "";
+    const why = !allowed.has(field) ? "not_wanted" : !v ? "empty" : !scored ? "no_score" : c < floor ? "low_" + c.toFixed(2) : !supported.has(field) ? "no_source" : "";
     if (why) { dropped[clean(field, 40)] = why; continue; }
     facts[field] = { value: v, confidence: c };
   }
-  for (const f of Object.keys(facts)) if (!supported.has(f)) for (const s of sources.slice(0, 2)) s.supports.push(f);
   return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note, searchesUsed, inputKeys: Object.keys(input).slice(0, 8).map((k) => clean(k, 30)) };
 }
 
