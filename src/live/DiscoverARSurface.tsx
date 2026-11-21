@@ -5,7 +5,6 @@ import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core
 import { frameSharpness, SteadyGate } from './steadyCapture';
 import { isReadableLabel, SAMPLE_GAP_MS, samplesForLabel, zoomReadiness } from './distanceCapture';
 import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
-import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
@@ -68,7 +67,7 @@ type NativeProps = ViewProps & {
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
-  onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
+  onDepthEstimate?: (event: { nativeEvent: ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onLiquidMetrics?: (event: { nativeEvent: { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; segmentationMs: number; localFrameMs: number; workerAvailable: boolean } }) => void;
@@ -391,8 +390,6 @@ function WebLiveCamera(props: NativeProps) {
     // Bottles re-found from memory get one fresh label check before their
     // remembered name is trusted as verified again.
     const reverifyTracks = new Set<number>();
-    let depthTimer = 0;
-    let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
     let labelBatchBusy = false;
     let lastSentFrameSignature: Uint8Array | null = null;
@@ -1434,22 +1431,10 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
 
-        // The relative-depth transformer is a large additional WASM/WebGPU
-        // allocation. Mobile browsers have a much tighter camera-process memory
-        // budget, so keep it off the mobile web path; native iOS uses ARKit depth.
-        const mobileBrowser = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        if (mobileBrowser) {
-          callbacksRef.current.onDepthStatus?.({ nativeEvent: { status: 'Mobile browser depth paused for camera stability; use native iPhone ARKit for metric depth.' } });
-        } else {
-          depthEstimator = new BrowserDepthEstimator(
-            depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
-            status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
-          );
-          depthEstimator.start();
-          depthTimer = window.setInterval(() => {
-            if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
-          }, 1700);
-        }
+        // Web browsers have no measured depth. The earlier relative-depth model
+        // (S2-B2-005) produced maps nothing on screen used, so it is not started;
+        // native iPhone ARKit remains the only depth source.
+        callbacksRef.current.onDepthStatus?.({ nativeEvent: { status: 'Web camera has no depth; use native iPhone ARKit for metric depth.' } });
 
         const verifyFrame = () => {
           if (disposed) return;
@@ -1538,13 +1523,11 @@ function WebLiveCamera(props: NativeProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
       markScannerStopped();
-      if (depthTimer) window.clearInterval(depthTimer);
       localBottleTracker.reset();
       liquidAnalysisQueue.dispose();
       liquidHistoryByTrack.clear();
         liquidGuard.clear();
       if (segmentationRunner) void segmentationRunner.dispose();
-      depthEstimator?.dispose();
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
