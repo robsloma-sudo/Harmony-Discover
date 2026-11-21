@@ -1,6 +1,6 @@
 # Harmony Learning Engine — Product & Technical Specification
 
-**Status:** Design specification for isolated Harmony Discover development  
+**Status:** Design specification for isolated Harmony Discover development (build status: see section 16, checked 21 Nov 2026)  
 **Version:** 0.6 draft  
 **Production boundary:** Existing Harmony production Supabase remains read-only. This document proposes no production schema, function, policy, or deployment changes.
 
@@ -354,4 +354,40 @@ The Learning Engine MVP is not complete until:
 
 ## 16. Implementation boundary and current status
 
-This specification is design work only. No event collection, consumer tracking, consent UI, database tables, analytics jobs, internal console, or production integration has been implemented by this document. Build and test all new components in the isolated Discover development environment. Existing production Supabase remains read-only; obtain explicit authorization before any production write, migration, function deployment, policy, or configuration change.
+**Status checked:** 21 Nov 2026, read-only, against the Discover development database and the `main` branch. Production Supabase was not touched.
+
+**In short:** the P0 plumbing (event contract, consent records, ingestion endpoint, data separation) and the 13-month clean-up are built and live in Discover development. Nothing in the app sends events or asks for learning consent yet, so every learning table is empty. P1–P3 (instrumentation, taste profiles, aggregate jobs, knowledge-gap queue, console, outcome measurement, question analysis) are code-only or not started. Existing production Supabase remains read-only; obtain explicit authorization before any production write, migration, function deployment, policy, or configuration change.
+
+### What is built, checked against what is live
+
+| Spec item | Built? | Where | Live check (21 Nov 2026) |
+|---|---|---|---|
+| Event contract & allow-list (P0) | Yes | `packages/shared-types/learning-events.ts`, `packages/learning-engine/ingest-policy.ts`, tests in `tests/learning-ingest-policy.test.ts` | Code only; used by the ingestion endpoint |
+| Consent model (P0) | Yes (server) | Migrations `0003`, `0004` (`learning_set_consent`, `learning_current_consent`) | `learning_consent_records`: 0 rows. Consent functions run as owner and cannot be called by visitors or signed-in users directly |
+| Ingestion endpoint (P0) | Yes | `discover-api` function: `GET/PUT /v1/learning/consent`, `POST /v1/learning/events` (`apps/edge/router.ts`) | `discover-api` is deployed and active. Requires a signed-in user, rate-limited, size-limited, idempotent via `learning_ingest_event` |
+| Data separation (P0) | Yes | Separate tables for events, questions, taste profiles, trends, research tasks, proposals, outcomes | All 8 learning tables have row-level security on. 7 have no client policies (server only). `personal_taste_profiles` lets a signed-in user read/insert/update only their own row. Visitors and signed-in users cannot delete or truncate any of them |
+| Spec tables `personal_taste_signals`, `learning_aggregate_metrics` | **No** | — | Not created |
+| Export & deletion requests | Yes | Migration `0007` (`learning_deletion_requests`) | 1 row; server only |
+| Raw-event retention (13 months) | Yes | Migration `0008` (`discover_purge_learning_events`), `discover-retention` function | Daily job `discover-retention-daily` (09:17 UTC) last ran 21 Nov 2026, succeeded; nothing to delete |
+| Event instrumentation in the app (P1) | **No** | — | No app screen calls `/v1/learning/*`; `learning_events`: 0 rows |
+| Consent screen in the app (P0/P1) | **No** | — | No learning consent UI. (The bartender-voice consent panel is a different consent.) |
+| Personal taste profile (P1) | Table only | `personal_taste_profiles` | 0 rows; nothing writes to it |
+| Aggregate jobs (P1) | **No** | — | No timed job builds aggregates |
+| Knowledge-gap / trend logic (P1) | Code only | `packages/learning-engine/knowledge-gap-engine.ts`, `trend-evaluator.ts`, `improvement-workflow.ts` + tests | Not wired to any job or endpoint; `learning_trend_candidates`, `learning_research_tasks`, `learning_improvement_proposals`: 0 rows |
+| Internal console (P2) | Mock-up only | `app/learning-console.tsx` (sample data) | Hidden from production builds (developer-only screen list) |
+| Outcome measurement (P2) | Table only | `learning_outcome_measurements` | 0 rows |
+| Question analysis (P3) | Table only | `learning_question_records` | 0 rows; the endpoint refuses question text |
+
+### Related but separate
+
+The scanner's own research loop (`discover_research_outcomes`, `discover_research_hints`, nightly job `discover-propose-research-hints`) is live and holds data. It learns from scan results, not from consumer events, and does not use the consent model above.
+
+### What depends on it
+
+- **App:** nothing yet. No screen sends learning events or reads a taste profile, so turning the engine off would not change what users see today.
+- **Backend:** the `discover-api` function hosts the learning endpoints; the `discover-retention` function and its daily job purge old raw events.
+- **Future work that will depend on it:** personal recommendations (Taste), the Learning Console, and any aggregate "what people are curious about" reporting.
+
+### Known loose end
+
+`apps/api/src/routes/learning.ts` (the older local Node server) writes consent and events straight into the tables instead of using the consent-checked database functions that the deployed `discover-api` uses. It is not deployed, but it should be removed or aligned before anyone runs that server against real data.
