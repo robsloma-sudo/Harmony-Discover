@@ -2,6 +2,69 @@
   command = "npm ci --no-audit --no-fund && npm run build:web"
   publish = "dist"
 
+# FIX-026: developer/test screens are not public on the live site.
+# force = true so these win even though the static export writes an .html file for each.
+# Remove these blocks (and the list in src/dev/devOnlyRoutes.ts) to make them public again.
+[[redirects]]
+  from = "/comedy-lab"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/comedy-lab.html"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/learning-console"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/learning-console.html"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/bartender-settings"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/bartender-settings.html"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/arkit-diagnostics"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/arkit-diagnostics.html"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/arkit-live-test"
+  to = "/"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/arkit-live-test.html"
+  to = "/"
+  status = 302
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
