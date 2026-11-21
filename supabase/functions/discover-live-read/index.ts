@@ -4,7 +4,7 @@
 //          matched to public.product_index by text (discover_match_products). No image is stored.
 // - save:  the bottles the person kept become rows in public.bottle_sightings (the shared sightings ledger).
 // Guards: signed-in Discover user (anonymous users included), exact-origin allow-list, DEV project only,
-// 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
+// 30 frames/minute and 20 label batches/minute per user, plus a per-user and a whole-project daily image cap (FIX-007) with token logging.
 // v0.4.1: label and frame reads use Claude Sonnet 5.5 (Rob, 14 Nov 2026). Sonnet 5.5 does not accept a
 // forced tool choice, so it gets tool_choice auto with low effort (fast); save-time research stays on Haiku.
 // v0.5.0: two-step reading to keep cost down (Rob, 14 Nov 2026). Haiku does every first read (whole picture
@@ -21,10 +21,13 @@
 // v0.5.4: the live whole-frame read asks only for boxes and names (no edge tracing, no long fact list):
 // far fewer tokens, so the first names arrive seconds sooner.
 // v0.5.5 (FIX-011): time limits on every AI call (frame 25 s, label batch 30 s, save research 45 s).
+// v0.5.6 (FIX-007): the daily cap now counts images sent to the AI (a whole frame = 1, each label crop = 1),
+// not requests, so an 8-crop label batch uses 8 of the day's allowance. Label batches have their own
+// per-minute bucket (bottle_label_batch) so a busy shelf no longer starves live frames with 429s.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.5";
+const VERSION = "0.5.6";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -37,7 +40,11 @@ const ADAPTIVE_MODEL = (model: string) => /sonnet-5|opus-5|fable|mythos/.test(mo
 const toolChoice = (model: string, name: string) => ADAPTIVE_MODEL(model)
   ? { tool_choice: { type: "auto" }, output_config: { effort: "low" } }
   : { tool_choice: { type: "tool", name } };
-const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
+// FIX-007: daily caps are in images (frames + label crops). Defaults keep the old numbers; override with
+// DISCOVER_USER_IMAGES_PER_DAY / DISCOVER_PROJECT_IMAGES_PER_DAY without a code change.
+const capFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const USER_FRAMES_PER_DAY = capFromEnv("DISCOVER_USER_IMAGES_PER_DAY", 400), PROJECT_FRAMES_PER_DAY = capFromEnv("DISCOVER_PROJECT_IMAGES_PER_DAY", 5000);
+const LABEL_BATCHES_PER_MINUTE = 20;
 const USER_SAVES_PER_DAY = 20, PROJECT_SAVES_PER_DAY = 500;
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
 const MIN_LABEL_CONFIDENCE = 0.65;
@@ -496,9 +503,10 @@ Deno.serve(async (req: Request) => {
     }
     if (totalImageChars > 360000) return reply({ error: "label_batch_too_large" }, 413, origin);
     if (new Set(crops.map(c => c.track_id)).size !== crops.length) return reply({ error: "duplicate_track_id" }, 400, origin);
-    const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_frame", p_max: 30, p_window_seconds: 60 });
+    // FIX-007: own per-minute bucket, and the daily cap is charged one unit per crop (each crop is one AI image).
+    const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_label_batch", p_max: LABEL_BATCHES_PER_MINUTE, p_window_seconds: 60 });
     if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
-    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
+    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow_units", { p_subject: subject, p_units: crops.length, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
     const providerStartedAt = Date.now();
     let model = escalate ? ESCALATION_MODEL : MODEL, r = await readLabelBatch(anthropicKey, model, crops);
@@ -580,7 +588,7 @@ Deno.serve(async (req: Request) => {
     if (image.length < 2000 || !/^[A-Za-z0-9+/=]+$/.test(image) || !image.startsWith("/9j/")) return reply({ error: "jpeg_frame_required" }, 400, origin);
     const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_frame", p_max: 30, p_window_seconds: 60 });
     if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
-    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
+    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow_units", { p_subject: subject, p_units: 1, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
 
     const providerStartedAt = Date.now();

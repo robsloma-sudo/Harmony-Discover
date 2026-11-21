@@ -19,6 +19,11 @@ const CORS_METHODS = "POST,OPTIONS";
 const PAGE_TIMEOUT_MS = 45_000;
 const REQUEST_BUDGET_MS = 130_000;
 const MIN_PAGE_MS = 10_000;
+// FIX-007: menu pages per UTC day. Defaults: 60 pages per person (about five long menus), 1500 for the whole
+// project. Override with DISCOVER_USER_MENU_PAGES_PER_DAY / DISCOVER_PROJECT_MENU_PAGES_PER_DAY.
+const capFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const USER_MENU_PAGES_PER_DAY = capFromEnv("DISCOVER_USER_MENU_PAGES_PER_DAY", 60);
+const PROJECT_MENU_PAGES_PER_DAY = capFromEnv("DISCOVER_PROJECT_MENU_PAGES_PER_DAY", 1500);
 
 function allowedOrigins(): Set<string> {
   return new Set((Deno.env.get("DISCOVER_ALLOWED_ORIGINS") ?? "")
@@ -106,13 +111,6 @@ Deno.serve(async (req: Request) => {
     .select("id,consumer_id,status").eq("id", id).eq("consumer_id", subject).maybeSingle();
   if (!observation) return reply({ error: "observation_not_found" }, 404, origin);
 
-  // Clear any previous completion marker before retrying. A prior successful scan must
-  // not remain eligible while a re-read is in progress or after a failed re-read.
-  const { error: resetError } = await db.from("menu_observations").update({
-    all_pages_complete: false, structured_menu_saved: false, status: "processing",
-  }).eq("id", id).eq("consumer_id", subject);
-  if (resetError) return reply({ error: "observation_status_reset_failed" }, 503, origin);
-
   // Independent server-side limiter: this function is directly addressable, so the
   // outer discover-api observation limiter is not sufficient protection by itself.
   // The database function is SECURITY DEFINER and service-role-only.
@@ -134,6 +132,24 @@ Deno.serve(async (req: Request) => {
     }).eq("id", id).eq("consumer_id", subject);
     return reply({ error: "page_limit_exceeded", max_pages: 12 }, 413, origin);
   }
+
+  // FIX-007: daily page cap (per user and whole project). Every page is one AI call, so the day's pages
+  // are reserved before any call is made; a refused request changes nothing (the scan keeps its old state).
+  const { data: dayAllowed, error: dayError } = await db.rpc("discover_menu_page_allow", {
+    p_subject: subject, p_pages: assets.length, p_user_max: USER_MENU_PAGES_PER_DAY, p_global_max: PROJECT_MENU_PAGES_PER_DAY,
+  });
+  if (dayError || dayAllowed !== true) {
+    return reply({ error: dayError ? "daily_limit_unavailable" : "daily_limit_reached" }, dayError ? 503 : 429, origin);
+  }
+
+  // FIX-007: the completion marker is now cleared only after every limiter has said yes, so a refused
+  // retry no longer knocks a finished scan back to "processing".
+  // Clear any previous completion marker before retrying. A prior successful scan must
+  // not remain eligible while a re-read is in progress or after a failed re-read.
+  const { error: resetError } = await db.from("menu_observations").update({
+    all_pages_complete: false, structured_menu_saved: false, status: "processing",
+  }).eq("id", id).eq("consumer_id", subject);
+  if (resetError) return reply({ error: "observation_status_reset_failed" }, 503, origin);
 
   let pages = 0, itemsSaved = 0;
   const failures: Array<Record<string, unknown>> = [];
