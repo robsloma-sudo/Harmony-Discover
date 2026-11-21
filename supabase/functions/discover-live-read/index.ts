@@ -1,4 +1,4 @@
-// Harmony Discover DEV — discover-live-read v0.5.4 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.5 (21 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
@@ -20,10 +20,11 @@
 // (pixel counts only) to find why reads fail on a real phone.
 // v0.5.4: the live whole-frame read asks only for boxes and names (no edge tracing, no long fact list):
 // far fewer tokens, so the first names arrive seconds sooner.
+// v0.5.5 (FIX-011): time limits on every AI call (frame 25 s, label batch 30 s, save research 45 s).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.4";
+const VERSION = "0.5.5";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -260,6 +261,29 @@ const LABEL_BATCH_TOOL = {
 // long list of label facts were dropped here; label crops and save-time research fill in facts.
 const SYSTEM = "You read one photo taken in a bar, shop or restaurant. Detect every visible beverage bottle (beer, wine, spirits, anything), even when its label is turned away, blurred or too small to read. For each bottle return a tight box around the whole bottle and a tight label_box around its main label when visible, as fractions of the image. detection_confidence is only about whether it is a bottle and the box fits. Read only what is printed: brand is the main identifying name (for wine the biggest name on the label), product what the label adds to it (expression, cuvee, appellation, style). Never identify a bottle from shape, colour or cap; if the name is not legible leave brand and product empty and set confidence below 0.4. confidence is how sure you are the brand was read, not guessed. Give field_confidence for each filled field. If a printed menu is in view, set menu.visible true and copy each legible item name and price exactly; otherwise menu.visible false. Skip glasses, taps, people and shelves. Always call the bottles tool.";
 
+// FIX-011: every call to the AI provider has a time limit. A hung call used to hold the scanner (and the
+// user's phone) until the platform killed the whole request. Now it ends with a clean "provider timeout"
+// (status 504), which the callers already treat like any other provider error.
+const FRAME_TIMEOUT_MS = 25_000;     // live camera frame / single label crop
+const BATCH_TIMEOUT_MS = 30_000;     // up to 8 label crops in one call
+const RESEARCH_TIMEOUT_MS = 45_000;  // save-time web research (up to 4 web searches)
+async function anthropicPost(key: string, payload: unknown, timeoutMs: number) {
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, j };
+  } catch (e) {
+    const timedOut = (e as Error)?.name === "TimeoutError" || (e as Error)?.name === "AbortError";
+    console.log(JSON.stringify({ evt: timedOut ? "provider_timeout" : "provider_network_error", timeout_ms: timeoutMs }));
+    return { ok: false, status: timedOut ? 504 : 503, j: { error: { message: timedOut ? "provider_timeout" : "provider_network_error" } } as Record<string, any> };
+  }
+}
+
 async function readFrame(key: string, model: string, b64: string, focus: string = "standard") {
   const finePrint = focus === "fine_print";
   const instruction = finePrint
@@ -267,17 +291,12 @@ async function readFrame(key: string, model: string, b64: string, focus: string 
     : "Read the bottle labels and any menu.";
   const selectedTool = finePrint ? LABEL_TOOL : TOOL;
   const selectedToolName = finePrint ? "label_read" : "bottles";
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: finePrint ? 2600 : 4000, system: finePrint
+  return await anthropicPost(key, { model, max_tokens: finePrint ? 2600 : 4000, system: finePrint
       ? "You are a careful beverage-label transcription engine. This is a close crop, so prioritize exact OCR rather than bottle detection, geometry, visual description, or product guessing. Never invent or complete obscured text. Always answer by calling the label_read tool exactly once and return only directly observed text."
       : SYSTEM,
       tools: [selectedTool], ...toolChoice(model, selectedToolName),
-      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] }),
-  });
-  const j = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, j };
+      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] },
+    FRAME_TIMEOUT_MS);
 }
 
 
@@ -291,18 +310,12 @@ async function readLabelBatch(key: string, model: string, crops: Array<{track_id
     content.push({ type: "text", text: "NEXT LABEL TRACK_ID: " + crop.track_id });
     content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: crop.image } });
   }
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
+  return await anthropicPost(key, {
       model, max_tokens: 4000,
       system: "You are a precise beverage-label OCR engine. Each image is a separate crop and is associated with the immediately preceding track ID. Do not mix facts between crops. Read exact brand, product expression, category, ABV/proof, volume, origin and any legible technical details. Do not guess. Always answer by calling the label_reads tool exactly once.",
       tools: [LABEL_BATCH_TOOL], ...toolChoice(model, "label_reads"),
       messages: [{ role: "user", content }]
-    })
-  });
-  const j = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, j };
+    }, BATCH_TIMEOUT_MS);
 }
 
 const ENRICHMENT_TOOL = {
@@ -329,18 +342,14 @@ async function researchBottle(key: string, model: string, bottle: Record<string,
   const missing = DETAIL_KEYS.filter(k => !clean(details[k], 80));
   if (!clean(bottle.brand,80) || !missing.length) return { details: {}, fieldConfidence: {}, sources: [] };
   const query = [bottle.brand, bottle.product, bottle.category, bottle.proof, bottle.size].filter(Boolean).join(" ");
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
+  const response = await anthropicPost(key, {
       model, max_tokens: 2600,
       system: "You are a product research assistant for a beverage catalog. Use live web search. Find the exact product expression, not merely the brand or a similar SKU. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources. Use retailers and reference sources only as secondary corroboration. Never invent facts. Never return a field unless a source explicitly supports it for this exact product. Do not overwrite facts already read from the physical label. If identity is ambiguous, return empty fields. Preserve source URLs and map each field to its supporting sources. Product marketing copy is not technical fact.",
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }, ENRICHMENT_TOOL],
       tool_choice: { type: "tool", name: "bottle_enrichment" },
       messages: [{ role: "user", content: "Research missing product facts for this exact bottle.\nIDENTITY: " + JSON.stringify(known) + "\nMISSING FIELDS: " + missing.join(", ") + "\nSearch query: " + query + "\nReturn only exact-expression facts with source URLs and field confidence. If exact match cannot be proven, leave fields empty." }]
-    })
-  });
-  const j = await response.json().catch(() => ({}));
+    }, RESEARCH_TIMEOUT_MS);
+  const j = response.j;
   if (!response.ok) return { details: {}, fieldConfidence: {}, sources: [] };
   const block = (Array.isArray(j.content) ? j.content : []).find((x: Record<string, unknown>) => x.type === "tool_use" && x.name === "bottle_enrichment");
   const input = (block?.input && typeof block.input === "object" ? block.input : {}) as Record<string, unknown>;
