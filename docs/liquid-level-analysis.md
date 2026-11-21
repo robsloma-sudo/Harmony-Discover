@@ -8,6 +8,10 @@
 - Liquid analysis does not call the cloud bottle reader and does not change Anthropic routing.
 - Calibration profiles are stored locally with AsyncStorage. No Supabase table or PHG Core data is used.
 
+## What "fill height" means (one definition)
+
+Fill height is the liquid line's distance up from the **bottom edge of the detected bottle box**, divided by that box's height, as a fraction from 0 to 1 (52% is `0.52`). The web detector, the iOS native detector, the multi-frame check, the calibration curve, the Live Inventory screen ("FILL HEIGHT ~52%") and these notes all use this definition (`FillHeightFraction` in `src/services/bottleVolumeCalibration.ts`). It is a picture measurement: it is not millimetres and it is not a volume. The two earlier unused helpers that described fill height in millimetres against a bottle-radius profile (`bottleInventory.ts`, `bottleObservation.ts`) were removed on 2026-11-21.
+
 ## Evidence gates
 
 A fill-height result requires all of the following:
@@ -22,11 +26,21 @@ The label-texture and multi-column tests are conservative heuristics, not a sema
 
 ## Bottle volume calibration
 
-Fill height is not volume. Milliliters/fluid ounces are shown only when:
+Fill height is not volume. There is one rule for showing millilitres/fluid ounces, and the code (`getBottleCalibrationKey` in `src/services/bottleVolumeProfileStore.ts`) enforces exactly this. A volume is shown only when **all** of these hold:
 
-- the label read is catalog matched with match score at least 0.90;
-- the calibration profile matches that catalog identity and package size; and
-- the measured height is within the profile's calibrated range.
+1. **Strong match:** the label read is catalogue matched with a match score of at least 0.90. A known bottle shape alone is **not** enough.
+2. **No conflict:** the barcode does not disagree with the label words.
+3. **Saved calibration:** a calibration profile is saved for this bottle's calibration key. The key is the server's bottle shape (brand + line + size) when it is known, so one calibration serves every release of that line and size; otherwise it is the matched product plus the package size read from the label.
+4. **In range:** the fill height is inside the profile's calibrated range.
+
+| Strong match (>= 0.90) | Bottle shape known | Volume shown? | Calibration used |
+| --- | --- | --- | --- |
+| yes | yes | yes, if calibrated | the shape (line + size) |
+| yes | no | yes, if calibrated | the product + size |
+| no | yes | **no** | none |
+| no | no | no | none |
+
+The calibration editor follows the same rule: it only appears when a volume could be shown.
 
 In Live Inventory, open **Bottle-shape calibration** on a verified product. Measure known volumes with a scale or graduated measure. For each sample, record the current live fill-height percentage relative to the detected bottle bounding box as a fraction (52% becomes `0.52`) and the actual measured milliliters. Use the same camera framing and viewfinder box for the calibration run. Include `0:0` for empty and a full-capacity point at the real full-fill line; that height can be below 1. Samples must have strictly increasing measured volume as height rises; flat or decreasing segments are invalid. Do not assume a cylinder or invent sample points. Profiles remain local to the device.
 
@@ -46,4 +60,15 @@ Do not call the feature performance-safe based on desktop timing alone. Physical
 
 ## Current acceptance boundary
 
-This implementation is experimental. Synthetic tests cover the detector, optics gate, queue policy, calibration curve, and profile storage. They do not establish real-backbar accuracy. Keep the PR unmerged and the production site unchanged until current TypeScript/tests/build and iOS simulator checks pass, followed by physical-device validation.
+This implementation is experimental. Synthetic tests cover the detector, optics gate, queue policy, calibration curve, profile storage and the volume rule table above. They do not establish real-backbar accuracy. Keep the PR unmerged and the production site unchanged until current TypeScript/tests/build and iOS simulator checks pass, followed by physical-device validation.
+
+## What depends on this feature
+
+- Live Inventory screen (`app/live-inventory.tsx`): shows "FILL HEIGHT ~N%", the calibrated volume line, and the Bottle-shape calibration editor.
+- Live scanner (`src/live/DiscoverARSurface.tsx`): runs the web worker queue and the iOS native detector, then attaches `liquidLevel` to each tracked bottle.
+- Home screen (`app/index.tsx`): only passes `liquidLevel` through to Live Inventory.
+- iOS native module (`modules/discover-arkit`): `analyzeLiquidLevels`.
+- Server identity (`src/services/discoverLiveApi.ts`): supplies the bottle shape key used to pick a calibration. Nothing is written back.
+- Benchmark tooling (`scripts/liquid-benchmark`, `.github/workflows/liquid-level-benchmark.yml`): offline research only.
+
+Nothing else reads fill height or volume: no database table, no paid cloud call, no inventory count.

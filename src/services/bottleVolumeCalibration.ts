@@ -1,5 +1,13 @@
+/**
+ * FILL HEIGHT — the single definition used everywhere in Discover (detectors, consensus,
+ * calibration, screen and notes): the liquid line's distance up from the BOTTOM EDGE of the
+ * detected bottle box, divided by that box's height, as a fraction 0..1 (52% = 0.52).
+ * It is a picture measurement, not millimetres and not a volume.
+ */
+export type FillHeightFraction = number;
+
 export type BottleCalibrationPoint = {
-  /** Liquid height from the bottle's calibrated base, normalized 0..1. */
+  /** Fill height (see FillHeightFraction): fraction of the detected bottle box height, from its bottom edge. */
   heightFraction: number;
   /** Fraction of the bottle's rated capacity at that height, normalized 0..1. */
   volumeFraction: number;
@@ -34,13 +42,13 @@ export function validateBottleVolumeProfile(profile: BottleVolumeProfile): boole
 }
 
 /**
- * Converts a measured body-height fraction to volume only when a validated,
+ * Converts a fill height (FillHeightFraction) to volume only when a validated,
  * bottle-specific calibration profile is supplied. The full point is the
  * measured full-fill line, which may sit below the top of the bottle. No generic cylinder
  * assumption is made for shoulders, punt, taper, or nonuniform bottle bodies.
  */
 export function estimateCalibratedBottleVolume(
-  heightFraction: number,
+  heightFraction: FillHeightFraction,
   profile?: BottleVolumeProfile | null,
 ): CalibratedVolume {
   if (!Number.isFinite(heightFraction) || heightFraction < 0 || heightFraction > 1) {

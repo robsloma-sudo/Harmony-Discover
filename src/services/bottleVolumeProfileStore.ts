@@ -12,12 +12,19 @@ export function getCachedBottleVolumeProfile(identityKey: string): BottleVolumeP
 
 type ProfileRegistry = { version: 1; profiles: Record<string, BottleVolumeProfile> };
 
+/** The minimum catalogue match score before any volume (ml / fl oz) may be shown or calibrated. */
+export const MIN_VOLUME_MATCH_SCORE = 0.9;
+
 /**
- * Which calibration a bottle's fill height may use.
- * 1. A server-resolved identity with a shape key (brand|line|size) wins: the glass is the same
- *    across releases, so one calibration serves every release of that line and size.
- * 2. A resolved identity whose barcode disagrees with the label words gets no volume at all.
- * 3. Otherwise the previous rule: a catalogue match of at least 0.90 plus the read size.
+ * THE volume rule (the one rule; docs/liquid-level-analysis.md says the same thing):
+ * a volume is shown, and a calibration may be saved, only when
+ *   1. this read is a strong catalogue match (state 'matched', score >= 0.90), and
+ *   2. the barcode does not disagree with the label words.
+ * A known bottle shape never replaces the match check. It only decides WHICH calibration is used:
+ * the server's shape key (brand|line|size) when known, so one calibration serves every release of
+ * that line and size; otherwise the matched product id plus the read size.
+ * A volume also needs a saved calibration for that key and a fill height inside its range
+ * (see estimateCalibratedBottleVolume).
  */
 export function getBottleCalibrationKey(
   match: { id: string; score: number } | null | undefined,
@@ -25,10 +32,10 @@ export function getBottleCalibrationKey(
   size?: string,
   resolved?: { shapeKey: string | null; flags: string[] } | null,
 ): string | null {
-  if (resolved?.shapeKey) return `shape:${resolved.shapeKey}`;
   if (resolved?.flags?.includes('barcode_and_label_words_disagree')) return null;
   if (state !== 'matched' || !match || typeof match.id !== 'string' || !match.id.trim() ||
-      !Number.isFinite(match.score) || match.score < 0.9) return null;
+      !Number.isFinite(match.score) || match.score < MIN_VOLUME_MATCH_SCORE) return null;
+  if (resolved?.shapeKey) return `shape:${resolved.shapeKey}`;
   const sizeKey = String(size ?? '').toLowerCase().replace(/([0-9])([a-z])/g, '$1 $2').replace(/([a-z])([0-9])/g, '$1 $2').replace(/[^a-z0-9]+/g, ' ').trim() || 'unspecified-size';
   return `${match.id.trim()}::${sizeKey}`;
 }
