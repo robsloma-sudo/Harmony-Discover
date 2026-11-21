@@ -1,3 +1,4 @@
+import { devOnlyScreen } from '../src/dev/devOnlyScreen';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
@@ -5,7 +6,7 @@ import { useCameraPermissions } from 'expo-camera';
 import { Screen, styles } from '../src/ui';
 import { DiscoverARSurface, type ARTrackingUpdate, type ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 
-export default function ARKitLiveTest() {
+function ARKitLiveTest() {
   const [permission, requestPermission] = useCameraPermissions();
   const [active, setActive] = useState(false);
   const [tracking, setTracking] = useState<ARTrackingUpdate>({ state: 'paused', reason: 'not_started' });
@@ -74,3 +75,6 @@ export default function ARKitLiveTest() {
     </Screen>
   );
 }
+
+// FIX-026: developer-only screen; production visitors are sent home.
+export default devOnlyScreen(ARKitLiveTest);

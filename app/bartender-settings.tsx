@@ -1,3 +1,4 @@
+import { devOnlyScreen } from '../src/dev/devOnlyScreen';
 import { useEffect, useState } from 'react';
 import { ScrollView, View, Text, Pressable, TextInput, Switch, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
@@ -8,7 +9,7 @@ import { MARTY_BOSTON_CONSENT_VERSION } from '../src/voice/martySullivanBoston';
 type Memory = { id: string; category: 'taste_preference' | 'drink_history' | 'interaction_style'; label: string; value: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
 
-export default function BartenderSettingsScreen() {
+function BartenderSettingsScreen() {
   const { session } = useAuth();
   const userId = session?.user?.id;
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -141,3 +142,6 @@ const s = StyleSheet.create({
   memoryRow:{flexDirection:'row',alignItems:'center',gap:10,borderTopWidth:1,borderTopColor:C.line,paddingTop:12},memoryTitle:{color:C.text,fontSize:12,fontWeight:'800'},delete:{color:'#D78A83',fontSize:9,fontWeight:'800'},
   status:{color:C.gold,fontSize:11,lineHeight:16},footer:{color:'#707985',fontSize:8,textAlign:'center',letterSpacing:1.1},
 });
+
+// FIX-026: developer-only screen; production visitors are sent home.
+export default devOnlyScreen(BartenderSettingsScreen);
