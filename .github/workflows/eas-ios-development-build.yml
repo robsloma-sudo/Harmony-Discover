@@ -42,7 +42,7 @@ jobs:
           CI: "1"
 
       - name: Install EAS CLI
-        run: npm install --global eas-cli
+        run: npm install --global eas-cli@27.10.0
 
       - name: Verify linked EAS project
         run: |

@@ -1,0 +1,67 @@
+# Dependabot: small, weekly, grouped dependency updates for Harmony Discover.
+# Brand-new releases wait a few days (cooldown) so a hijacked or broken
+# release is usually caught and pulled before it reaches us.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    versioning-strategy: "increase-if-necessary"
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      # Expo / React Native move together; keep them in one PR so the
+      # SDK stays aligned.
+      expo-react-native:
+        patterns:
+          - "expo"
+          - "expo-*"
+          - "@expo/*"
+          - "react"
+          - "react-dom"
+          - "react-native"
+          - "react-native-*"
+          - "@react-native/*"
+        update-types:
+          - "minor"
+          - "patch"
+      npm-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    labels:
+      - "dependencies"
+      - "npm"

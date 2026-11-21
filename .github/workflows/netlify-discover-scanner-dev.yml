@@ -30,12 +30,14 @@ jobs:
     timeout-minutes: 25
     env:
       NETLIFY_SITE_ID: 3c50b789-a7f5-4ed4-806e-e5e455924646
-      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      HAS_NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN != '' }}
       EXPO_PUBLIC_SUPABASE_URL: https://lqqmwqrffelgnbngrkep.supabase.co
       EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - name: Check out isolated scanner release branch
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -45,7 +47,7 @@ jobs:
 
       - name: Verify deployment configuration
         run: |
-          test -n "$NETLIFY_AUTH_TOKEN" || { echo "::error::Missing NETLIFY_AUTH_TOKEN secret"; exit 1; }
+          test "$HAS_NETLIFY_AUTH_TOKEN" = "true" || { echo "::error::Missing NETLIFY_AUTH_TOKEN secret"; exit 1; }
           test -n "$EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" || { echo "::error::Missing EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY secret"; exit 1; }
           node -e "const u=process.env.EXPO_PUBLIC_SUPABASE_URL; new URL(u); if (!u.startsWith('https://')) process.exit(1); console.log('Discover DEV endpoint validated; publishable key is present.');"
 
@@ -59,7 +61,10 @@ jobs:
         run: test -s dist/index.html
 
       - name: Install Netlify CLI
-        run: npm install --global netlify-cli
+        run: npm install --global --no-audit --no-fund netlify-cli@27.19.0
 
       - name: Deploy isolated non-production preview to the confirmed Discover site
+        # The deploy token is given to this one step only.
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias=discover-scanner-dev --dir=dist --no-build --message "Harmony Discover scanner DEV preview $GITHUB_SHA"

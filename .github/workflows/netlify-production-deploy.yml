@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Check out production source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -58,17 +60,24 @@ jobs:
 
   deploy:
     needs: verify
-    if: github.ref == 'refs/heads/main'
+    # Production only ever deploys from main, never from a pull request.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Protected environment: restrict it to the main branch (and optionally
+    # require approval) under Settings > Environments > production.
+    environment:
+      name: production
     env:
       NETLIFY_SITE_ID: 3c50b789-a7f5-4ed4-806e-e5e455924646
-      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      HAS_NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN != '' }}
       EXPO_PUBLIC_SUPABASE_URL: https://lqqmwqrffelgnbngrkep.supabase.co
       EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - name: Check out production source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -81,7 +90,7 @@ jobs:
             echo "::error::Refusing to deploy: NETLIFY_SITE_ID is not the Harmony Discover production site."
             exit 1
           fi
-          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+          if [ "$HAS_NETLIFY_AUTH_TOKEN" != "true" ]; then
             echo "::error::Missing GitHub Actions secret NETLIFY_AUTH_TOKEN."
             exit 1
           fi
@@ -101,23 +110,35 @@ jobs:
         run: test -s dist/index.html
 
       - name: Install Netlify CLI
-        run: npm install --global netlify-cli
+        run: npm install --global --no-audit --no-fund netlify-cli@27.19.0
 
       - name: Deploy prebuilt output without running Netlify build
+        # The deploy token is given to this one step only.
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: netlify deploy --prod --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --dir=dist --no-build --message "Harmony Discover main ${GITHUB_SHA}"
 
+  # This job never checks out or runs pull-request code: it only uploads the
+  # already-built files from the verify job. It is skipped for pull requests
+  # from forks and from Dependabot, which must never receive the deploy token.
   deploy-preview:
     needs: verify
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref != 'scanner/regression-fixture-phase2'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.ref != 'scanner/regression-fixture-phase2'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: preview
     env:
       NETLIFY_SITE_ID: 3c50b789-a7f5-4ed4-806e-e5e455924646
-      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      HAS_NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN != '' }}
     steps:
       - name: Verify preview deployment configuration
         run: |
-          test -n "$NETLIFY_AUTH_TOKEN" || { echo "::error::Missing NETLIFY_AUTH_TOKEN secret"; exit 1; }
+          test "$HAS_NETLIFY_AUTH_TOKEN" = "true" || { echo "::error::Missing NETLIFY_AUTH_TOKEN secret"; exit 1; }
           test "$NETLIFY_SITE_ID" = "3c50b789-a7f5-4ed4-806e-e5e455924646" || { echo "::error::Wrong Netlify site ID"; exit 1; }
 
       - name: Download verified web build
@@ -130,7 +151,11 @@ jobs:
         run: test -s dist/index.html
 
       - name: Install Netlify CLI
-        run: npm install --global netlify-cli
+        run: npm install --global --no-audit --no-fund netlify-cli@27.19.0
 
       - name: Deploy isolated pull-request preview
-        run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias=discover-pr-${{ github.event.pull_request.number }} --dir=dist --no-build --message "Harmony Discover pull request ${{ github.event.pull_request.number }} ${GITHUB_SHA}"
+        # The deploy token is given to this one step only.
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: netlify deploy --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN" --alias="discover-pr-${PR_NUMBER}" --dir=dist --no-build --message "Harmony Discover pull request ${PR_NUMBER} ${GITHUB_SHA}"
