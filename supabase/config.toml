@@ -1,13 +1,57 @@
 # Function gateway settings for the Harmony Discover DEV project.
 # Endpoints verify user auth or worker-specific authentication themselves.
-[functions.discover-voice-session]
-verify_jwt = false
+# FIX-012 (21 Nov 2026): every function deployed on Discover DEV is listed, pinned to the verify_jwt value it has
+# LIVE today, so a redeploy from this repo changes nothing. Changing any of these is a separate decision.
 
 [functions.discover-api]
 verify_jwt = false
 
-[functions.discover-live-read]
-verify_jwt = true
+[functions.discover-catalog-sync]
+verify_jwt = false
+
+[functions.discover-checkins]
+verify_jwt = false
+
+[functions.discover-client-log]
+verify_jwt = false
 
 [functions.discover-enrichment-worker]
+verify_jwt = false
+
+[functions.discover-live-autosave]
+verify_jwt = false
+
+# Live is false (this file said true until FIX-012). Turning the gateway check on is a separate decision for Rob/Security.
+[functions.discover-live-read]
+verify_jwt = false
+
+[functions.discover-live-read-test]
+verify_jwt = false
+
+[functions.discover-menu-read]
+verify_jwt = true
+
+[functions.discover-model-bakeoff]
+verify_jwt = true
+
+[functions.discover-origins-probe]
+verify_jwt = true
+
+[functions.discover-phg-enrich]
+verify_jwt = false
+
+[functions.discover-research-probe]
+verify_jwt = true
+
+[functions.discover-retention]
+verify_jwt = false
+
+[functions.discover-ttb-probe]
+verify_jwt = true
+
+# Checks the user's JWT itself (the gateway check would block CORS preflight). Source is in PR #109.
+[functions.discover-verify-read]
+verify_jwt = false
+
+[functions.discover-voice-session]
 verify_jwt = false
