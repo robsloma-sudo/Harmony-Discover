@@ -11,14 +11,20 @@
 //                   COLA allocation), pulls finished details back and copies them into empty card fields
 //   letter_pack   : writes the on-phone letter-count catalogue (brand letter bags) to public storage discover-packs
 //   fonts         : refreshes the open-licence font catalogue (Fontsource, Google Fonts, Font Squirrel)
-//   daily         : products + brand_profiles + link + facts_push
+//   daily         : products + brand_profiles + link + facts_push (kept for manual runs; since v0.5 the timed jobs
+//                   call each step separately so every step gets its own time budget)
 // Auth: x-discover-cron-secret. Bridge token + PHG publishable key live in discover_bridge_config (server only).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.4";
+const VERSION = "0.5";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const BUDGET_MS = 100_000;
+// FIX-011: time limits on every outside call. A call to Harmony may take at most PHG_TIMEOUT_MS and never runs
+// past BUDGET_MS + 10 s, so the whole run finishes well inside the timed job's 115 s wait. Font sources get
+// FONT_TIMEOUT_MS each.
+const PHG_TIMEOUT_MS = 30_000;
+const FONT_TIMEOUT_MS = 30_000;
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
 
 Deno.serve(async (req) => {
@@ -37,15 +43,22 @@ Deno.serve(async (req) => {
   const cfg: Record<string, string> = Object.fromEntries((cfgRows ?? []).map((r: any) => [r.key, r.value]));
   if (!cfg.phg_bridge_token || !cfg.phg_url || !cfg.phg_anon_key) return json({ error: "bridge_not_configured" }, 503);
   const setCfg = (key: string, value: string) => db.from("discover_bridge_config").upsert({ key, value, updated_at: new Date().toISOString() });
+  const started = Date.now();
   const phg = async (fn: string, args: Record<string, unknown>) => {
-    const r = await fetch(cfg.phg_url + "/rest/v1/rpc/" + fn, { method: "POST",
-      headers: { apikey: cfg.phg_anon_key, "content-type": "application/json" },
-      body: JSON.stringify({ p_token: cfg.phg_bridge_token, ...args }) });
-    const p = await r.json().catch(() => null);
+    const limitMs = Math.max(5_000, Math.min(PHG_TIMEOUT_MS, BUDGET_MS + 10_000 - (Date.now() - started)));
+    let r: Response, p: any;
+    try {
+      r = await fetch(cfg.phg_url + "/rest/v1/rpc/" + fn, { method: "POST",
+        headers: { apikey: cfg.phg_anon_key, "content-type": "application/json" },
+        body: JSON.stringify({ p_token: cfg.phg_bridge_token, ...args }), signal: AbortSignal.timeout(limitMs) });
+      p = await r.json().catch(() => null);
+    } catch (e) {
+      const n = (e as Error)?.name;
+      throw new Error((n === "TimeoutError" || n === "AbortError" ? "phg_timeout_" : "phg_network_") + fn);
+    }
     if (!r.ok) throw new Error("phg_" + r.status + "_" + String(p?.message ?? "").slice(0, 60));
     return p;
   };
-  const started = Date.now();
 
   try {
     if (action === "labels") {
@@ -198,9 +211,9 @@ Deno.serve(async (req) => {
       };
       const got: Record<string, number> = {};
       try {
-        const gfText = await (await fetch("https://fonts.google.com/metadata/fonts", { headers: ua })).text();
+        const gfText = await (await fetch("https://fonts.google.com/metadata/fonts", { headers: ua, signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })).text();
         const gf = JSON.parse(gfText.slice(gfText.indexOf("{"))).familyMetadataList ?? [];
-        const fs: any[] = await (await fetch("https://api.fontsource.org/v1/fonts", { headers: ua })).json();
+        const fs: any[] = await (await fetch("https://api.fontsource.org/v1/fonts", { headers: ua, signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })).json();
         const gfm = new Map(gf.map((f: any) => [String(f.family).toLowerCase(), f]));
         for (const f of fs) { const g: any = gfm.get(String(f.family).toLowerCase()) ?? {};
           add(f.family, f.category, [...(g.classifications ?? []), f.category], f.license, "fontsource", "https://fontsource.org/fonts/" + f.id, g.popularity ?? null); }
@@ -209,7 +222,7 @@ Deno.serve(async (req) => {
         got.google = gf.length; got.fontsource = fs.length;
       } catch (e) { got.google_error = 1; }
       try {
-        const fq: any[] = await (await fetch("https://www.fontsquirrel.com/api/fontlist/all", { headers: ua })).json();
+        const fq: any[] = await (await fetch("https://www.fontsquirrel.com/api/fontlist/all", { headers: ua, signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })).json();
         for (const f of fq) add(f.family_name, String(f.classification ?? "").toLowerCase(), [f.classification], "free for commercial use (Font Squirrel)", "fontsquirrel", "https://www.fontsquirrel.com/fonts/" + f.family_urlname, null);
         got.fontsquirrel = fq.length;
       } catch (e) { got.fontsquirrel_error = 1; }
@@ -240,6 +253,8 @@ Deno.serve(async (req) => {
     }
     return json({ error: "unknown_action" }, 400);
   } catch (e) {
-    return json({ ok: false, error: String((e as Error).message ?? e).slice(0, 160) }, 502);
+    const error = String((e as Error).message ?? e).slice(0, 160);
+    console.log(JSON.stringify({ evt: "catalog_sync_failed", version: VERSION, action, error, ms: Date.now() - started }));
+    return json({ ok: false, error }, 502);
   }
 });

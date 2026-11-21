@@ -12,6 +12,13 @@ const TYPES = ["cocktail", "beer", "wine", "spirit", "seltzer_cider", "non_alcoh
 const MAX_BODY_BYTES = 2048;
 const CORS_HEADERS = "authorization,apikey,content-type";
 const CORS_METHODS = "POST,OPTIONS";
+// FIX-011: time limits. One AI call per page may take at most PAGE_TIMEOUT_MS, and the whole request stops
+// starting new pages once it nears the platform's request limit, so a hung provider can no longer freeze the
+// read. Pages that were not reached are reported as "time_limit_reached" and the scan stays "processing"
+// (never marked complete), so the user can simply retry.
+const PAGE_TIMEOUT_MS = 45_000;
+const REQUEST_BUDGET_MS = 130_000;
+const MIN_PAGE_MS = 10_000;
 
 function allowedOrigins(): Set<string> {
   return new Set((Deno.env.get("DISCOVER_ALLOWED_ORIGINS") ?? "")
@@ -54,6 +61,7 @@ const TOOL = {
 const SYSTEM = "Transcribe only what is visibly printed on this menu page. Return one entry per orderable item. Copy name, section, price, and description exactly. Include brands only when explicitly printed. Never guess, correct, translate, or complete missing text. Ignore decorative text and addresses. If unreadable, set legible=false. Always call menu_items.";
 
 Deno.serve(async (req: Request) => {
+  const requestStartedAt = Date.now();
   const origin = req.headers.get("origin");
   if (!originAllowed(origin)) return reply({ error: "origin_not_allowed" }, 403);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: headers(origin) });
@@ -130,6 +138,11 @@ Deno.serve(async (req: Request) => {
   let pages = 0, itemsSaved = 0;
   const failures: Array<Record<string, unknown>> = [];
   for (const [page, asset] of assets.entries()) {
+    const remainingMs = REQUEST_BUDGET_MS - (Date.now() - requestStartedAt);
+    if (remainingMs < MIN_PAGE_MS + 5_000) {
+      for (let p = page; p < assets.length; p++) failures.push({ page: p, error: "time_limit_reached" });
+      break;
+    }
     if (asset.byte_size > 15 * 1024 * 1024) { failures.push({ page, error: "image_too_large" }); continue; }
     if (!["image/jpeg", "image/png", "image/webp"].includes(asset.mime_type)) { failures.push({ page, error: "unsupported_image_type" }); continue; }
     // Re-read every page rather than trusting a prior extraction marker alone.
@@ -159,9 +172,14 @@ Deno.serve(async (req: Request) => {
             { type: "text", text: "Transcribe this menu page." },
           ] }],
         }),
+        signal: AbortSignal.timeout(Math.min(PAGE_TIMEOUT_MS, REQUEST_BUDGET_MS - (Date.now() - requestStartedAt) - 5_000)),
       });
       rawProvider = await response.json();
-    } catch { failures.push({ page, error: "vision_network_failed" }); continue; }
+    } catch (e) {
+      const timedOut = (e as Error)?.name === "TimeoutError" || (e as Error)?.name === "AbortError";
+      failures.push({ page, error: timedOut ? "vision_timeout" : "vision_network_failed" });
+      continue;
+    }
     if (!response.ok) {
       failures.push({ page, error: "vision_provider_error", status: response.status });
       console.log(JSON.stringify({ evt: "menu_read_provider_error", page, status: response.status, message: clean((rawProvider as { error?: { message?: string } })?.error?.message, 200) }));
