@@ -24,6 +24,47 @@ const MIN_PAGE_MS = 10_000;
 const capFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
 const USER_MENU_PAGES_PER_DAY = capFromEnv("DISCOVER_USER_MENU_PAGES_PER_DAY", 60);
 const PROJECT_MENU_PAGES_PER_DAY = capFromEnv("DISCOVER_PROJECT_MENU_PAGES_PER_DAY", 1500);
+// P-20261121-2146: extra daily limits for GUEST (anonymous) accounts only, on top of the normal caps.
+// Signed-in members are never affected. Three checks in one database step: per guest account, per network
+// (a daily-rotating keyed hash of the caller's address; the address itself is never stored), and all guests
+// together. Every number can be changed with a setting, no code change: DISCOVER_GUEST_<KIND>_PER_ACCOUNT,
+// DISCOVER_GUEST_<KIND>_PER_NETWORK, DISCOVER_GUEST_<KIND>_ALL_GUESTS (KIND = IMAGES, MENU_PAGES, AUTOSAVE, BOTTLE_SAVE).
+const guestCapFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const GUEST_CAPS: Record<string, [number, number, number]> = {
+  images: [guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_ACCOUNT", 150), guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_NETWORK", 300), guestCapFromEnv("DISCOVER_GUEST_IMAGES_ALL_GUESTS", 2000)],
+  menu_pages: [guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_ACCOUNT", 15), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_NETWORK", 30), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_ALL_GUESTS", 300)],
+  autosave: [guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_ACCOUNT", 100), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_NETWORK", 200), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_ALL_GUESTS", 1500)],
+  bottle_save: [guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_ACCOUNT", 10), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_NETWORK", 20), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_ALL_GUESTS", 200)],
+};
+const GUEST_LIMIT_MESSAGE = "You've reached today's free guest limit. Sign in (it's free) to keep going, or try again tomorrow.";
+async function guestNetworkKey(req: Request, secret: string): Promise<string | null> {
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || (req.headers.get("x-real-ip") || "").trim();
+  if (!ip || !secret) return null;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const b = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode("discover-guest-net:" + new Date().toISOString().slice(0, 10) + ":" + ip))).slice(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+// Returns null when the call may go ahead, otherwise the refusal to send. Members always get null.
+// useNetwork=false when the caller is another server program (its address is not the person's).
+async function guestRefusal(
+  // deno-lint-ignore no-explicit-any
+  db: any, user: { id: string; is_anonymous?: boolean }, req: Request, secret: string,
+  kind: "images" | "menu_pages" | "autosave" | "bottle_save", units: number, useNetwork = true,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (user.is_anonymous !== true) return null;
+  const [perAccount, perNetwork, allGuests] = GUEST_CAPS[kind];
+  const network = useNetwork ? await guestNetworkKey(req, secret).catch(() => null) : null;
+  const { data, error } = await db.rpc("discover_guest_allow", {
+    p_account: user.id, p_network: network, p_kind: kind, p_units: units,
+    p_account_max: perAccount, p_network_max: perNetwork, p_all_guests_max: allGuests,
+  });
+  if (error) return { status: 503, body: { error: "daily_limit_unavailable" } };
+  if (data !== true) return { status: 429, body: { error: "daily_limit_reached", limit: "guest", message: GUEST_LIMIT_MESSAGE } };
+  return null;
+}
 
 function allowedOrigins(): Set<string> {
   return new Set((Deno.env.get("DISCOVER_ALLOWED_ORIGINS") ?? "")
@@ -135,6 +176,9 @@ Deno.serve(async (req: Request) => {
 
   // FIX-007: daily page cap (per user and whole project). Every page is one AI call, so the day's pages
   // are reserved before any call is made; a refused request changes nothing (the scan keeps its old state).
+  // Called server-to-server by discover-api, so the caller's address is not the person's: no network check here.
+  const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "menu_pages", assets.length, false);
+  if (guestStop) return reply(guestStop.body, guestStop.status, origin);
   const { data: dayAllowed, error: dayError } = await db.rpc("discover_menu_page_allow", {
     p_subject: subject, p_pages: assets.length, p_user_max: USER_MENU_PAGES_PER_DAY, p_global_max: PROJECT_MENU_PAGES_PER_DAY,
   });
