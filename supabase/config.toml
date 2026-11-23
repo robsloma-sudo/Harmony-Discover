@@ -18,6 +18,10 @@ verify_jwt = false
 [functions.discover-enrichment-worker]
 verify_jwt = false
 
+# P-20261123-0711: checks the user's JWT itself; push_counts uses DISCOVER_EXPLORE_WORKER_SECRET.
+[functions.discover-explore]
+verify_jwt = false
+
 [functions.discover-live-autosave]
 verify_jwt = false
 
