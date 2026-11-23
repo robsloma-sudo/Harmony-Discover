@@ -1,26 +1,23 @@
-// Plain recipe lines shared by the cocktail maker and the make-at-home page.
+// Plain recipe lines shared by the cocktail maker, bartender card and make-at-home page.
 import { Text, View } from 'react-native';
-import type { CocktailRecipe, RecipeIngredient } from '../services/menuExplore';
+import type { Recipe, RecipeLine } from '../services/menuExplore';
 import { palette, space, type } from './exploreTheme';
 
-const NICE_UNIT: Record<string, string> = { dashes: 'dashes', dash: 'dash' };
-export function amountText(i: RecipeIngredient): string {
-  if (i.amount == null) return '';
-  const n = Math.round(i.amount * 100) / 100;
-  return `${n}${i.unit ? ' ' + (NICE_UNIT[i.unit] || i.unit) : ''}`;
+/** Amounts come from the server as text, e.g. "2 oz". Null before the first change. */
+export const amountText = (l: RecipeLine): string => (l.amount || '').trim();
+
+/** "about 18% alcohol" when the server gave an estimate. */
+export function abvText(r?: Recipe | null): string {
+  return r && typeof r.est_abv === 'number' && r.est_abv > 0 ? `about ${Math.round(r.est_abv)}% alcohol` : '';
 }
 
-export function IngredientList({ ingredients }: { ingredients: RecipeIngredient[] }) {
+export function IngredientList({ lines }: { lines: RecipeLine[] }) {
   return <View>
-    {ingredients.map((i, n) => <View key={`${i.name}-${n}`} style={{ flexDirection: 'row', gap: space.md, paddingVertical: 6 }}>
-      <Text style={{ ...type.value, color: palette.brass, minWidth: 84 }}>{amountText(i)}</Text>
-      <Text style={{ ...type.value, color: palette.ivory, flex: 1 }}>{i.name}</Text>
+    {lines.map((l, n) => <View key={`${l.ingredient}-${n}`} style={{ flexDirection: 'row', gap: space.md, paddingVertical: 6 }}>
+      <Text style={{ ...type.value, color: palette.brass, minWidth: 84 }}>{amountText(l)}</Text>
+      <Text style={{ ...type.value, color: palette.ivory, flex: 1 }}>{l.ingredient}</Text>
     </View>)}
   </View>;
-}
-
-export function parseRecipeParam(raw?: string): CocktailRecipe | null {
-  try { const r = JSON.parse(raw || ''); return r && Array.isArray(r.ingredients) ? r as CocktailRecipe : null; } catch { return null; }
 }
 
 /** The method is one paragraph; show it as numbered steps. */

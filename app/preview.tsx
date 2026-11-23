@@ -3,8 +3,8 @@ import { View, Text, Image, Pressable, ScrollView, ActivityIndicator, TextInput 
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
-import { getMenuLinks, prefetchJourneys, type MenuLineLink } from '../src/services/menuExplore';
-import { LineTitle, LinkedLineBlock } from '../src/explore/MenuLineList';
+import { ExploreLimitError, getMenuLinks, prefetchJourneys, type MenuLineLink } from '../src/services/menuExplore';
+import { LineTitle, LinkedLineBlock, LinksNotice } from '../src/explore/MenuLineList';
 import { getMockJourney } from '../src/services/mockJourneyApi';
 import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, confirmObservationVenue, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
 
@@ -26,6 +26,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
   const [venueConfirmed, setVenueConfirmed] = useState(false);
   const [contributionBusy, setContributionBusy] = useState(false);
   const [links, setLinks] = useState<MenuLineLink[]>([]);
+  const [linksNotice, setLinksNotice] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -54,9 +55,9 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
         catch { setMessage('Menu read succeeded, but contribution-permission status could not be checked.'); }
       }
       setEditingId(null);
-      setLinks([]);
+      setLinks([]); setLinksNotice('');
       // Links are a bonus: if they fail the menu review carries on with unlinked lines.
-      getMenuLinks(result.id, result.items || []).then(found => { setLinks(found); void prefetchJourneys(found); }).catch(() => {});
+      getMenuLinks(result.id, result.items || []).then(found => { setLinks(found); void prefetchJourneys(found); }).catch(e => { if (e instanceof ExploreLimitError) setLinksNotice(e.message); });
       if (result.status !== 'ready_for_review') setMessage(`Scan status: ${result.status}. Some pages may need another attempt.`);
       if (!result.items?.length) setMessage('No readable menu items were returned. Try a clearer photo with the menu filling the frame.');
     } catch (e) { setMessage(e instanceof Error ? e.message : 'Could not process this menu.'); }
@@ -123,6 +124,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
     {items && <>
       <Text style={styles.sectionTitle}>Review extracted items · {items.length}</Text>
       <Text style={styles.footnote}>Check the transcription carefully. Save each correction to update your private Discover scan and retain an audit of what changed.</Text>
+      <LinksNotice message={linksNotice} />
       {items.map(item => <View key={item.id} style={[styles.item, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
         {editingId === item.id ? <>
           <Text style={styles.eyebrow}>CORRECT TRANSCRIPTION</Text>
@@ -135,13 +137,13 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
         </> : <>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
             <View style={{ flex: 1, gap: 6 }}>
-              <LineTitle item={item} link={links.find(l => l.itemId === item.id)}>
+              <LineTitle item={item} link={links.find(l => l.line_id === item.id)} observationId={observationId}>
               <Text style={styles.itemTitle}>{item.name}</Text>
               {!!item.section && <Text style={styles.categoryDesc}>{item.section}</Text>}
               {!!item.description && <Text style={styles.categoryDesc}>{item.description}</Text>}
               <Text style={styles.footnote}>{item.category.replace('_', ' ')} · {item.text_verified ? 'verified' : 'needs review'}</Text>
               </LineTitle>
-              <LinkedLineBlock item={item} link={links.find(l => l.itemId === item.id)} />
+              <LinkedLineBlock item={item} link={links.find(l => l.line_id === item.id)} observationId={observationId} />
             </View>
             {!!item.price && <Text style={styles.price}>{item.price}</Text>}
           </View>

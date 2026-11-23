@@ -3,11 +3,11 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View, type StyleProp, ty
 import { Ionicons } from '@expo/vector-icons';
 import { MIN_TAP, palette, radius, space, type } from './exploreTheme';
 
-export type ExploreKindName = 'cocktail' | 'spirit' | 'wine' | 'beer';
+export type ExploreKindName = 'cocktail' | 'spirit' | 'wine' | 'beer' | 'other';
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
-export const KIND_ICON: Record<ExploreKindName, IconName> = { cocktail: 'wine-outline', spirit: 'flask-outline', wine: 'wine', beer: 'beer-outline' };
-export const KIND_LABEL: Record<ExploreKindName, string> = { cocktail: 'Cocktail', spirit: 'Spirit', wine: 'Wine', beer: 'Beer' };
+export const KIND_ICON: Record<ExploreKindName, IconName> = { cocktail: 'wine-outline', spirit: 'flask-outline', wine: 'wine', beer: 'beer-outline', other: 'flask-outline' };
+export const KIND_LABEL: Record<ExploreKindName, string> = { cocktail: 'Cocktail', spirit: 'Spirit', wine: 'Wine', beer: 'Beer', other: 'Drink' };
 
 /** Panel container in the Atlas card style (dark panel, hairline border, rounded 18). */
 export function ExploreSheet({ children, style, padded = true }: { children?: React.ReactNode; style?: StyleProp<ViewStyle>; padded?: boolean }) {

@@ -1,31 +1,31 @@
 // Dev-only sample data (EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK === '1'). Clearly labelled; never real facts.
-import type { CocktailRecipe, ExploreKind, Journey, MenuLineLink, ModifyAction } from './types';
+import type { ChangedCocktail, ChangeType, CocktailChange, ExploreKind, Journey, MenuLineLink, Recipe } from './types';
 
 export const MOCK_LABEL = 'Sample data (dev preview, not real facts).';
 export const isMockMode = () => process.env.EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK === '1';
 
-export const MOCK_RECIPES: Record<string, CocktailRecipe> = {
-  'cocktail:old-fashioned': {
-    name: 'Old Fashioned', baseRefId: 'spirit:buffalo-trace',
-    ingredients: [
-      { name: 'Buffalo Trace bourbon', amount: 2, unit: 'oz', role: 'base', productRefId: 'spirit:buffalo-trace' },
-      { name: 'Simple syrup', amount: 0.25, unit: 'oz', role: 'sweetener' },
-      { name: 'Angostura bitters', amount: 2, unit: 'dashes', role: 'bitters' },
-      { name: 'Orange peel', amount: 1, unit: 'strip', role: 'garnish' },
+export const MOCK_COCKTAIL_OLD_FASHIONED = 'mock-cocktail-old-fashioned';
+export const MOCK_COCKTAIL_NEGRONI = 'mock-cocktail-negroni';
+export const MOCK_PRODUCT_BUFFALO_TRACE = 'mock-product-buffalo-trace';
+
+export const MOCK_RECIPES: Record<string, Recipe> = {
+  [MOCK_COCKTAIL_OLD_FASHIONED]: {
+    name: 'Old Fashioned', base_cocktail_id: MOCK_COCKTAIL_OLD_FASHIONED,
+    lines: [
+      { ingredient: 'Buffalo Trace bourbon', amount: '2 oz', phg_product_id: MOCK_PRODUCT_BUFFALO_TRACE },
+      { ingredient: 'Simple syrup', amount: '1/4 oz', phg_product_id: null },
+      { ingredient: 'Angostura bitters', amount: '2 dashes', phg_product_id: null },
     ],
-    method: 'Stir bourbon, syrup and bitters with ice. Strain over a large cube. Express the orange peel over the top.',
-    glass: 'Rocks glass', garnish: 'Orange peel', changes: [],
+    method: 'Stir with ice. Strain over a large cube.', glass: 'Rocks glass', garnish: 'Orange peel', est_abv: 0.3,
   },
-  'cocktail:negroni': {
-    name: 'Negroni', baseRefId: 'spirit:tanqueray-gin',
-    ingredients: [
-      { name: 'Gin', amount: 1, unit: 'oz', role: 'base', productRefId: 'spirit:tanqueray-gin' },
-      { name: 'Campari', amount: 1, unit: 'oz', role: 'modifier', productRefId: 'spirit:campari' },
-      { name: 'Sweet vermouth', amount: 1, unit: 'oz', role: 'sweetener' },
-      { name: 'Orange peel', amount: 1, unit: 'strip', role: 'garnish' },
+  [MOCK_COCKTAIL_NEGRONI]: {
+    name: 'Negroni', base_cocktail_id: MOCK_COCKTAIL_NEGRONI,
+    lines: [
+      { ingredient: 'Gin', amount: '1 oz', phg_product_id: 'mock-product-gin' },
+      { ingredient: 'Campari', amount: '1 oz', phg_product_id: 'mock-product-campari' },
+      { ingredient: 'Sweet vermouth', amount: '1 oz', phg_product_id: null },
     ],
-    method: 'Stir everything with ice until cold. Strain over fresh ice. Garnish with orange peel.',
-    glass: 'Rocks glass', garnish: 'Orange peel', changes: [],
+    method: 'Stir with ice. Strain over fresh ice.', glass: 'Rocks glass', garnish: 'Orange peel', est_abv: 0.25,
   },
 };
 
@@ -36,15 +36,19 @@ export function mockMenuLinks(items?: { id: string; name: string }[]): MenuLineL
   ];
   return list.map((it): MenuLineLink => {
     const n = it.name.toLowerCase();
-    if (n.includes('old fashioned')) return { itemId: it.id, linked: true, cocktail: { refId: 'cocktail:old-fashioned', name: 'Old Fashioned' },
-      components: [{ kind: 'spirit', refId: 'spirit:buffalo-trace', name: 'Buffalo Trace Bourbon', producer: 'Buffalo Trace Distillery', matchedText: 'Buffalo Trace' }] };
-    if (n.includes('negroni')) return { itemId: it.id, linked: true, cocktail: { refId: 'cocktail:negroni', name: 'Negroni' },
-      components: [
-        { kind: 'spirit', refId: 'spirit:tanqueray-gin', name: 'London Dry Gin', producer: null, matchedText: 'gin' },
-        { kind: 'spirit', refId: 'spirit:campari', name: 'Campari', producer: 'Gruppo Campari', matchedText: 'Campari' }] };
-    if (n.includes('pinot')) return { itemId: it.id, linked: true, cocktail: null, components: [{ kind: 'wine', refId: 'wine:mock-pinot-noir', name: 'Pinot Noir', producer: null, matchedText: 'Pinot Noir' }] };
-    if (n.includes('pilsner')) return { itemId: it.id, linked: true, cocktail: null, components: [{ kind: 'beer', refId: 'beer:mock-pilsner', name: 'Pilsner', producer: null, matchedText: 'Pilsner' }] };
-    return { itemId: it.id, linked: false, cocktail: null, components: [] };
+    if (n.includes('old fashioned')) return { line_id: it.id, status: 'linked', kind: 'cocktail', confidence: 0.9,
+      cocktail: { id: MOCK_COCKTAIL_OLD_FASHIONED, name: 'Old Fashioned' },
+      items: [{ kind: 'spirit', phg_product_id: MOCK_PRODUCT_BUFFALO_TRACE, name: 'Buffalo Trace Bourbon', role: 'base' }] };
+    if (n.includes('negroni')) return { line_id: it.id, status: 'linked', kind: 'cocktail', confidence: 0.9,
+      cocktail: { id: MOCK_COCKTAIL_NEGRONI, name: 'Negroni' },
+      items: [
+        { kind: 'spirit', phg_product_id: 'mock-product-gin', name: 'London Dry Gin', role: 'base' },
+        { kind: 'spirit', phg_product_id: 'mock-product-campari', name: 'Campari', role: 'modifier' }] };
+    if (n.includes('pinot')) return { line_id: it.id, status: 'linked', kind: 'wine', confidence: 0.8, cocktail: null,
+      items: [{ kind: 'wine', phg_product_id: 'mock-product-pinot-noir', name: 'Pinot Noir', role: 'pour' }] };
+    if (n.includes('pilsner')) return { line_id: it.id, status: 'linked', kind: 'beer', confidence: 0.8, cocktail: null,
+      items: [{ kind: 'beer', phg_product_id: 'mock-product-pilsner', name: 'Pilsner', role: 'pour' }] };
+    return { line_id: it.id, status: 'not_linked', kind: 'other', confidence: 0, cocktail: null, items: [] };
   });
 }
 
@@ -52,49 +56,46 @@ const READY_AFTER = 2; // polls before a "building" journey becomes ready
 const fetchCounts = new Map<string, number>();
 export function resetMockJourneys() { fetchCounts.clear(); }
 
-function mockJourneyBody(kind: ExploreKind, refId: string, name: string, status: Journey['status']): Journey {
-  const base: Journey = { kind, refId, status, title: name, intro: `${MOCK_LABEL} A short story about ${name}.`, sections: [], updatedAt: null };
+function mockJourneyBody(kind: ExploreKind, ref: string, name: string, status: Journey['status']): Journey {
+  const base: Journey = { kind, ref, status, title: name, intro: `${MOCK_LABEL} A short story about ${name}.`, sections: [] };
   if (status !== 'ready') return base;
-  return { ...base, updatedAt: new Date().toISOString(), sections: [
+  return { ...base, sections: [
     { heading: kind === 'cocktail' ? 'Origin' : 'Producer', body: `${MOCK_LABEL} Where ${name} comes from.` },
     { heading: kind === 'cocktail' ? 'Famous versions' : 'Region', body: `${MOCK_LABEL} Notable styles and places.` },
     { heading: 'History', body: `${MOCK_LABEL} How ${name} got its reputation.`, evidence: 'sample' },
   ] };
 }
 
-/** Ready immediately for old-fashioned and buffalo-trace; everything else (e.g. Campari) is 'building' for the first polls. */
-export function mockJourney(kind: ExploreKind, refId: string, name: string): Journey {
-  if (refId === 'cocktail:old-fashioned' || refId === 'spirit:buffalo-trace') return mockJourneyBody(kind, refId, name, 'ready');
-  const key = `${kind}:${refId}`;
+/** Ready immediately for old-fashioned and buffalo-trace; everything else is 'building' for the first polls. */
+export function mockJourney(kind: ExploreKind, ref: string, name: string): Journey {
+  if (ref === MOCK_COCKTAIL_OLD_FASHIONED || ref === MOCK_PRODUCT_BUFFALO_TRACE) return mockJourneyBody(kind, ref, name, 'ready');
+  const key = `${kind}:${ref}`;
   const n = (fetchCounts.get(key) ?? 0) + 1;
   fetchCounts.set(key, n);
-  return mockJourneyBody(kind, refId, name, n > READY_AFTER ? 'ready' : 'building');
+  return mockJourneyBody(kind, ref, name, n > READY_AFTER ? 'ready' : 'building');
 }
 
-const SWAPS = ['Rye whiskey', 'Scotch whisky', 'Reposado tequila', 'Dark rum', 'Cognac'];
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
-export function mockModify(recipe: CocktailRecipe, action: ModifyAction, option?: string | null): CocktailRecipe {
+export function mockChangeCocktail(recipe: Recipe, changes: CocktailChange[]): ChangedCocktail {
   const r = clone(recipe);
-  const base = r.ingredients.find(i => i.role === 'base');
-  const bump = (role: string, f: number) => { for (const i of r.ingredients) if (i.role === role && i.amount != null) i.amount = Math.round(i.amount * f * 100) / 100; };
-  if (action === 'swap_base') {
-    const choice = option || SWAPS.find(s => s.toLowerCase() !== (base?.name || '').toLowerCase()) || SWAPS[0];
-    if (base) { r.changes.push(`Swapped ${base.name} for ${choice}`); base.name = choice; base.productRefId = null; r.baseRefId = null; }
-  } else if (action === 'smokier') {
-    r.ingredients.splice(Math.max(1, r.ingredients.findIndex(i => i.role === 'garnish')), 0, { name: 'Mezcal (float)', amount: 0.25, unit: 'oz', role: 'modifier' });
-    r.changes.push('Added a mezcal float for smoke');
-  } else if (action === 'lower_proof') {
-    bump('base', 0.75);
-    r.ingredients.splice(Math.max(1, r.ingredients.findIndex(i => i.role === 'garnish')), 0, { name: 'Soda water', amount: 1, unit: 'oz', role: 'lengthener' });
-    r.changes.push('Less spirit, topped with soda for a lower proof');
-  } else if (action === 'less_sweet') {
-    bump('sweetener', 0.5);
-    r.changes.push('Halved the sweetener');
-  } else if (action === 'more_citrus') {
-    if (r.ingredients.some(i => i.role === 'acid')) bump('acid', 1.5);
-    else r.ingredients.splice(Math.max(1, r.ingredients.findIndex(i => i.role === 'garnish')), 0, { name: 'Fresh lemon juice', amount: 0.25, unit: 'oz', role: 'acid' });
-    r.changes.push('More citrus');
+  const notes: string[] = [];
+  const insertAt = () => r.lines.length;
+  for (const c of changes) {
+    if (c.type === 'swap_base' && r.lines[0]) { notes.push(`${r.lines[0].ingredient} swapped for rye whiskey`); r.lines[0] = { ingredient: 'Rye whiskey', amount: r.lines[0].amount, phg_product_id: null }; }
+    else if (c.type === 'smokier') { r.lines.splice(insertAt(), 0, { ingredient: 'Mezcal (float)', amount: '1/4 oz', phg_product_id: null }); notes.push('a mezcal float for smoke'); }
+    else if (c.type === 'lower_proof') { r.lines.splice(insertAt(), 0, { ingredient: 'Soda water', amount: '1 oz', phg_product_id: null }); notes.push('topped with soda for a lower proof'); if (r.est_abv != null) r.est_abv = Math.round(r.est_abv * 75) / 100; }
+    else if (c.type === 'drier') notes.push('half the sweetener');
+    else if (c.type === 'more_citrus') { r.lines.splice(insertAt(), 0, { ingredient: 'Fresh lemon juice', amount: '1/4 oz', phg_product_id: null }); notes.push('more citrus'); }
+    else notes.push(c.type.replace(/_/g, ' '));
   }
-  return r;
+  const summary = notes.join(', ') || 'no changes';
+  const ingredients = r.lines.map(l => `${l.amount ? l.amount + ' ' : ''}${l.ingredient}`).join('\n');
+  return {
+    recipe: r,
+    bartender_card: `${MOCK_LABEL}\n${r.name}, please: ${summary}.\n${ingredients}`,
+    home_recipe: `${MOCK_LABEL}\n${r.name} (${summary})\n${ingredients}\n${r.method ?? ''}`.trim(),
+    change_types: changes.map(c => c.type) as ChangeType[],
+    ai_used: false,
+  };
 }

@@ -1,6 +1,9 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 const store = vi.hoisted(() => new Map<string, string>());
+const session = vi.hoisted(() => ({ anonymous: false }));
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: vi.fn(async (k: string) => store.get(k) ?? null),
@@ -8,186 +11,234 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 vi.mock('../src/services/supabase', () => ({
-  DISCOVER_API_URL: 'https://d.example/functions/v1/discover-api',
-  ensureDiscoverSession: vi.fn(async () => ({ access_token: 'tok' })),
+  ensureDiscoverSession: vi.fn(async () => ({ access_token: 'tok', user: { is_anonymous: session.anonymous } })),
 }));
 
 import {
-  _resetExploreMemory, deleteMyVersion, getCocktailRecipe, getJourneyTimed, listMyVersions, modifyCocktail,
-  pollJourney, prefetchJourneys, recordExploreEvent, saveMyVersion,
+  _resetExploreMemory, changeCocktail, deleteMyVersion, ExploreLimitError, findMenuLine, getJourneyTimed, getMenuLinks, listMyVersions,
+  pollJourney, prefetchJourneys, recordTap, saveMyVersion, startingRecipe,
 } from '../src/services/menuExplore';
 import { resetMockJourneys } from '../src/services/menuExplore/mock';
-import type { Journey, MenuLineLink } from '../src/services/menuExplore';
+import type { ChangedCocktail, Journey, MenuLineLink, Recipe } from '../src/services/menuExplore';
 
-const ready = (refId: string, kind: Journey['kind'] = 'spirit'): Journey => ({ kind, refId, status: 'ready', title: refId, sections: [{ heading: 'h', body: 'b' }] });
-const building = (refId: string): Journey => ({ kind: 'spirit', refId, status: 'building', title: refId, sections: [] });
+const URL = 'https://p.example/functions/v1/discover-explore';
+const LINE = '11111111-1111-4111-8111-111111111111';
+const OBS = '22222222-2222-4222-8222-222222222222';
+const SID = '33333333-3333-4333-8333-333333333333';
 const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
 const flush = () => new Promise(r => setTimeout(r, 0));
+const readyReply = (title = 'T') => ({ ok: true, status: 'ready', built_now: false, from_cache: true, journey: { title, summary: 'S', chapters: [{ title: 'h', text: 'b' }] } });
+const recipe: Recipe = { name: 'Negroni', base_cocktail_id: 'c1', lines: [{ ingredient: 'Gin', amount: null, phg_product_id: 'p1' }], method: null, glass: null, garnish: null, est_abv: null };
+const changed: ChangedCocktail = { recipe, bartender_card: 'card', home_recipe: 'home', change_types: ['smokier'], ai_used: true };
 
-beforeEach(() => { store.clear(); _resetExploreMemory(); resetMockJourneys(); vi.stubEnv('EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK', ''); });
+/** fetch mock: routes by action. Records parsed bodies. */
+function mockServer(handler: (action: string, body: any) => Response | Promise<Response>) {
+  const calls: { url: string; init: any; body: any }[] = [];
+  const f = vi.fn(async (url: string, init: any) => { const body = JSON.parse(init.body); calls.push({ url, init, body }); return handler(body.action, body); });
+  vi.stubGlobal('fetch', f);
+  return { f, calls };
+}
+
+beforeEach(() => {
+  store.clear(); _resetExploreMemory(); resetMockJourneys(); session.anonymous = false;
+  vi.stubEnv('EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK', '');
+  vi.stubEnv('EXPO_PUBLIC_SUPABASE_URL', 'https://p.example');
+  vi.stubEnv('EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY', 'pub');
+});
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-describe('journey cache', () => {
-  it('serves a cached ready journey from memory then storage with no fetch', async () => {
-    const fetchMock = vi.fn(async () => json(ready('spirit:a')));
-    vi.stubGlobal('fetch', fetchMock);
-    expect((await getJourneyTimed('spirit', 'spirit:a', 'A')).source).toBe('network');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const hit = await getJourneyTimed('spirit', 'spirit:a', 'A');
-    expect(hit.source).toBe('memory');
-    expect(hit.ms).toBeLessThan(50);
-    _resetExploreMemory();
-    const disk = await getJourneyTimed('spirit', 'spirit:a', 'A');
-    expect(disk.source).toBe('storage');
-    expect(disk.ms).toBeLessThan(50);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+describe('server calls', () => {
+  it('every action is a POST to /functions/v1/discover-explore with auth headers and the right fields', async () => {
+    const { calls } = mockServer(a => json(a === 'link_menu' ? { lines: [] } : a === 'journey' ? readyReply() : a === 'save_version' ? { ok: true, id: SID } : a === 'list_versions' ? { versions: [] } : a === 'change_cocktail' ? { recipe, bartender_card: 'c', home_recipe: 'h', change_types: ['smokier'], ai_used: true } : { ok: true }));
+    await getMenuLinks(OBS);
+    await getJourneyTimed('spirit', 'p1', 'A');
+    await changeCocktail({ cocktail_id: 'c1', recipe, button: 'less_sweet', observation_id: OBS });
+    recordTap({ observation_id: OBS, line_id: LINE, item_kind: 'spirit', item_ref: 'p1' });
+    await saveMyVersion(changed, { observation_id: OBS });
+    await listMyVersions();
+    await deleteMyVersion((await listMyVersions())[0].id);
+    await flush();
+    expect(calls.map(c => c.body.action)).toEqual(['link_menu', 'journey', 'change_cocktail', 'tap', 'save_version', 'list_versions', 'list_versions', 'delete_version']);
+    for (const c of calls) {
+      expect(c.url).toBe(URL);
+      expect(c.init.method).toBe('POST');
+      expect(c.init.headers).toMatchObject({ authorization: 'Bearer tok', apikey: 'pub', 'content-type': 'application/json' });
+    }
+    const by = (a: string) => calls.find(c => c.body.action === a)!.body;
+    expect(by('link_menu')).toEqual({ action: 'link_menu', observation_id: OBS });
+    expect(by('journey')).toEqual({ action: 'journey', item_kind: 'spirit', item_ref: 'p1' });
+    expect(by('change_cocktail')).toMatchObject({ cocktail_id: 'c1', recipe, changes: [{ type: 'drier', value: null }], observation_id: OBS });
+    expect(by('save_version')).toMatchObject({ name: 'Negroni', recipe, bartender_card: 'card', home_recipe: 'home', base_cocktail_id: 'c1', change_types: ['smokier'], observation_id: OBS });
+    expect(by('delete_version')).toEqual({ action: 'delete_version', id: SID });
   });
 
-  it('never caches a building journey as final, and expires after 7 days', async () => {
-    const fetchMock = vi.fn(async () => json(building('spirit:b')));
-    vi.stubGlobal('fetch', fetchMock);
-    await getJourneyTimed('spirit', 'spirit:b', 'B');
-    await getJourneyTimed('spirit', 'spirit:b', 'B');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    const f2 = vi.fn(async () => json(ready('spirit:c')));
-    vi.stubGlobal('fetch', f2);
-    await getJourneyTimed('spirit', 'spirit:c', 'C');
-    const key = [...store.keys()].find(k => k.endsWith('spirit:c'))!;
-    const e = JSON.parse(store.get(key)!); e.cachedAt -= 8 * 86400000; store.set(key, JSON.stringify(e));
-    _resetExploreMemory();
-    await getJourneyTimed('spirit', 'spirit:c', 'C');
-    expect(f2).toHaveBeenCalledTimes(2);
+  it('has no PLACEHOLDER or discover-api left in src/services/menuExplore', () => {
+    const dir = join(__dirname, '../src/services/menuExplore');
+    for (const f of readdirSync(dir)) {
+      const text = readFileSync(join(dir, f), 'utf8');
+      expect(text, f).not.toMatch(/PLACEHOLDER|discover-api/);
+    }
   });
 
-  it('asks the server to build on 404', async () => {
-    const fetchMock = vi.fn(async (_u: string, init?: RequestInit) => init?.method === 'POST' ? json(building('spirit:d')) : json({ error: 'nope' }, 404));
-    vi.stubGlobal('fetch', fetchMock);
-    const r = await getJourneyTimed('spirit', 'spirit:d', 'D');
-    expect(r.journey.status).toBe('building');
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]!.body))).toEqual({ kind: 'spirit', refId: 'spirit:d', name: 'D' });
+  it('remembers menu lines for findMenuLine', async () => {
+    const line = { line_id: LINE, status: 'linked', kind: 'cocktail', cocktail: { id: 'c1', name: 'N' }, items: [], confidence: 1 } as MenuLineLink;
+    mockServer(() => json({ lines: [line] }));
+    await getMenuLinks(OBS);
+    expect(findMenuLine(LINE)).toEqual({ observation_id: OBS, line });
+    expect(findMenuLine('nope')).toBeNull();
+  });
+
+  it('startingRecipe uses names only', () => {
+    const r = startingRecipe({ id: 'c1', name: 'N' }, [{ kind: 'spirit', phg_product_id: 'p1', name: 'Gin', role: 'base' }]);
+    expect(r).toMatchObject({ name: 'N', base_cocktail_id: 'c1', lines: [{ ingredient: 'Gin', amount: null, phg_product_id: 'p1' }] });
   });
 });
 
-describe('pollJourney', () => {
-  it('goes building -> ready then stops; cancel works', async () => {
+describe('errors', () => {
+  it('429 daily_limit_reached -> ExploreLimitError guest_daily with the server message', async () => {
+    mockServer(() => json({ error: 'daily_limit_reached', limit: 'guest', message: 'Sign in please' }, 429));
+    const err = await changeCocktail({ cocktail_id: 'c1', recipe, button: 'smokier' }).catch(e => e);
+    expect(err).toBeInstanceOf(ExploreLimitError);
+    expect(err).toMatchObject({ reason: 'guest_daily', message: 'Sign in please', status: 429 });
+  });
+  it('409 versions_full -> ExploreLimitError versions_full; phone copy is kept', async () => {
+    mockServer(() => json({ error: 'versions_full', message: 'Full!' }, 409));
+    const err = await saveMyVersion(changed).catch(e => e);
+    expect(err).toMatchObject({ reason: 'versions_full', message: 'Full!' });
+    expect((await readLocal()).length).toBe(1);
+  });
+});
+const readLocal = async () => JSON.parse(store.get('@harmony/explore/my-versions/v2') ?? '[]') as any[];
+
+describe('journey', () => {
+  it('maps free-form journey keys and serves the second call from cache with no network', async () => {
+    const { f } = mockServer(() => json(readyReply('Gin story')));
+    const first = await getJourneyTimed('spirit', 'p1', 'Gin');
+    expect(first.source).toBe('network');
+    expect(first.journey).toMatchObject({ status: 'ready', title: 'Gin story', intro: 'S', sections: [{ heading: 'h', body: 'b' }] });
+    const hit = await getJourneyTimed('spirit', 'p1', 'Gin');
+    expect(hit.source).toBe('memory');
+    _resetExploreMemory();
+    expect((await getJourneyTimed('spirit', 'p1', 'Gin')).source).toBe('storage');
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cache building, none or empty results', async () => {
+    const { f } = mockServer(() => json({ ok: true, status: 'building', built_now: false, from_cache: false, journey: null }));
+    await getJourneyTimed('spirit', 'p2', 'B');
+    await getJourneyTimed('spirit', 'p2', 'B');
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps 'limit' with its message", async () => {
+    mockServer(() => json({ ok: true, status: 'limit', built_now: false, from_cache: false, journey: null, message: 'Limit msg' }));
+    const { journey } = await getJourneyTimed('cocktail', 'c9', 'X');
+    expect(journey).toMatchObject({ status: 'limit', message: 'Limit msg', sections: [] });
+  });
+
+  it('polls building -> ready, then stops', async () => {
     vi.useFakeTimers();
     let n = 0;
-    const fetchMock = vi.fn(async () => json(++n < 3 ? building('spirit:p') : ready('spirit:p')));
-    vi.stubGlobal('fetch', fetchMock);
+    const { f } = mockServer(() => json(++n < 3 ? { status: 'building', journey: null } : readyReply()));
     const seen: string[] = [];
-    pollJourney('spirit', 'spirit:p', 'P', j => seen.push(j.status), { intervalMs: 2000 });
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(seen).toEqual(['building', 'building', 'ready']);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-
-    const seen2: string[] = [];
-    const cancel = pollJourney('spirit', 'spirit:z', 'Z', j => seen2.push(j.status), { intervalMs: 2000 });
-    cancel();
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(seen2.length).toBeLessThanOrEqual(1);
-  });
-
-  it('gives up with failed on timeout', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('fetch', vi.fn(async () => json(building('spirit:t'))));
-    const seen: string[] = [];
-    pollJourney('spirit', 'spirit:t', 'T', j => seen.push(j.status), { intervalMs: 1000, timeoutMs: 5000 });
-    await vi.advanceTimersByTimeAsync(20000);
-    expect(seen[seen.length - 1]).toBe('failed');
-  });
-
-  it('mock mode: one journey ready at once, another building then ready after 2 polls', async () => {
-    vi.stubEnv('EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK', '1');
-    expect((await getJourneyTimed('cocktail', 'cocktail:old-fashioned', 'Old Fashioned')).source).toBe('mock');
-    vi.useFakeTimers();
-    const seen: string[] = [];
-    pollJourney('spirit', 'spirit:campari', 'Campari', j => seen.push(j.status), { intervalMs: 100 });
+    pollJourney('spirit', 'p3', 'C', j => seen.push(j.status), { intervalMs: 100, timeoutMs: 10000 });
     await vi.advanceTimersByTimeAsync(1000);
     expect(seen).toEqual(['building', 'building', 'ready']);
+    expect(f).toHaveBeenCalledTimes(3);
+  });
+
+  it('poll timeout gives a synthetic failed journey', async () => {
+    vi.useFakeTimers();
+    mockServer(() => json({ status: 'building', journey: null }));
+    const seen: string[] = [];
+    pollJourney('spirit', 'p4', 'D', j => seen.push(j.status), { intervalMs: 100, timeoutMs: 350 });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen.at(-1)).toBe('failed');
   });
 });
 
-describe('prefetchJourneys', () => {
-  const links: MenuLineLink[] = [
-    { itemId: '1', linked: true, cocktail: { refId: 'cocktail:x', name: 'X' }, components: [{ kind: 'spirit', refId: 'spirit:s1', name: 'S1', matchedText: 's1' }] },
-    { itemId: '2', linked: true, cocktail: { refId: 'cocktail:x', name: 'X' }, components: [{ kind: 'spirit', refId: 'spirit:s1', name: 'S1', matchedText: 's1' }, { kind: 'beer', refId: 'beer:b', name: 'B', matchedText: 'b' }, { kind: 'wine', refId: 'wine:w', name: 'W', matchedText: 'w' }, { kind: 'spirit', refId: 'spirit:s2', name: 'S2', matchedText: 's2' }] },
-  ];
-  it('dedupes requests and never runs more than 3 at once', async () => {
+describe('prefetch', () => {
+  const links: MenuLineLink[] = [1, 2, 3, 4, 5, 6].map(i => ({
+    line_id: `l${i}`, status: 'linked', kind: 'spirit', cocktail: null, confidence: 1,
+    items: [{ kind: 'spirit', phg_product_id: i === 6 ? null : `p${i % 5}`, name: `P${i}`, role: 'base' }], // p1..p4,p0 + p1 duplicate? i=6 -> null
+  }));
+  it('dedupes, skips null product ids, and runs at most 3 at once', async () => {
     let active = 0, peak = 0;
-    const urls: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      urls.push(url); active++; peak = Math.max(peak, active);
-      await new Promise(r => setTimeout(r, 15)); active--;
-      const u = new URL(url); return json(ready(u.searchParams.get('ref')!, u.searchParams.get('kind') as never));
-    }));
-    await prefetchJourneys(links);
-    expect(urls.length).toBe(5); // x, s1, b, w, s2 once each
-    expect(new Set(urls).size).toBe(5);
+    const { f } = mockServer(async () => { active++; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, 5)); active--; return json(readyReply()); });
+    await prefetchJourneys([...links, links[0]]);
+    expect(f).toHaveBeenCalledTimes(5);
     expect(peak).toBeLessThanOrEqual(3);
     expect(peak).toBeGreaterThan(1);
-    await prefetchJourneys(links); // all cached now
-    expect(urls.length).toBe(5);
   });
-  it('shares one in-flight request between prefetch and getJourney', async () => {
-    const fetchMock = vi.fn(async () => { await new Promise(r => setTimeout(r, 10)); return json(ready('spirit:s1')); });
-    vi.stubGlobal('fetch', fetchMock);
-    await Promise.all([getJourneyTimed('spirit', 'spirit:s1', 'S1'), getJourneyTimed('spirit', 'spirit:s1', 'S1')]);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  it('is skipped for anonymous guests', async () => {
+    session.anonymous = true;
+    const { f } = mockServer(() => json(readyReply()));
+    await prefetchJourneys(links);
+    expect(f).not.toHaveBeenCalled();
   });
 });
 
-describe('recordExploreEvent', () => {
-  it('never throws on network failure and sends only anonymous fields', async () => {
-    const fetchMock = vi.fn(async () => { throw new Error('offline'); });
-    vi.stubGlobal('fetch', fetchMock);
-    expect(() => recordExploreEvent({ type: 'tap', itemKind: 'cocktail', refId: 'cocktail:x', action: 'smokier',
-      ...({ name: 'Rob', email: 'r@x.com', deviceId: 'abc' } as object) })).not.toThrow();
+describe('tap', () => {
+  it('sends exactly the 4 fields and never throws', async () => {
+    const { calls, f } = mockServer(() => json({ ok: true }));
+    recordTap({ observation_id: OBS, line_id: LINE, item_kind: 'spirit', item_ref: 'p1', extra: 'x' } as any);
     await flush();
-    expect(fetchMock).toHaveBeenCalled();
-    const body = JSON.parse(String((fetchMock.mock.calls[0] as unknown[])[1] && ((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)));
-    expect(Object.keys(body).sort()).toEqual(['action', 'at', 'itemKind', 'refId', 'type']);
-    expect(JSON.stringify(body)).not.toMatch(/Rob|r@x\.com|abc/);
+    expect(calls[0].body).toEqual({ action: 'tap', observation_id: OBS, line_id: LINE, item_kind: 'spirit', item_ref: 'p1' });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+    expect(() => recordTap({ observation_id: OBS, line_id: LINE, item_kind: 'spirit', item_ref: 'p1' })).not.toThrow();
+    await flush();
+    recordTap({ observation_id: OBS, line_id: 'not-a-uuid', item_kind: 'spirit', item_ref: 'p1' });
+    expect(f).toHaveBeenCalledTimes(1);
   });
-  it('does not throw even when the input is garbage', () => {
-    expect(() => recordExploreEvent(null as never)).not.toThrow();
+  it('is skipped in mock mode', async () => {
+    vi.stubEnv('EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK', '1');
+    const { f } = mockServer(() => json({ ok: true }));
+    recordTap({ observation_id: OBS, line_id: LINE, item_kind: 'spirit', item_ref: 'p1' });
+    await flush();
+    expect(f).not.toHaveBeenCalled();
   });
 });
 
 describe('my versions', () => {
-  const recipe = { name: 'Old Fashioned', ingredients: [], changes: ['Less sweet'] };
-  it('saves locally when the server fails and keeps it', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'down' }, 500)));
-    const v = await saveMyVersion(recipe, 'Old Fashioned', 'My OF');
-    expect(v.name).toBe('My OF');
-    const list = await listMyVersions(); // server list fails too
-    expect(list.map(x => x.id)).toEqual([v.id]);
+  it('keeps the phone copy when the server fails', async () => {
+    mockServer(() => json({ error: 'save_unavailable' }, 503));
+    const v = await saveMyVersion(changed);
+    expect(v.server_id).toBeNull();
+    expect((await listMyVersions()).map(x => x.id)).toEqual([v.id]);
   });
-  it('works with no account/config at all, and delete removes it', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no session'); }));
-    const v = await saveMyVersion(recipe, 'Old Fashioned');
-    expect((await listMyVersions()).length).toBe(1);
+
+  it('stores server_id from the reply and uses it for delete', async () => {
+    const { calls } = mockServer(a => json(a === 'save_version' ? { ok: true, id: SID } : { ok: true }));
+    const v = await saveMyVersion(changed, { name: ' Mine ' });
+    expect(v).toMatchObject({ server_id: SID, name: 'Mine' });
+    expect((await readLocal())[0].server_id).toBe(SID);
     await deleteMyVersion(v.id);
+    expect(calls.at(-1)!.body).toEqual({ action: 'delete_version', id: SID });
+    expect(await readLocal()).toEqual([]);
+  });
+
+  it('does not call the server to delete a phone-only version; tombstones failed server deletes', async () => {
+    mockServer(() => json({ error: 'x' }, 503));
+    const local = await saveMyVersion(changed);
+    const { f } = mockServer(() => json({ ok: true }));
+    await deleteMyVersion(local.id);
+    expect(f).not.toHaveBeenCalled();
+
+    const server = mockServer(a => json(a === 'save_version' ? { ok: true, id: SID } : { error: 'delete_unavailable' }, a === 'save_version' ? 200 : 503));
+    const v = await saveMyVersion(changed);
+    await deleteMyVersion(v.id);
+    expect(server.calls.at(-1)!.body.action).toBe('delete_version');
+    // server still lists it, but the tombstone hides it
+    mockServer(() => json({ versions: [{ id: SID, name: 'N', recipe, bartender_card: 'c', home_recipe: 'h', base_cocktail_id: 'c1', change_types: [], created_at: '2026-01-01T00:00:00Z' }] }));
     expect(await listMyVersions()).toEqual([]);
   });
-});
 
-describe('modify (mock)', () => {
-  it('really changes the recipe for each of the 5 actions', async () => {
-    vi.stubEnv('EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK', '1');
-    const base = await getCocktailRecipe('cocktail:old-fashioned');
-    const amt = (r: typeof base, role: string) => r.ingredients.find(i => i.role === role)?.amount;
-    const swap = await modifyCocktail(base, 'swap_base');
-    expect(swap.ingredients[0].name).not.toBe(base.ingredients[0].name);
-    const smoky = await modifyCocktail(base, 'smokier');
-    expect(smoky.ingredients.some(i => /mezcal/i.test(i.name))).toBe(true);
-    const low = await modifyCocktail(base, 'lower_proof');
-    expect(amt(low, 'base')!).toBeLessThan(amt(base, 'base')!);
-    const less = await modifyCocktail(base, 'less_sweet');
-    expect(amt(less, 'sweetener')!).toBeLessThan(amt(base, 'sweetener')!);
-    const citrus = await modifyCocktail(base, 'more_citrus');
-    expect(citrus.ingredients.some(i => i.role === 'acid')).toBe(true);
-    for (const r of [swap, smoky, low, less, citrus]) expect(r.changes.length).toBe(1);
-    expect(base.changes).toEqual([]); // input not mutated
+  it('merges server versions once, mapped with server_id', async () => {
+    const sv = { id: SID, name: 'Srv', recipe, bartender_card: 'c', home_recipe: 'h', base_cocktail_id: 'c1', change_types: ['smokier'], created_at: '2026-01-01T00:00:00Z' };
+    mockServer(() => json({ versions: [sv] }));
+    const list = await listMyVersions();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: SID, server_id: SID, name: 'Srv', bartender_card: 'c' });
+    expect(await listMyVersions()).toHaveLength(1);
   });
 });

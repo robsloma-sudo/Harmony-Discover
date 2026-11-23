@@ -1,83 +1,121 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DISCOVER_API_URL, ensureDiscoverSession } from '../supabase';
-import { EXPLORE_ENDPOINTS as EP } from './endpoints';
-import { isMockMode, mockJourney, mockMenuLinks, mockModify, MOCK_RECIPES } from './mock';
+import { ensureDiscoverSession } from '../supabase';
+import { callExplore, EXPLORE_ACTIONS as A, ExploreLimitError, ExploreRequestError } from './endpoints';
+import { isMockMode, mockChangeCocktail, mockJourney, mockMenuLinks } from './mock';
+import { MAKER_BUTTON_CHANGE } from './types';
 import type {
-  CocktailRecipe, ExploreEventInput, ExploreKind, Journey, JourneyTimed, MenuLineLink, ModifyAction, MyVersion, PollOptions,
+  ChangedCocktail, ChangeType, ExploreKind, Journey, JourneySection, JourneyStatus, JourneyTimed, LinkedItem, MakerButton,
+  MenuLineLink, MyVersion, PollOptions, Recipe, TapInput,
 } from './types';
 
-// ---- request (same pattern as discoverObservationApi.ts) ----
-async function authHeaders() {
-  const session = await ensureDiscoverSession();
-  return { authorization: `Bearer ${session.access_token}`, apikey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '' };
-}
-export class ExploreRequestError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
-}
-async function request(path: string, init: RequestInit = {}) {
-  if (!DISCOVER_API_URL) throw new Error('Discover API is not configured.');
-  const headers = await authHeaders();
-  const response = await fetch(`${DISCOVER_API_URL}${path}`, { ...init, headers: { ...headers, ...(init.headers || {}) } });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ExploreRequestError(body.error || `Discover request failed (${response.status}).`, response.status);
-  return body;
-}
-const JSON_HEADERS = { 'content-type': 'application/json' };
-const q = (o: Record<string, string>) => '?' + new URLSearchParams(o).toString();
+export { ExploreLimitError, ExploreRequestError };
 
 // ---- storage helpers (never throw) ----
 async function storeGet(key: string): Promise<string | null> { try { return await AsyncStorage.getItem(key); } catch { return null; } }
 async function storeSet(key: string, v: string) { try { await AsyncStorage.setItem(key, v); } catch { /* best effort */ } }
 
-// ---- Journey cache ----
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+const firstStr = (o: Record<string, any>, keys: string[]): string => { for (const k of keys) { const s = str(o[k]); if (s) return s; } return ''; };
+
+// ---- Menu links ----
+const lineIndex = new Map<string, { observation_id: string; line: MenuLineLink }>();
+function remember(observationId: string, lines: MenuLineLink[]) { for (const l of lines) lineIndex.set(l.line_id, { observation_id: observationId, line: l }); }
+
+/** In mock mode, pass the scanned items so the sample links attach to the real item ids. */
+export async function getMenuLinks(observationId: string, items?: { id: string; name: string }[]): Promise<MenuLineLink[]> {
+  if (isMockMode()) { const lines = mockMenuLinks(items); remember(observationId, lines); return lines; }
+  const r = await callExplore(A.linkMenu, { observation_id: observationId });
+  const lines = Array.isArray(r?.lines) ? r.lines as MenuLineLink[] : [];
+  remember(observationId, lines);
+  return lines;
+}
+/** Looks up a line from the last getMenuLinks (in memory only). */
+export function findMenuLine(lineId: string): { observation_id: string; line: MenuLineLink } | null {
+  return lineIndex.get(lineId) ?? null;
+}
+
+// ---- Journey: mapping ----
+function mapSections(raw: unknown): JourneySection[] {
+  if (!Array.isArray(raw)) return [];
+  const out: JourneySection[] = [];
+  for (const s of raw) {
+    if (typeof s === 'string') { if (s.trim()) out.push({ heading: '', body: s.trim() }); continue; }
+    if (!isObj(s)) continue;
+    const heading = firstStr(s, ['heading', 'title', 'name']);
+    const body = firstStr(s, ['body', 'text', 'content']);
+    if (!heading && !body) continue;
+    const evidence = firstStr(s, ['evidence', 'source']);
+    out.push({ heading, body, ...(evidence ? { evidence } : {}) });
+  }
+  return out;
+}
+function looksLikeRecipe(r: unknown): r is Recipe {
+  return isObj(r) && typeof r.name === 'string' && Array.isArray(r.lines);
+}
+function mapJourneyObject(kind: ExploreKind, ref: string, status: JourneyStatus, raw: unknown, name: string, built_now?: boolean): Journey {
+  const o = isObj(raw) ? raw : {};
+  let sections: JourneySection[] = [];
+  for (const k of ['sections', 'chapters', 'steps']) { sections = mapSections(o[k]); if (sections.length) break; }
+  const intro = firstStr(o, ['intro', 'summary', 'subtitle']);
+  const j: Journey = { kind, ref, status, title: firstStr(o, ['title', 'name']) || name, intro: intro || null, sections, built_now };
+  if (looksLikeRecipe(o.recipe)) j.recipe = o.recipe;
+  return j;
+}
+function mapJourneyReply(kind: ExploreKind, ref: string, name: string, r: any): Journey {
+  const s = str(r?.status);
+  const status: JourneyStatus = (['ready', 'built', 'building', 'none', 'limit'] as const).find(x => x === s) ?? 'none';
+  if (status === 'limit') {
+    return { kind, ref, status, title: name, sections: [], message: str(r?.message) || null, built_now: false };
+  }
+  return mapJourneyObject(kind, ref, status, r?.journey, name, !!r?.built_now);
+}
+
+// ---- Journey cache (7 days; only ready/built with content) ----
 export const JOURNEY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const JOURNEY_PREFIX = '@harmony/explore/journey/v1/';
+const JOURNEY_PREFIX = '@harmony/explore/journey/v2/';
 type CacheEntry = { journey: Journey; cachedAt: number };
 const memory = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<Journey>>();
-const keyOf = (kind: ExploreKind, refId: string) => `${kind}:${refId}`;
-const fresh = (e: CacheEntry | undefined) => !!e && e.journey.status === 'ready' && Date.now() - e.cachedAt < JOURNEY_TTL_MS;
+const keyOf = (kind: ExploreKind, ref: string) => `${kind}:${ref}`;
+const hasContent = (j: Journey) => j.sections.length > 0 || !!j.intro;
+const cacheable = (j: Journey) => (j.status === 'ready' || j.status === 'built') && hasContent(j);
+const fresh = (e: CacheEntry | undefined) => !!e && cacheable(e.journey) && Date.now() - e.cachedAt < JOURNEY_TTL_MS;
 
 /** Test helper: clears in-memory state only. */
-export function _resetExploreMemory() { memory.clear(); inflight.clear(); eventQueue.length = 0; flushing = false; }
+export function _resetExploreMemory() { memory.clear(); inflight.clear(); lineIndex.clear(); }
 
-async function cacheReady(journey: Journey) {
-  if (journey.status !== 'ready') return; // building/failed is never final
+async function cacheJourney(journey: Journey) {
+  if (!cacheable(journey)) return;
   const entry: CacheEntry = { journey, cachedAt: Date.now() };
-  memory.set(keyOf(journey.kind, journey.refId), entry);
-  await storeSet(JOURNEY_PREFIX + keyOf(journey.kind, journey.refId), JSON.stringify(entry));
+  memory.set(keyOf(journey.kind, journey.ref), entry);
+  await storeSet(JOURNEY_PREFIX + keyOf(journey.kind, journey.ref), JSON.stringify(entry));
 }
 
-/** One network (or mock) fetch; if the server has none (404) asks it to build. Never cached unless ready. */
-async function fetchJourney(kind: ExploreKind, refId: string, name: string): Promise<Journey> {
-  if (isMockMode()) return mockJourney(kind, refId, name);
-  let journey: Journey;
-  try {
-    journey = await request(EP.journey + q({ kind, ref: refId })) as Journey;
-  } catch (e) {
-    if (!(e instanceof ExploreRequestError) || e.status !== 404) throw e;
-    journey = await request(EP.journeyBuild, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ kind, refId, name }) }) as Journey;
-  }
-  return journey;
+async function fetchJourney(kind: ExploreKind, ref: string, name: string): Promise<Journey> {
+  if (isMockMode()) return mockJourney(kind, ref, name);
+  const r = await callExplore(A.journey, { item_kind: kind, item_ref: ref });
+  return mapJourneyReply(kind, ref, name, r);
 }
 
-/** Deduped network fetch that also caches ready results. */
-function fetchJourneyShared(kind: ExploreKind, refId: string, name: string): Promise<Journey> {
-  const key = keyOf(kind, refId);
+/** Deduped network fetch (Map<key,Promise>, cleared in finally) that also caches ready/built results. */
+function fetchJourneyShared(kind: ExploreKind, ref: string, name: string): Promise<Journey> {
+  const key = keyOf(kind, ref);
   const existing = inflight.get(key);
   if (existing) return existing;
   const p = (async () => {
-    const j = await fetchJourney(kind, refId, name);
-    await cacheReady(j);
+    const j = await fetchJourney(kind, ref, name);
+    await cacheJourney(j);
     return j;
   })().finally(() => { inflight.delete(key); });
   inflight.set(key, p);
   return p;
 }
 
-export async function getJourneyTimed(kind: ExploreKind, refId: string, name: string): Promise<JourneyTimed> {
+export async function getJourneyTimed(kind: ExploreKind, ref: string, name: string): Promise<JourneyTimed> {
   const t0 = Date.now();
-  const key = keyOf(kind, refId);
+  const key = keyOf(kind, ref);
   const mem = memory.get(key);
   if (fresh(mem)) return { journey: mem!.journey, source: 'memory', ms: Date.now() - t0 };
   const raw = await storeGet(JOURNEY_PREFIX + key);
@@ -87,15 +125,15 @@ export async function getJourneyTimed(kind: ExploreKind, refId: string, name: st
       if (fresh(e)) { memory.set(key, e); return { journey: e.journey, source: 'storage', ms: Date.now() - t0 }; }
     } catch { /* ignore corrupt cache */ }
   }
-  const journey = await fetchJourneyShared(kind, refId, name);
+  const journey = await fetchJourneyShared(kind, ref, name);
   return { journey, source: isMockMode() ? 'mock' : 'network', ms: Date.now() - t0 };
 }
-export async function getJourney(kind: ExploreKind, refId: string, name: string): Promise<Journey> {
-  return (await getJourneyTimed(kind, refId, name)).journey;
+export async function getJourney(kind: ExploreKind, ref: string, name: string): Promise<Journey> {
+  return (await getJourneyTimed(kind, ref, name)).journey;
 }
 
-/** Polls until ready/failed/timeout. On timeout onUpdate receives a synthetic 'failed' Journey. Returns cancel(). */
-export function pollJourney(kind: ExploreKind, refId: string, name: string, onUpdate: (j: Journey) => void, opts: PollOptions = {}): () => void {
+/** Polls while 'building'; stops on any other status. On timeout onUpdate receives a synthetic 'failed' Journey. Returns cancel(). */
+export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpdate: (j: Journey) => void, opts: PollOptions = {}): () => void {
   const intervalMs = opts.intervalMs ?? 2000;
   const timeoutMs = opts.timeoutMs ?? 60000;
   const started = Date.now();
@@ -105,7 +143,7 @@ export function pollJourney(kind: ExploreKind, refId: string, name: string, onUp
   const tick = async () => {
     if (cancelled) return;
     try {
-      const j = await fetchJourneyShared(kind, refId, name);
+      const j = await fetchJourneyShared(kind, ref, name);
       if (cancelled) return;
       onUpdate(j);
       if (j.status !== 'building') return stop();
@@ -113,7 +151,7 @@ export function pollJourney(kind: ExploreKind, refId: string, name: string, onUp
     if (cancelled) return;
     if (Date.now() - started + intervalMs > timeoutMs) {
       stop();
-      onUpdate({ kind, refId, status: 'failed', title: name, sections: [] });
+      onUpdate({ kind, ref, status: 'failed', title: name, sections: [] });
       return;
     }
     timer = setTimeout(tick, intervalMs);
@@ -122,116 +160,133 @@ export function pollJourney(kind: ExploreKind, refId: string, name: string, onUp
   return stop;
 }
 
-/** Pre-load Journeys for linked lines. Concurrency 3, deduped, never throws. */
+async function sessionIsAnonymous(): Promise<boolean> {
+  try { return (await ensureDiscoverSession() as any)?.user?.is_anonymous === true; } catch { return true; }
+}
+
+/** Pre-load Journeys for linked lines. Skipped for anonymous guests (each call can spend one of 5 daily builds). Concurrency 3, deduped, never throws. */
 export async function prefetchJourneys(links: MenuLineLink[], concurrency = 3): Promise<void> {
-  const jobs = new Map<string, { kind: ExploreKind; refId: string; name: string }>();
-  for (const l of links) {
-    if (l.cocktail) jobs.set(keyOf('cocktail', l.cocktail.refId), { kind: 'cocktail', refId: l.cocktail.refId, name: l.cocktail.name });
-    for (const c of l.components) jobs.set(keyOf(c.kind, c.refId), { kind: c.kind, refId: c.refId, name: c.name });
-  }
-  const queue = [...jobs.values()];
-  const worker = async () => {
-    for (let job = queue.shift(); job; job = queue.shift()) {
-      try { await getJourneyTimed(job.kind, job.refId, job.name); } catch { /* best effort */ }
+  try {
+    if (!isMockMode() && await sessionIsAnonymous()) return;
+    const jobs = new Map<string, { kind: ExploreKind; ref: string; name: string }>();
+    for (const l of links) {
+      if (l.cocktail?.id) jobs.set(keyOf('cocktail', l.cocktail.id), { kind: 'cocktail', ref: l.cocktail.id, name: l.cocktail.name });
+      for (const it of l.items) if (it.phg_product_id) jobs.set(keyOf(it.kind, it.phg_product_id), { kind: it.kind, ref: it.phg_product_id, name: it.name });
     }
+    const queue = [...jobs.values()];
+    const worker = async () => {
+      for (let job = queue.shift(); job; job = queue.shift()) {
+        try { await getJourneyTimed(job.kind, job.ref, job.name); } catch { /* best effort */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+  } catch { /* never throws */ }
+}
+
+// ---- Cocktail change ----
+/** Names-only starting recipe (#128 has no "get recipe" action); amounts are unknown (null). */
+export function startingRecipe(cocktail: { id: string; name: string }, items: LinkedItem[]): Recipe {
+  return {
+    name: cocktail.name, base_cocktail_id: cocktail.id,
+    lines: items.map(i => ({ ingredient: i.name, amount: null, phg_product_id: i.phg_product_id })),
+    method: null, glass: null, garnish: null, est_abv: null,
   };
-  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
 }
 
-// ---- Menu links / recipes / modify ----
-/** In mock mode, pass the scanned items so the sample links attach to the real item ids. */
-export async function getMenuLinks(observationId: string, items?: { id: string; name: string }[]): Promise<MenuLineLink[]> {
-  if (isMockMode()) return mockMenuLinks(items);
-  const r = await request(EP.menuLinks + q({ observation: observationId }));
-  return Array.isArray(r.links) ? r.links as MenuLineLink[] : [];
-}
-export async function getCocktailRecipe(refId: string): Promise<CocktailRecipe> {
-  if (isMockMode()) {
-    const r = MOCK_RECIPES[refId];
-    if (!r) throw new Error('No sample recipe for this cocktail.');
-    return JSON.parse(JSON.stringify(r));
-  }
-  const r = await request(EP.cocktail + q({ ref: refId }));
-  return (r.recipe ?? r) as CocktailRecipe;
-}
-export async function modifyCocktail(recipe: CocktailRecipe, action: ModifyAction, option?: string | null): Promise<CocktailRecipe> {
-  if (isMockMode()) return mockModify(recipe, action, option);
-  const r = await request(EP.cocktailModify, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ recipe, action, ...(option ? { option } : {}) }) });
-  return r.recipe as CocktailRecipe;
+export async function changeCocktail(input: { cocktail_id: string | null; recipe: Recipe; button: MakerButton; value?: string | null; observation_id?: string | null }): Promise<ChangedCocktail> {
+  const change = { type: MAKER_BUTTON_CHANGE[input.button], value: input.value ?? null };
+  if (isMockMode()) return mockChangeCocktail(input.recipe, [change]);
+  const r = await callExplore(A.changeCocktail, {
+    cocktail_id: input.cocktail_id, recipe: input.recipe, changes: [change],
+    ...(input.observation_id ? { observation_id: input.observation_id } : {}),
+  });
+  return {
+    recipe: r.recipe as Recipe, bartender_card: str(r.bartender_card), home_recipe: str(r.home_recipe),
+    change_types: Array.isArray(r.change_types) ? r.change_types as ChangeType[] : [change.type], ai_used: r.ai_used === true,
+  };
 }
 
-// ---- My versions: local first, server best effort ----
-const VERSIONS_KEY = '@harmony/explore/my-versions/v1';
-const DELETED_KEY = '@harmony/explore/my-versions-deleted/v1';
+// ---- Tap: best effort, never throws ----
+export function recordTap(input: TapInput): void {
+  try {
+    if (isMockMode() || !input || !UUID.test(String(input.line_id))) return;
+    const body = { observation_id: input.observation_id, line_id: input.line_id, item_kind: input.item_kind, item_ref: input.item_ref };
+    void callExplore(A.tap, body).catch(() => {});
+  } catch { /* never throws */ }
+}
+
+// ---- My versions: phone first, server best effort ----
+const VERSIONS_KEY = '@harmony/explore/my-versions/v2';
+const DELETED_KEY = '@harmony/explore/my-versions-deleted/v2';
 async function readList<T>(key: string): Promise<T[]> {
   const raw = await storeGet(key);
   if (!raw) return [];
   try { const v = JSON.parse(raw); return Array.isArray(v) ? v as T[] : []; } catch { return []; }
 }
-const sortNewest = (v: MyVersion[]) => [...v].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+const sortNewest = (v: MyVersion[]) => [...v].sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+function mapServerVersion(v: any): MyVersion | null {
+  if (!isObj(v) || typeof v.id !== 'string' || !isObj(v.recipe)) return null;
+  return {
+    id: v.id, server_id: v.id, name: str(v.name) || str(v.recipe.name) || 'My version', recipe: v.recipe as Recipe,
+    bartender_card: str(v.bartender_card), home_recipe: str(v.home_recipe),
+    base_cocktail_id: typeof v.base_cocktail_id === 'string' ? v.base_cocktail_id : null,
+    change_types: Array.isArray(v.change_types) ? v.change_types as ChangeType[] : [],
+    created_at: str(v.created_at) || new Date().toISOString(),
+  };
+}
 
 export async function listMyVersions(): Promise<MyVersion[]> {
   let local = await readList<MyVersion>(VERSIONS_KEY);
   if (!isMockMode()) {
     try {
-      const r = await request(EP.myVersions);
+      const r = await callExplore(A.listVersions);
       const deleted = new Set(await readList<string>(DELETED_KEY));
-      const have = new Set(local.map(v => v.id));
-      const extra = (Array.isArray(r.versions) ? r.versions as MyVersion[] : []).filter(v => v?.id && !have.has(v.id) && !deleted.has(v.id));
+      const have = new Set(local.flatMap(v => [v.id, v.server_id].filter(Boolean) as string[]));
+      const extra = (Array.isArray(r?.versions) ? r.versions : []).map(mapServerVersion)
+        .filter((v: MyVersion | null): v is MyVersion => !!v && !have.has(v.server_id!) && !deleted.has(v.server_id!));
       if (extra.length) { local = [...local, ...extra]; await storeSet(VERSIONS_KEY, JSON.stringify(local)); }
-    } catch { /* offline or no account: local list stands */ }
+    } catch { /* offline or no account: phone list stands */ }
   }
   return sortNewest(local);
 }
-export async function saveMyVersion(recipe: CocktailRecipe, originalName: string, name?: string): Promise<MyVersion> {
-  const version: MyVersion = {
-    id: `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    name: name?.trim() || recipe.name, recipe, originalName, createdAt: new Date().toISOString(),
+
+/** Saves on the phone first (authoritative). Server save is best effort; a full server list (versions_full) is rethrown AFTER the phone copy is kept. */
+export async function saveMyVersion(changed: ChangedCocktail, opts: { name?: string; observation_id?: string | null } = {}): Promise<MyVersion> {
+  let version: MyVersion = {
+    id: `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, server_id: null,
+    name: opts.name?.trim() || changed.recipe.name, recipe: changed.recipe, bartender_card: changed.bartender_card, home_recipe: changed.home_recipe,
+    base_cocktail_id: changed.recipe.base_cocktail_id ?? null, change_types: changed.change_types, created_at: new Date().toISOString(),
   };
   const local = await readList<MyVersion>(VERSIONS_KEY);
-  await storeSet(VERSIONS_KEY, JSON.stringify([...local, version])); // local first: never lost
+  await storeSet(VERSIONS_KEY, JSON.stringify([...local, version])); // phone first: never lost
   if (!isMockMode()) {
-    try { await request(EP.myVersions, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ version }) }); } catch { /* sync later */ }
+    try {
+      const r = await callExplore(A.saveVersion, {
+        name: version.name, recipe: version.recipe, bartender_card: version.bartender_card, home_recipe: version.home_recipe,
+        base_cocktail_id: version.base_cocktail_id, change_types: version.change_types,
+        ...(opts.observation_id ? { observation_id: opts.observation_id } : {}),
+      });
+      if (typeof r?.id === 'string' && r.id) {
+        version = { ...version, server_id: r.id };
+        const now = await readList<MyVersion>(VERSIONS_KEY);
+        await storeSet(VERSIONS_KEY, JSON.stringify(now.map(v => (v.id === version.id ? version : v))));
+      }
+    } catch (e) {
+      if (e instanceof ExploreLimitError) throw e; // phone copy is kept; screen shows the server message
+      /* other errors: sync later */
+    }
   }
   return version;
 }
+
 export async function deleteMyVersion(id: string): Promise<void> {
   const local = await readList<MyVersion>(VERSIONS_KEY);
-  await storeSet(VERSIONS_KEY, JSON.stringify(local.filter(v => v.id !== id)));
-  if (!isMockMode()) {
-    try { await request(EP.myVersions + q({ id }), { method: 'DELETE' }); }
-    catch { await storeSet(DELETED_KEY, JSON.stringify([...(await readList<string>(DELETED_KEY)), id])); }
+  const target = local.find(v => v.id === id || v.server_id === id);
+  await storeSet(VERSIONS_KEY, JSON.stringify(local.filter(v => v !== target)));
+  const serverId = target?.server_id ?? null;
+  if (!isMockMode() && serverId) {
+    try { await callExplore(A.deleteVersion, { id: serverId }); }
+    catch { await storeSet(DELETED_KEY, JSON.stringify([...(await readList<string>(DELETED_KEY)), serverId])); }
   }
-}
-
-// ---- Anonymous events: best effort, never throws ----
-type WireEvent = { type: string; itemKind: string; refId?: string; action?: string; at: string };
-const eventQueue: WireEvent[] = [];
-let flushing = false;
-const MAX_QUEUE = 50;
-const clip = (s: unknown) => (typeof s === 'string' ? s.slice(0, 120) : undefined);
-
-async function flushEvents() {
-  if (flushing) return;
-  flushing = true;
-  try {
-    while (eventQueue.length) {
-      const ev = eventQueue[0];
-      try { await request(EP.event, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(ev) }); eventQueue.shift(); }
-      catch { break; } // keep queued; retried on the next event
-    }
-  } finally { flushing = false; }
-}
-
-/** Only type/itemKind/refId/action/at are sent. No names, emails or device ids. */
-export function recordExploreEvent(input: ExploreEventInput): void {
-  try {
-    const ev: WireEvent = { type: clip(input.type) || 'unknown', itemKind: clip(input.itemKind) || 'unknown', at: new Date().toISOString() };
-    const refId = clip(input.refId); if (refId) ev.refId = refId;
-    const action = clip(input.action); if (action) ev.action = action;
-    if (isMockMode()) return;
-    eventQueue.push(ev);
-    if (eventQueue.length > MAX_QUEUE) eventQueue.shift();
-    void flushEvents().catch(() => {});
-  } catch { /* never throws */ }
 }

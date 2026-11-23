@@ -3,11 +3,11 @@ import { Pressable, Text, View } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { getMockJourney } from '../src/services/mockJourneyApi';
-import { getJourneyTimed, pollJourney, recordExploreEvent, type ExploreKind, type Journey as JourneyData, type JourneySource } from '../src/services/menuExplore';
+import { getJourneyTimed, GUEST_LIMIT_MESSAGE, pollJourney, type ExploreKind, type Journey as JourneyData, type JourneySource } from '../src/services/menuExplore';
 import { BigActionButton, BuildingStoryState, ExploreSheet, SectionEyebrow } from '../src/explore/ExploreKit';
 import { palette, space, type } from '../src/explore/exploreTheme';
 
-const KINDS: ExploreKind[] = ['cocktail', 'spirit', 'wine', 'beer'];
+const KINDS: ExploreKind[] = ['cocktail', 'spirit', 'wine', 'beer', 'other'];
 const one = (v?: string | string[]) => (Array.isArray(v) ? v[0] : v);
 
 export default function Journey() {
@@ -46,8 +46,11 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
   }, [kind, refId, name, attempt]);
 
   const retry = useCallback(() => setAttempt(n => n + 1), []);
-  const building = !failed && (!journey || journey.status === 'building');
-  const ready = journey && journey.status === 'ready';
+  const status = journey?.status;
+  const building = !failed && (!journey || status === 'building');
+  const ready = !failed && !!journey && (status === 'ready' || status === 'built');
+  const limited = !failed && status === 'limit';
+  const noStory = failed || status === 'none' || status === 'failed';
   const openedLabel = kind === 'cocktail' ? 'COCKTAIL STORY' : `${kind.toUpperCase()} STORY`;
 
   return (
@@ -56,12 +59,17 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
       <SectionEyebrow>{openedLabel}</SectionEyebrow>
       <Text style={{ ...type.hero, color: palette.ivory, marginTop: space.sm }}>{journey?.title || name}</Text>
       {building && <BuildingStoryState style={{ marginTop: space.lg }} />}
-      {failed && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
-        <Text style={{ ...type.value, color: palette.ivory }}>We could not get this story just now.</Text>
-        <Text style={{ ...type.body, color: palette.muted }}>Nothing is wrong on your side. Please try again in a moment.</Text>
-        <BigActionButton primary icon="refresh" label="Try again" onPress={retry} />
+      {limited && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+        <Text style={{ ...type.value, color: palette.ivory }}>{journey?.message || GUEST_LIMIT_MESSAGE}</Text>
+        <Text style={{ ...type.body, color: palette.muted }}>Signing in is free and lets you keep exploring.</Text>
+        <BigActionButton primary icon="log-in-outline" label="Sign in" onPress={() => router.push('/sign-in' as never)} />
       </ExploreSheet>}
-      {ready && <>
+      {noStory && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+        <Text style={{ ...type.value, color: palette.ivory }}>No story for this one yet.</Text>
+        <Text style={{ ...type.body, color: palette.muted }}>Nothing is wrong on your side. Check back a little later.</Text>
+        {(failed || status === 'failed') && <BigActionButton icon="refresh" label="Try again" onPress={retry} />}
+      </ExploreSheet>}
+      {ready && journey && <>
         {!!journey.intro && <Text style={{ ...type.body, color: palette.muted, marginTop: space.md }}>{journey.intro}</Text>}
         {journey.sections.map(s => <ExploreSheet key={s.heading} style={{ marginTop: space.md }}>
           <SectionEyebrow>{s.heading}</SectionEyebrow>
@@ -69,9 +77,8 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
           {!!s.evidence && <Text style={{ ...type.caption, color: palette.mutedDim, marginTop: space.sm }}>{s.evidence}</Text>}
         </ExploreSheet>)}
         {kind === 'cocktail' && <View style={{ marginTop: space.lg }}>
-          <BigActionButton primary icon="wine-outline" label="Make it your way" onPress={() => {
-            recordExploreEvent({ type: 'open_maker', itemKind: 'cocktail', refId });
-            router.push({ pathname: '/explore-cocktail', params: { ref: refId, name } } as never);
+          <BigActionButton primary icon="wine-outline" label="Open in cocktail maker" onPress={() => {
+            router.push({ pathname: '/explore-cocktail', params: { cocktail: refId, name: journey?.title || name } } as never);
           }} />
         </View>}
       </>}

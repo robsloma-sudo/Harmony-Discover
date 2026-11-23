@@ -1,56 +1,43 @@
-import { Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Text } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
-import { recordExploreEvent, type RecipeIngredient } from '../src/services/menuExplore';
-import { ExploreSheet, LinkedChip, SectionEyebrow } from '../src/explore/ExploreKit';
-import { amountText, methodSteps, parseRecipeParam } from '../src/explore/RecipeCard';
+import { listMyVersions } from '../src/services/menuExplore';
+import { ExploreSheet, SectionEyebrow } from '../src/explore/ExploreKit';
+import { abvText } from '../src/explore/RecipeCard';
+import { getCurrentDrink } from '../src/explore/currentDrink';
 import { palette, space, type } from '../src/explore/exploreTheme';
 
-const BOTTLE_ROLES = ['base', 'modifier', 'lengthener'];
 const one = (v?: string | string[]) => (Array.isArray(v) ? v[0] : v);
+type Home = { name: string; text: string; abv: string };
 
+// Shows the server's own home_recipe text, from a saved version or the latest change.
 export default function MakeAtHome() {
-  const p = useLocalSearchParams<{ recipe?: string }>();
-  const recipe = parseRecipeParam(one(p.recipe));
-  if (!recipe) return <Screen hideTabs><Text style={styles.back} onPress={() => router.back()}>‹  Back</Text><Text style={{ ...type.value, color: palette.ivory }}>No recipe to show.</Text></Screen>;
-  const bottles = recipe.ingredients.filter(i => i.role && BOTTLE_ROLES.includes(i.role));
-  const also = recipe.ingredients.filter(i => !(i.role && BOTTLE_ROLES.includes(i.role)));
-  const steps = methodSteps(recipe.method);
-  const openBottle = (i: RecipeIngredient) => {
-    if (!i.productRefId) return;
-    const kind = i.productRefId.split(':')[0];
-    recordExploreEvent({ type: 'line_tap', itemKind: kind === 'wine' || kind === 'beer' ? kind : 'spirit', refId: i.productRefId });
-    router.push({ pathname: '/journey', params: { kind: kind === 'wine' || kind === 'beer' ? kind : 'spirit', ref: i.productRefId, name: i.name } } as never);
-  };
+  const p = useLocalSearchParams<{ versionId?: string }>();
+  const versionId = one(p.versionId);
+  const [drink, setDrink] = useState<Home | null>(() => {
+    const c = versionId ? null : getCurrentDrink();
+    return c ? { name: c.name, text: c.changed.home_recipe, abv: abvText(c.changed.recipe) } : null;
+  });
+  useEffect(() => {
+    if (!versionId) return;
+    let live = true;
+    listMyVersions().then(vs => { const v = vs.find(x => x.id === versionId); if (live && v) setDrink({ name: v.name, text: v.home_recipe, abv: abvText(v.recipe) }); })
+      .catch(() => { const c = getCurrentDrink(); if (live && c) setDrink({ name: c.name, text: c.changed.home_recipe, abv: abvText(c.changed.recipe) }); });
+    return () => { live = false; };
+  }, [versionId]);
+  const paragraphs = (drink?.text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
   return (
     <Screen hideTabs>
       <Text style={styles.back} onPress={() => router.back()}>‹  Back</Text>
       <SectionEyebrow>MAKE IT AT HOME</SectionEyebrow>
-      <Text style={{ ...type.hero, color: palette.ivory, marginTop: space.sm }}>{recipe.name}</Text>
-
-      <ExploreSheet style={{ marginTop: space.lg, gap: space.sm }}>
-        <SectionEyebrow>Bottles you need</SectionEyebrow>
-        {bottles.length === 0 && <Text style={{ ...type.body, color: palette.muted }}>No bottles listed.</Text>}
-        {bottles.map((i, n) => <View key={n} style={{ gap: 6, paddingVertical: 4 }}>
-          <Text style={{ ...type.caption, color: palette.brass }}>{amountText(i)}</Text>
-          <LinkedChip kind="spirit" label={i.name} linked={!!i.productRefId} onPress={() => openBottle(i)} />
-        </View>)}
-      </ExploreSheet>
-
-      <ExploreSheet style={{ marginTop: space.md, gap: space.xs }}>
-        <SectionEyebrow>Also needed</SectionEyebrow>
-        {also.map((i, n) => <Text key={n} style={{ ...type.body, color: palette.ivory }}>• {amountText(i) ? amountText(i) + ' ' : ''}{i.name}</Text>)}
-        <Text style={{ ...type.body, color: palette.ivory }}>• Ice</Text>
-      </ExploreSheet>
-
-      <ExploreSheet style={{ marginTop: space.md, gap: space.md }}>
-        <SectionEyebrow>Steps</SectionEyebrow>
-        {steps.map((s, n) => <View key={n} style={{ flexDirection: 'row', gap: space.md }}>
-          <Text style={{ ...type.value, color: palette.brass, width: 28 }}>{n + 1}.</Text>
-          <Text style={{ ...type.body, color: palette.ivory, flex: 1 }}>{s}</Text>
-        </View>)}
-        {!!recipe.glass && <Text style={{ ...type.body, color: palette.muted }}>Serve in a {recipe.glass.toLowerCase()}.</Text>}
-      </ExploreSheet>
+      {!drink ? <Text style={{ ...type.value, color: palette.ivory, marginTop: space.sm }}>No recipe to show.</Text> : <>
+        <Text style={{ ...type.hero, color: palette.ivory, marginTop: space.sm }}>{drink.name}</Text>
+        <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+          {paragraphs.map((t, n) => <Text key={n} style={{ ...type.body, color: palette.ivory }}>{t}</Text>)}
+          {!!drink.abv && <Text style={{ ...type.body, color: palette.brass }}>{drink.abv}</Text>}
+        </ExploreSheet>
+      </>}
     </Screen>
   );
 }

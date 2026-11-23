@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Text } from 'react-native';
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
-import { getMenuLinks, prefetchJourneys, type MenuLineLink } from '../src/services/menuExplore';
+import { ExploreLimitError, getMenuLinks, prefetchJourneys, type MenuLineLink } from '../src/services/menuExplore';
 import { MenuLineList } from '../src/explore/MenuLineList';
 
 const items = [
@@ -17,12 +17,13 @@ const items = [
 export default function DevMenuExplore() {
   const allowed = __DEV__ || process.env.EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK === '1';
   const [links, setLinks] = useState<MenuLineLink[]>([]);
-  useEffect(() => { getMenuLinks('dev', items).then(l => { setLinks(l); void prefetchJourneys(l); }).catch(() => {}); }, []);
+  const [notice, setNotice] = useState('');
+  useEffect(() => { getMenuLinks('dev', items).then(l => { setLinks(l); void prefetchJourneys(l); }).catch(e => { if (e instanceof ExploreLimitError) setNotice(e.message); }); }, []);
   if (!allowed) return null;
   return <Screen hideTabs>
     <Text style={styles.back} onPress={() => router.back()}>‹  Back</Text>
     <Text style={styles.eyebrow}>DEV PREVIEW · SAMPLE MENU</Text>
     <Text style={[styles.sectionTitle, { marginTop: 8 }]}>Review extracted items · {items.length}</Text>
-    <MenuLineList items={items} links={links} />
+    <MenuLineList items={items} links={links} notice={notice} />
   </Screen>;
 }
