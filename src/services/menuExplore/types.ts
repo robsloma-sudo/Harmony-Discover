@@ -40,6 +40,9 @@ export type ChangedCocktail = {
   change_types: ChangeType[];
   ai_used: boolean;
 };
+// ---- get_recipe (look only: the unchanged recipe with amounts, no AI, no guest limit) ----
+export type CocktailRecipe = { recipe: Recipe; bartender_card: string; home_recipe: string };
+
 /** The five big buttons on the cocktail screen, and the server change each one sends. */
 export type MakerButton = 'swap_base' | 'smokier' | 'lower_proof' | 'less_sweet' | 'more_citrus';
 export const MAKER_BUTTON_CHANGE: Record<MakerButton, ChangeType> = {
@@ -47,6 +50,7 @@ export const MAKER_BUTTON_CHANGE: Record<MakerButton, ChangeType> = {
 };
 
 // ---- journey ----
+// peek: true = look only (ready | building | none); never spends a guest's daily build. Used for pre-loading and polling.
 // Server statuses: ready | built | building | none | limit. 'failed' is app-only (polling gave up / network error).
 export type JourneyStatus = 'ready' | 'built' | 'building' | 'none' | 'limit' | 'failed';
 export type JourneySection = { heading: string; body: string; evidence?: string | null };

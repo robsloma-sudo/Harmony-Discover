@@ -1,5 +1,5 @@
 // Dev-only sample data (EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK === '1'). Clearly labelled; never real facts.
-import type { ChangedCocktail, ChangeType, CocktailChange, ExploreKind, Journey, MenuLineLink, Recipe } from './types';
+import type { ChangedCocktail, ChangeType, CocktailChange, CocktailRecipe, ExploreKind, Journey, MenuLineLink, Recipe } from './types';
 
 export const MOCK_LABEL = 'Sample data (dev preview, not real facts).';
 export const isMockMode = () => process.env.EXPO_PUBLIC_DISCOVER_EXPLORE_MOCK === '1';
@@ -97,5 +97,17 @@ export function mockChangeCocktail(recipe: Recipe, changes: CocktailChange[]): C
     home_recipe: `${MOCK_LABEL}\n${r.name} (${summary})\n${ingredients}\n${r.method ?? ''}`.trim(),
     change_types: changes.map(c => c.type) as ChangeType[],
     ai_used: false,
+  };
+}
+
+export function mockGetRecipe(cocktailId: string): CocktailRecipe {
+  const found = MOCK_RECIPES[cocktailId];
+  if (!found) throw new Error(`No sample recipe for ${cocktailId}`);
+  const recipe = clone(found);
+  const ingredients = recipe.lines.map(l => `${l.amount ? l.amount + ' ' : ''}${l.ingredient}`).join('\n');
+  return {
+    recipe,
+    bartender_card: `${MOCK_LABEL}\n${recipe.name}, please:\n${ingredients}`,
+    home_recipe: `${MOCK_LABEL}\n${recipe.name}\n${ingredients}\n${recipe.method ?? ''}`.trim(),
   };
 }

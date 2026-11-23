@@ -6,6 +6,7 @@ import { GUEST_LIMIT_MESSAGE } from './types';
 export const EXPLORE_FUNCTION = 'discover-explore';
 export const EXPLORE_ACTIONS = {
   linkMenu: 'link_menu',
+  getRecipe: 'get_recipe',
   changeCocktail: 'change_cocktail',
   journey: 'journey',
   tap: 'tap',

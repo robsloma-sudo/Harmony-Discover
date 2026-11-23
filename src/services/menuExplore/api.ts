@@ -1,10 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ensureDiscoverSession } from '../supabase';
 import { callExplore, EXPLORE_ACTIONS as A, ExploreLimitError, ExploreRequestError } from './endpoints';
-import { isMockMode, mockChangeCocktail, mockJourney, mockMenuLinks } from './mock';
+import { isMockMode, mockChangeCocktail, mockGetRecipe, mockJourney, mockMenuLinks } from './mock';
 import { MAKER_BUTTON_CHANGE } from './types';
 import type {
-  ChangedCocktail, ChangeType, ExploreKind, Journey, JourneySection, JourneyStatus, JourneyTimed, LinkedItem, MakerButton,
+  ChangedCocktail, ChangeType, CocktailRecipe, ExploreKind, Journey, JourneySection, JourneyStatus, JourneyTimed, LinkedItem, MakerButton,
   MenuLineLink, MyVersion, PollOptions, Recipe, TapInput,
 } from './types';
 
@@ -93,19 +92,20 @@ async function cacheJourney(journey: Journey) {
   await storeSet(JOURNEY_PREFIX + keyOf(journey.kind, journey.ref), JSON.stringify(entry));
 }
 
-async function fetchJourney(kind: ExploreKind, ref: string, name: string): Promise<Journey> {
+/** peek:true is look-only on the server (ready / building / none; never spends a guest build). Without peek it may start a build. */
+async function fetchJourney(kind: ExploreKind, ref: string, name: string, peek: boolean): Promise<Journey> {
   if (isMockMode()) return mockJourney(kind, ref, name);
-  const r = await callExplore(A.journey, { item_kind: kind, item_ref: ref });
+  const r = await callExplore(A.journey, { item_kind: kind, item_ref: ref, ...(peek ? { peek: true } : {}) });
   return mapJourneyReply(kind, ref, name, r);
 }
 
 /** Deduped network fetch (Map<key,Promise>, cleared in finally) that also caches ready/built results. */
-function fetchJourneyShared(kind: ExploreKind, ref: string, name: string): Promise<Journey> {
-  const key = keyOf(kind, ref);
+function fetchJourneyShared(kind: ExploreKind, ref: string, name: string, peek: boolean): Promise<Journey> {
+  const key = `${peek ? 'peek' : 'build'}:${keyOf(kind, ref)}`;
   const existing = inflight.get(key);
   if (existing) return existing;
   const p = (async () => {
-    const j = await fetchJourney(kind, ref, name);
+    const j = await fetchJourney(kind, ref, name, peek);
     await cacheJourney(j);
     return j;
   })().finally(() => { inflight.delete(key); });
@@ -113,26 +113,37 @@ function fetchJourneyShared(kind: ExploreKind, ref: string, name: string): Promi
   return p;
 }
 
-export async function getJourneyTimed(kind: ExploreKind, ref: string, name: string): Promise<JourneyTimed> {
-  const t0 = Date.now();
-  const key = keyOf(kind, ref);
+async function readJourneyCache(key: string): Promise<{ journey: Journey; source: 'memory' | 'storage' } | null> {
   const mem = memory.get(key);
-  if (fresh(mem)) return { journey: mem!.journey, source: 'memory', ms: Date.now() - t0 };
+  if (fresh(mem)) return { journey: mem!.journey, source: 'memory' };
   const raw = await storeGet(JOURNEY_PREFIX + key);
   if (raw) {
     try {
       const e = JSON.parse(raw) as CacheEntry;
-      if (fresh(e)) { memory.set(key, e); return { journey: e.journey, source: 'storage', ms: Date.now() - t0 }; }
+      if (fresh(e)) { memory.set(key, e); return { journey: e.journey, source: 'storage' }; }
     } catch { /* ignore corrupt cache */ }
   }
-  const journey = await fetchJourneyShared(kind, ref, name);
+  return null;
+}
+
+/** Guest opens a Journey: cache, then a free peek; only a 'none' answer triggers one build call (no peek). */
+export async function getJourneyTimed(kind: ExploreKind, ref: string, name: string): Promise<JourneyTimed> {
+  const t0 = Date.now();
+  const hit = await readJourneyCache(keyOf(kind, ref));
+  if (hit) return { journey: hit.journey, source: hit.source, ms: Date.now() - t0 };
+  let journey: Journey;
+  if (isMockMode()) journey = await fetchJourneyShared(kind, ref, name, false);
+  else {
+    journey = await fetchJourneyShared(kind, ref, name, true);
+    if (journey.status === 'none') journey = await fetchJourneyShared(kind, ref, name, false);
+  }
   return { journey, source: isMockMode() ? 'mock' : 'network', ms: Date.now() - t0 };
 }
 export async function getJourney(kind: ExploreKind, ref: string, name: string): Promise<Journey> {
   return (await getJourneyTimed(kind, ref, name)).journey;
 }
 
-/** Polls while 'building'; stops on any other status. On timeout onUpdate receives a synthetic 'failed' Journey. Returns cancel(). */
+/** Polls (peek only, never builds) while 'building'; stops on any other status, including 'none'. On timeout onUpdate receives a synthetic 'failed' Journey. Returns cancel(). */
 export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpdate: (j: Journey) => void, opts: PollOptions = {}): () => void {
   const intervalMs = opts.intervalMs ?? 2000;
   const timeoutMs = opts.timeoutMs ?? 60000;
@@ -143,7 +154,7 @@ export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpda
   const tick = async () => {
     if (cancelled) return;
     try {
-      const j = await fetchJourneyShared(kind, ref, name);
+      const j = await fetchJourneyShared(kind, ref, name, true);
       if (cancelled) return;
       onUpdate(j);
       if (j.status !== 'building') return stop();
@@ -160,14 +171,9 @@ export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpda
   return stop;
 }
 
-async function sessionIsAnonymous(): Promise<boolean> {
-  try { return (await ensureDiscoverSession() as any)?.user?.is_anonymous === true; } catch { return true; }
-}
-
-/** Pre-load Journeys for linked lines. Skipped for anonymous guests (each call can spend one of 5 daily builds). Concurrency 3, deduped, never throws. */
+/** Pre-load Journeys for linked lines using peek only (free, never builds, so fine for guests). Caches ready results. Concurrency 3, deduped, never throws. */
 export async function prefetchJourneys(links: MenuLineLink[], concurrency = 3): Promise<void> {
   try {
-    if (!isMockMode() && await sessionIsAnonymous()) return;
     const jobs = new Map<string, { kind: ExploreKind; ref: string; name: string }>();
     for (const l of links) {
       if (l.cocktail?.id) jobs.set(keyOf('cocktail', l.cocktail.id), { kind: 'cocktail', ref: l.cocktail.id, name: l.cocktail.name });
@@ -176,7 +182,7 @@ export async function prefetchJourneys(links: MenuLineLink[], concurrency = 3): 
     const queue = [...jobs.values()];
     const worker = async () => {
       for (let job = queue.shift(); job; job = queue.shift()) {
-        try { await getJourneyTimed(job.kind, job.ref, job.name); } catch { /* best effort */ }
+        try { if (!(await readJourneyCache(keyOf(job.kind, job.ref)))) await fetchJourneyShared(job.kind, job.ref, job.name, true); } catch { /* best effort */ }
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
@@ -184,7 +190,15 @@ export async function prefetchJourneys(links: MenuLineLink[], concurrency = 3): 
 }
 
 // ---- Cocktail change ----
-/** Names-only starting recipe (#128 has no "get recipe" action); amounts are unknown (null). */
+/** Unchanged recipe with amounts plus both cards (no AI, no guest limit). */
+export async function getRecipe(cocktailId: string): Promise<CocktailRecipe> {
+  if (isMockMode()) return mockGetRecipe(cocktailId);
+  const r = await callExplore(A.getRecipe, { cocktail_id: cocktailId });
+  if (!looksLikeRecipe(r?.recipe) || r.recipe.lines.length === 0) throw new ExploreRequestError('Recipe unavailable.', 0, 'recipe_missing');
+  return { recipe: r.recipe, bartender_card: str(r.bartender_card), home_recipe: str(r.home_recipe) };
+}
+
+/** Fallback only, used when get_recipe fails: names-only starting recipe; amounts are unknown (null). */
 export function startingRecipe(cocktail: { id: string; name: string }, items: LinkedItem[]): Recipe {
   return {
     name: cocktail.name, base_cocktail_id: cocktail.id,

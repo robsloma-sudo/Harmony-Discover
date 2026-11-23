@@ -3,7 +3,7 @@ import { Text, View } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import {
-  ExploreLimitError, changeCocktail, findMenuLine, listMyVersions, saveMyVersion, startingRecipe,
+  ExploreLimitError, changeCocktail, findMenuLine, getRecipe, listMyVersions, saveMyVersion, startingRecipe,
   type ChangedCocktail, type MakerButton, type MyVersion, type Recipe,
 } from '../src/services/menuExplore';
 import { BigActionButton, BuildingStoryState, ExploreSheet, FactRow, SectionEyebrow } from '../src/explore/ExploreKit';
@@ -43,8 +43,13 @@ export default function ExploreCocktail() {
           setBaseName(v.name); setRecipe(v.recipe); setChanged(c); setSavedVersion(v);
           setCurrentDrink({ name: v.name, baseName: v.name, changed: c });
         } else if (cocktailParam) {
-          const items = (lineId ? findMenuLine(lineId)?.line.items : null) ?? [];
-          const r = startingRecipe({ id: cocktailParam, name: nameParam || 'Cocktail' }, items);
+          let r: Recipe;
+          try {
+            r = (await getRecipe(cocktailParam)).recipe;   // amounts at once
+          } catch {
+            const items = (lineId ? findMenuLine(lineId)?.line.items : null) ?? [];
+            r = startingRecipe({ id: cocktailParam, name: nameParam || 'Cocktail' }, items);   // names only
+          }
           if (!live) return;
           setCocktailId(cocktailParam); setBaseName(nameParam || r.name); setRecipe(r);
           setCurrentDrink(null);

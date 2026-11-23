@@ -15,7 +15,7 @@ vi.mock('../src/services/supabase', () => ({
 }));
 
 import {
-  _resetExploreMemory, changeCocktail, deleteMyVersion, ExploreLimitError, findMenuLine, getJourneyTimed, getMenuLinks, listMyVersions,
+  _resetExploreMemory, changeCocktail, deleteMyVersion, ExploreLimitError, findMenuLine, getJourneyTimed, getRecipe, getMenuLinks, listMyVersions,
   pollJourney, prefetchJourneys, recordTap, saveMyVersion, startingRecipe,
 } from '../src/services/menuExplore';
 import { resetMockJourneys } from '../src/services/menuExplore/mock';
@@ -66,7 +66,7 @@ describe('server calls', () => {
     }
     const by = (a: string) => calls.find(c => c.body.action === a)!.body;
     expect(by('link_menu')).toEqual({ action: 'link_menu', observation_id: OBS });
-    expect(by('journey')).toEqual({ action: 'journey', item_kind: 'spirit', item_ref: 'p1' });
+    expect(by('journey')).toEqual({ action: 'journey', item_kind: 'spirit', item_ref: 'p1', peek: true });
     expect(by('change_cocktail')).toMatchObject({ cocktail_id: 'c1', recipe, changes: [{ type: 'drier', value: null }], observation_id: OBS });
     expect(by('save_version')).toMatchObject({ name: 'Negroni', recipe, bartender_card: 'card', home_recipe: 'home', base_cocktail_id: 'c1', change_types: ['smokier'], observation_id: OBS });
     expect(by('delete_version')).toEqual({ action: 'delete_version', id: SID });
@@ -170,11 +170,60 @@ describe('prefetch', () => {
     expect(peak).toBeLessThanOrEqual(3);
     expect(peak).toBeGreaterThan(1);
   });
-  it('is skipped for anonymous guests', async () => {
+  it('for an anonymous guest sends only peek:true calls and caches ready results', async () => {
     session.anonymous = true;
-    const { f } = mockServer(() => json(readyReply()));
+    const { calls } = mockServer(() => json(readyReply()));
     await prefetchJourneys(links);
-    expect(f).not.toHaveBeenCalled();
+    expect(calls.length).toBe(5);
+    for (const c of calls) expect(c.body).toMatchObject({ action: 'journey', peek: true });
+    expect((await getJourneyTimed('spirit', 'p1', 'P')).source).toBe('memory');
+  });
+});
+
+describe('get_recipe', () => {
+  const full: Recipe = { ...recipe, lines: [{ ingredient: 'Gin', amount: '1 oz', phg_product_id: 'p1' }] };
+  it('sends exactly action + cocktail_id and returns amounts and cards', async () => {
+    const { calls } = mockServer(() => json({ ok: true, cocktail_id: 'c1', recipe: full, bartender_card: ' card ', home_recipe: 'home' }));
+    const r = await getRecipe('c1');
+    expect(calls[0].body).toEqual({ action: 'get_recipe', cocktail_id: 'c1' });
+    expect(r).toEqual({ recipe: full, bartender_card: 'card', home_recipe: 'home' });
+    expect(r.recipe.lines[0].amount).toBe('1 oz');
+  });
+  it('rejects a bad reply', async () => {
+    mockServer(() => json({ ok: true, recipe: { name: 'x' }, bartender_card: 'c' }));
+    await expect(getRecipe('c1')).rejects.toMatchObject({ code: 'recipe_missing' });
+  });
+});
+
+describe('peek', () => {
+  const peekReply = (status: string, journey: unknown = null) => json({ ok: true, peek: true, status, from_cache: false, journey });
+  const readyJ = { title: 'T', summary: 'S', chapters: [{ title: 'h', text: 'b' }] };
+  it("opening a 'none' Journey = one peek then one build call", async () => {
+    const { calls } = mockServer((_a, b) => (b.peek ? peekReply('none') : json(readyReply())));
+    const { journey } = await getJourneyTimed('spirit', 'n1', 'N');
+    expect(calls.map(c => c.body)).toEqual([
+      { action: 'journey', item_kind: 'spirit', item_ref: 'n1', peek: true },
+      { action: 'journey', item_kind: 'spirit', item_ref: 'n1' },
+    ]);
+    expect(journey.status).toBe('ready');
+  });
+  it("opening a 'ready' or 'building' Journey = peek only", async () => {
+    const { calls } = mockServer((_a, b) => (b.item_ref === 'r1' ? peekReply('ready', readyJ) : peekReply('building')));
+    expect((await getJourneyTimed('spirit', 'r1', 'R')).journey.status).toBe('ready');
+    expect((await getJourneyTimed('spirit', 'b1', 'B')).journey.status).toBe('building');
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c.body.peek).toBe(true);
+  });
+  it('polling sends peek:true every time and never builds; a none answer stops it', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    const { calls } = mockServer(() => (++n < 3 ? peekReply('building') : peekReply('none')));
+    const seen: string[] = [];
+    pollJourney('spirit', 'q1', 'Q', j => seen.push(j.status), { intervalMs: 100, timeoutMs: 10000 });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(['building', 'building', 'none']);
+    expect(calls).toHaveLength(3);
+    for (const c of calls) expect(c.body).toEqual({ action: 'journey', item_kind: 'spirit', item_ref: 'q1', peek: true });
   });
 });
 
