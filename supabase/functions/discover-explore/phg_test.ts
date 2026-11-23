@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { menuLinesFromItems, phgLinkLines, phgSendCounts, TIMEOUTS_MS } from "./phg.ts";
+import { menuLinesFromItems, phgChangeCocktail, phgGetRecipe, phgJourney, phgLinkLines, phgSendCounts, TIMEOUTS_MS } from "./phg.ts";
 import type { PhgConfig } from "./contract.ts";
 
 const cfg: PhgConfig = { url: "https://phg.example", anonKey: "anon", token: "tok" };
@@ -97,3 +97,85 @@ async function withOk(good: Record<string, unknown>) {
   globalThis.fetch = () => Promise.resolve(new Response(JSON.stringify({ accepted: 1 })));
   return await phgSendCounts(cfg, [good as never]);
 }
+
+const goodRecipe = {
+  recipe: { name: "Negroni", lines: [{ ingredient: "Gin", amount: "1 oz", phg_product_id: "p1" }, { ingredient: "Campari", amount: "1 oz" }, { ingredient: "", amount: "x" }], method: "Stir", glass: "Rocks", garnish: "Orange", est_abv: 24 },
+  bartender_card: "Negroni, rocks", home_recipe: "Stir with ice.",
+};
+const okJson = (o: unknown) => Promise.resolve(new Response(JSON.stringify(o), { status: 200 }));
+
+Deno.test("get_recipe returns amounts + cards, base falls back to cocktail id, only token + id sent", async () => {
+  let url = "", body: Record<string, unknown> = {};
+  await withFetch((u, init) => { url = String(u); body = JSON.parse(String(init?.body)); return okJson(goodRecipe); }, async () => {
+    const r = await phgGetRecipe(cfg, "c1");
+    assertEquals(r.recipe.lines.map((l) => l.amount), ["1 oz", "1 oz"]);
+    assertEquals(r.recipe.base_cocktail_id, "c1");
+    assertEquals(r.bartender_card, "Negroni, rocks");
+    assertEquals(r.home_recipe, "Stir with ice.");
+    assertEquals(r.recipe.est_abv, 24);
+  });
+  assert(url.endsWith("/rest/v1/rpc/discover_cocktail_recipe"));
+  assertEquals(Object.keys(body).sort(), ["p_cocktail_id", "p_token"]);
+  assertEquals(body.p_cocktail_id, "c1");
+});
+
+Deno.test("get_recipe bad shape -> phg_unavailable, no body in error", async () => {
+  for (const bad of [null, [], { recipe: { name: "x", lines: "no" }, bartender_card: "a", home_recipe: "b" }, { ...goodRecipe, bartender_card: "" }, { ...goodRecipe, home_recipe: undefined }]) {
+    await withFetch(() => okJson(bad), async () => {
+      const e = await assertRejects(() => phgGetRecipe(cfg, "c1"));
+      assertEquals((e as Error).message, "phg_unavailable");
+    });
+  }
+  await withFetch(() => Promise.resolve(new Response("secret detail", { status: 500 })), async () => {
+    const e = await assertRejects(() => phgGetRecipe(cfg, "c1"));
+    assertEquals((e as Error).message, "phg_unavailable");
+  });
+});
+
+Deno.test("get_recipe timeout -> phg_timeout", async () => {
+  const old = TIMEOUTS_MS.recipe; TIMEOUTS_MS.recipe = 30;
+  try {
+    await withFetch((_u, init) => new Promise((_res, rej) => {
+      init?.signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")));
+    }), async () => {
+      const e = await assertRejects(() => phgGetRecipe(cfg, "c1"));
+      assertEquals((e as Error).message, "phg_timeout");
+    });
+  } finally { TIMEOUTS_MS.recipe = old; }
+});
+
+Deno.test("changeCocktail unchanged after refactor: parse, fallback chain, bad shape", async () => {
+  await withFetch(() => okJson({ ...goodRecipe, change_types: ["smokier", "bogus"], ai_used: false }), async () => {
+    const r = await phgChangeCocktail(cfg, { cocktail_id: "c9", recipe: null, changes: [{ type: "smokier" } as never] });
+    assertEquals(r.recipe.base_cocktail_id, "c9");
+    assertEquals(r.recipe.lines[0].amount, "1 oz");
+    assertEquals(r.change_types, ["smokier"]);
+    assertEquals(r.ai_used, false);
+    const r2 = await phgChangeCocktail(cfg, { cocktail_id: "c9", recipe: { base_cocktail_id: "b7" } as never, changes: [] });
+    assertEquals(r2.recipe.base_cocktail_id, "b7");
+    assertEquals(r2.change_types, ["smokier"]);
+    assertEquals(r2.ai_used, false);
+  });
+  await withFetch(() => okJson({ recipe: { name: "x" } }), async () => {
+    const e = await assertRejects(() => phgChangeCocktail(cfg, { cocktail_id: "c9", recipe: null, changes: [] }));
+    assertEquals((e as Error).message, "phg_unavailable");
+  });
+});
+
+Deno.test("journey build:false is a pure fetch with the short timeout", async () => {
+  let body: Record<string, unknown> = {};
+  await withFetch((_u, init) => { body = JSON.parse(String(init?.body)); return okJson({ status: "none" }); }, async () => {
+    const r = await phgJourney(cfg, { item_kind: "cocktail", item_ref: "c1", build: false });
+    assertEquals(r.status, "none");
+  });
+  assertEquals(body.p_build, false);
+  const old = TIMEOUTS_MS.journeyFetch; TIMEOUTS_MS.journeyFetch = 30;
+  try {
+    await withFetch((_u, init) => new Promise((_res, rej) => {
+      init?.signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")));
+    }), async () => {
+      const e = await assertRejects(() => phgJourney(cfg, { item_kind: "cocktail", item_ref: "c1", build: false }));
+      assertEquals((e as Error).message, "phg_timeout");
+    });
+  } finally { TIMEOUTS_MS.journeyFetch = old; }
+});

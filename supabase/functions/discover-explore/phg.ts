@@ -3,12 +3,12 @@
 // Errors thrown are only "phg_timeout" or "phg_unavailable" (or "phg_config" -> phg_unavailable); never response bodies.
 import { PHG_COMMANDS } from "./contract.ts";
 import type {
-  ChangeType, ChangedCocktail, CocktailChange, CountRow, ItemKind, JourneyResult, LinkedItem, LinkedLine,
+  ChangeType, ChangedCocktail, CocktailRecipe, CocktailChange, CountRow, ItemKind, JourneyResult, LinkedItem, LinkedLine,
   MenuLineIn, PhgConfig, Recipe,
 } from "./contract.ts";
 
 // Mutable on purpose so tests can shorten them.
-export const TIMEOUTS_MS = { link: 20_000, change: 30_000, journeyFetch: 8_000, journeyBuild: 45_000, counts: 30_000 };
+export const TIMEOUTS_MS = { link: 20_000, change: 30_000, journeyFetch: 8_000, journeyBuild: 45_000, counts: 30_000, recipe: 8_000 };
 const MAX_LINES = 200, BATCH = 50;
 const KINDS: ItemKind[] = ["cocktail", "spirit", "wine", "beer", "other"];
 const ROLES = ["base", "modifier", "garnish", "pour", "other"];
@@ -138,11 +138,8 @@ export async function phgLinkLines(cfg: PhgConfig, lines: MenuLineIn[], venue?: 
   return out;
 }
 
-export async function phgChangeCocktail(
-  cfg: PhgConfig, a: { cocktail_id: string | null; recipe: Recipe | null; changes: CocktailChange[] },
-): Promise<ChangedCocktail> {
-  const r = await rpc(cfg, PHG_COMMANDS.changeCocktail,
-    { p_cocktail_id: a.cocktail_id, p_recipe: a.recipe, p_changes: a.changes }, TIMEOUTS_MS.change);
+// Shared by phgChangeCocktail and phgGetRecipe: validates {recipe, bartender_card, home_recipe}; amounts are kept.
+function parseRecipeReply(r: unknown, fallbackBaseId: string | null): CocktailRecipe {
   const o = isObj(r) ? r : null;
   const rec = o && isObj(o.recipe) ? o.recipe : null;
   if (!o || !rec || !str(rec.name) || !Array.isArray(rec.lines) || !str(o.bartender_card) || !str(o.home_recipe)) throw new Error("phg_unavailable");
@@ -150,14 +147,32 @@ export async function phgChangeCocktail(
     ingredient: String(str(l.ingredient) ?? "").slice(0, 120), amount: str(l.amount), phg_product_id: str(l.phg_product_id),
   })).filter((l) => l.ingredient);
   const abv = Number(rec.est_abv);
-  const types = (Array.isArray(o.change_types) ? o.change_types : []).filter((t): t is ChangeType => (CHANGES as string[]).includes(t as string));
   return {
     recipe: {
-      name: String(rec.name).slice(0, 120), base_cocktail_id: str(rec.base_cocktail_id) ?? a.recipe?.base_cocktail_id ?? a.cocktail_id ?? null, lines,
+      name: String(rec.name).slice(0, 120), base_cocktail_id: str(rec.base_cocktail_id) ?? fallbackBaseId, lines,
       method: str(rec.method), glass: str(rec.glass), garnish: str(rec.garnish),
       est_abv: rec.est_abv != null && Number.isFinite(abv) && abv >= 0 && abv <= 100 ? abv : null,
     },
     bartender_card: String(o.bartender_card).slice(0, 2000), home_recipe: String(o.home_recipe).slice(0, 4000),
+  };
+}
+
+export async function phgGetRecipe(cfg: PhgConfig, cocktailId: string): Promise<CocktailRecipe> {
+  // Read only: token + p_cocktail_id are the only fields sent.
+  const r = await rpc(cfg, PHG_COMMANDS.recipe, { p_cocktail_id: cocktailId }, TIMEOUTS_MS.recipe);
+  return parseRecipeReply(r, cocktailId);
+}
+
+export async function phgChangeCocktail(
+  cfg: PhgConfig, a: { cocktail_id: string | null; recipe: Recipe | null; changes: CocktailChange[] },
+): Promise<ChangedCocktail> {
+  const r = await rpc(cfg, PHG_COMMANDS.changeCocktail,
+    { p_cocktail_id: a.cocktail_id, p_recipe: a.recipe, p_changes: a.changes }, TIMEOUTS_MS.change);
+  const base = parseRecipeReply(r, a.recipe?.base_cocktail_id ?? a.cocktail_id ?? null);
+  const o = r as Record<string, unknown>;
+  const types = (Array.isArray(o.change_types) ? o.change_types : []).filter((t): t is ChangeType => (CHANGES as string[]).includes(t as string));
+  return {
+    ...base,
     change_types: types.length ? types : a.changes.map((c) => c.type),
     ai_used: typeof o.ai_used === "boolean" ? o.ai_used : true,
   };

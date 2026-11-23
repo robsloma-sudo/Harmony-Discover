@@ -1,8 +1,12 @@
-// Harmony Discover DEV — discover-explore v0.1.0 (23 Nov 2026) · P-20261123-0711 part 3.
+// Harmony Discover DEV — discover-explore v0.2.0 (23 Nov 2026) · P-20261123-0711 part 3.
 // Tap-to-explore from a scanned menu. One server program, actions:
 //   link_menu       link every drink line of a scanned menu to the real cocktail / spirit / wine / beer (cached per menu)
 //   change_cocktail apply guest changes (swap base, smokier, lower proof...) to a cocktail
-//   journey         fast cached Journey; builds and saves one once when none exists (guests: capped builds)
+//   get_recipe      the unchanged recipe with amounts + cards for one cocktail (no AI, changes nothing, no guest limit, no event)
+//   journey         fast cached Journey; builds and saves one once when none exists (guests: capped builds).
+//                   peek:true = look only (never reserves a guest build, never builds, never records an open): ready / building / none.
+//                   One in-flight build marker per Journey (no person id) so the app's 2 s re-polling of a "building" Journey
+//                   reserves ONE guest build, not one per poll. Decision logic: journey.ts.
 //   tap             record a tap (no AI)
 //   save_version / list_versions / delete_version   "my version" saved on the person's account
 //   push_counts     server-only weekly job (worker secret, not a user token): sends combined counts to PHG main
@@ -14,9 +18,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import type { ChangeType, CocktailChange, CountRow, ItemKind, LinkedLine, Recipe } from "./contract.ts";
-import { loadPhgConfig, menuLinesFromItems, phgChangeCocktail, phgJourney, phgLinkLines, phgSendCounts } from "./phg.ts";
+import { loadPhgConfig, menuLinesFromItems, phgChangeCocktail, phgGetRecipe, phgJourney, phgLinkLines, phgSendCounts } from "./phg.ts";
+import { runJourney } from "./journey.ts";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MAX_BODY_BYTES = 100_000;
 const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
@@ -32,11 +37,13 @@ const GUEST_CAPS: Record<GuestKind, [number, number, number]> = {
 };
 const GUEST_LIMIT_MESSAGE = "You've reached today's free guest limit. Sign in (it's free) to keep going, or try again tomorrow.";
 const JOURNEY_CACHE_HOURS = intFromEnv("DISCOVER_JOURNEY_CACHE_HOURS", 168);
+// An in-flight build marker older than this is taken over (a build that died without releasing).
+const JOURNEY_BUILD_HOLD_SECONDS = intFromEnv("DISCOVER_JOURNEY_BUILD_HOLD_SECONDS", 600);
 const MAX_VERSIONS_GUEST = intFromEnv("DISCOVER_EXPLORE_MAX_VERSIONS_GUEST", 25);
 const MAX_VERSIONS_MEMBER = intFromEnv("DISCOVER_EXPLORE_MAX_VERSIONS_MEMBER", 200);
 const MIN_GUESTS = Math.max(3, intFromEnv("DISCOVER_EXPLORE_MIN_GUESTS", 5)); // privacy cut-off, never below 3
 // Per-minute limits per person (existing discover_rate_limit RPC).
-const MINUTE: Record<string, number> = { explore_link: 6, explore_change: 20, explore_journey: 30, explore_tap: 120, explore_save: 20 };
+const MINUTE: Record<string, number> = { explore_link: 6, explore_change: 20, explore_journey: 30, explore_tap: 120, explore_save: 20, explore_recipe: 30 };
 
 const KINDS: ItemKind[] = ["cocktail", "spirit", "wine", "beer", "other"];
 const CHANGE_TYPES: ChangeType[] = ["swap_base", "smokier", "lower_proof", "stronger", "sweeter", "drier", "more_citrus", "less_ice", "no_alcohol", "other"];
@@ -221,32 +228,52 @@ Deno.serve(async (req: Request) => {
     return reply({ ok: true, ...result }, 200, origin);
   }
 
+  if (action === "get_recipe") {
+    const cocktailId = clean(body.cocktail_id, 120);
+    if (!cocktailId) return reply({ error: "cocktail_required" }, 400, origin);
+    const stop = await minuteStop("explore_recipe"); if (stop) return stop;
+    let r;
+    try { r = await phgGetRecipe(await loadPhgConfig(db), cocktailId); }
+    catch (e) { return phgFailure(e, origin); }
+    return reply({ ok: true, cocktail_id: cocktailId, recipe: r.recipe, bartender_card: r.bartender_card, home_recipe: r.home_recipe }, 200, origin);
+  }
+
   if (action === "journey") {
     const kind = itemKind(body.item_kind), ref = clean(body.item_ref, 120);
     if (!kind || !ref) return reply({ error: "item_required" }, 400, origin);
+    const peek = body.peek === true;
     const stop = await minuteStop("explore_journey"); if (stop) return stop;
     const obs = body.observation_id ? await ownObservation(body.observation_id) : null;
-    const opened = () => record(obs?.venue_id ?? null, [{ kind, ref, event: "journey_open" }]);
-    // Fast path: fresh ready copy on the Discover side, no PHG call.
-    const hit = await db.from("discover_explore_journeys").select("status, journey, fetched_at").eq("item_kind", kind).eq("item_ref", ref).maybeSingle();
-    if (hit.data && Date.now() - new Date(hit.data.fetched_at).getTime() < JOURNEY_CACHE_HOURS * 3_600_000) {
-      await opened();
-      return reply({ ok: true, status: "ready", built_now: false, from_cache: true, journey: hit.data.journey }, 200, origin);
+    let cfg: Awaited<ReturnType<typeof loadPhgConfig>> | null = null;
+    try {
+      const out = await runJourney({
+        cacheGet: async (k, r) => {
+          const hit = await db.from("discover_explore_journeys").select("status, journey, fetched_at").eq("item_kind", k).eq("item_ref", r).maybeSingle();
+          return hit.data && Date.now() - new Date(hit.data.fetched_at).getTime() < JOURNEY_CACHE_HOURS * 3_600_000 ? hit.data.journey : null;
+        },
+        cachePut: async (k, r, status, journey) => {
+          await db.from("discover_explore_journeys").upsert({ item_kind: k, item_ref: r, status, journey, fetched_at: new Date().toISOString() }, { onConflict: "item_kind,item_ref" });
+        },
+        buildRunning: async (k, r) => {
+          const { data, error } = await db.from("discover_explore_journey_builds").select("started_at").eq("item_kind", k).eq("item_ref", r).maybeSingle();
+          if (error) throw new Error("journey_state_unavailable");
+          return !!data && Date.now() - new Date(data.started_at).getTime() < JOURNEY_BUILD_HOLD_SECONDS * 1000;
+        },
+        claim: async (k, r) => {
+          const { data, error } = await db.rpc("discover_explore_journey_build_claim", { p_item_kind: k, p_item_ref: r, p_hold_seconds: JOURNEY_BUILD_HOLD_SECONDS });
+          if (error) throw new Error("journey_state_unavailable");
+          return data === true;
+        },
+        release: async (k, r) => { await db.rpc("discover_explore_journey_build_release", { p_item_kind: k, p_item_ref: r }); },
+        reserve: () => guestRefusal(db, user, req, serviceKey, "journey_build", 1),
+        phgFetch: async (k, r, build) => { cfg ??= await loadPhgConfig(db); return await phgJourney(cfg, { item_kind: k, item_ref: r, build }); },
+        record: (k, r) => record(obs?.venue_id ?? null, [{ kind: k, ref: r, event: "journey_open" }]),
+      }, { kind, ref, peek, limitMessage: GUEST_LIMIT_MESSAGE });
+      return reply(out.body, out.status, origin);
+    } catch (e) {
+      if (String((e as Error)?.message) === "journey_state_unavailable") return reply({ error: "journey_state_unavailable" }, 503, origin);
+      return phgFailure(e, origin);
     }
-    // Build only when the guest still has a build left (reserved before the call); otherwise fetch-only.
-    const g = await guestRefusal(db, user, req, serviceKey, "journey_build", 1);
-    const canBuild = g === null;
-    if (g && g.status !== 429) return reply(g.body, g.status, origin);
-    let res;
-    try { res = await phgJourney(await loadPhgConfig(db), { item_kind: kind, item_ref: ref, build: canBuild }); }
-    catch (e) { return phgFailure(e, origin); }
-    if ((res.status === "ready" || res.status === "built") && res.journey) {
-      await db.from("discover_explore_journeys").upsert({ item_kind: kind, item_ref: ref, status: res.status, journey: res.journey, fetched_at: new Date().toISOString() }, { onConflict: "item_kind,item_ref" });
-      await opened();
-      return reply({ ok: true, status: res.status, built_now: res.built_now, from_cache: false, journey: res.journey }, 200, origin);
-    }
-    if (!canBuild && res.status === "none") return reply({ ok: true, status: "limit", built_now: false, from_cache: false, journey: null, message: GUEST_LIMIT_MESSAGE }, 200, origin);
-    return reply({ ok: true, status: res.status, built_now: false, from_cache: false, journey: null }, 200, origin);
   }
 
   if (action === "tap") {

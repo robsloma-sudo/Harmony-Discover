@@ -2,13 +2,15 @@
 -- Adds (all service-role only: RLS on, no policies, like discover_guest_usage):
 --   discover_explore_menu_links   one row per scanned menu: the linked drink lines (so a 2nd open is instant)
 --   discover_explore_journeys     shared Journey cache (fast path at the table; freshness is checked by the program)
+--   discover_explore_journey_builds  in-flight Journey build marker, one row per (item_kind,item_ref); NO person id (not personal data)
 --   discover_explore_versions     "my version" cocktails, owned by the account id (guest or member)
 --   discover_explore_events       raw anonymous taps/changes; written ONLY with aggregate_research consent
 --   discover_explore_export_log   which finished weeks were already sent to PHG main
 -- Functions (security definer, search_path '', service role only):
 --   discover_explore_save_version  save with a per-account cap, race-safe
 --   discover_explore_pending_weeks / discover_explore_weekly_export  combined rows, privacy cut-off applied
---   discover_explore_mark_week_sent, discover_explore_cleanup
+--   discover_explore_mark_week_sent, discover_explore_cleanup (also removes build markers older than 1 day)
+--   discover_explore_journey_build_claim / _release  one build per Journey at a time, so a guest's re-polling does not burn their daily builds
 -- Changes to existing objects (nothing else is touched):
 --   * discover_guest_usage kind check + discover_guest_allow: kinds menu_link, cocktail_change, journey_build added
 --     (same signature and logic as PR #127).
@@ -30,6 +32,14 @@ create table if not exists public.discover_explore_journeys (
   status text not null check (status in ('ready', 'built')),
   journey jsonb not null,
   fetched_at timestamptz not null default now(),
+  primary key (item_kind, item_ref)
+);
+
+-- In-flight Journey build marker. Global per Journey, holds no person id. A marker older than the hold is taken over.
+create table if not exists public.discover_explore_journey_builds (
+  item_kind text not null check (item_kind in ('cocktail', 'spirit', 'wine', 'beer', 'other')),
+  item_ref text not null check (char_length(item_ref) between 1 and 120),
+  started_at timestamptz not null default now(),
   primary key (item_kind, item_ref)
 );
 
@@ -70,13 +80,14 @@ create table if not exists public.discover_explore_export_log (
 
 alter table public.discover_explore_menu_links enable row level security;
 alter table public.discover_explore_journeys enable row level security;
+alter table public.discover_explore_journey_builds enable row level security;
 alter table public.discover_explore_versions enable row level security;
 alter table public.discover_explore_events enable row level security;
 alter table public.discover_explore_export_log enable row level security;
-revoke all on table public.discover_explore_menu_links, public.discover_explore_journeys, public.discover_explore_versions,
+revoke all on table public.discover_explore_menu_links, public.discover_explore_journeys, public.discover_explore_journey_builds, public.discover_explore_versions,
   public.discover_explore_events, public.discover_explore_export_log from public, anon, authenticated;
 grant select, insert, update, delete on table public.discover_explore_menu_links, public.discover_explore_journeys,
-  public.discover_explore_versions, public.discover_explore_events, public.discover_explore_export_log to service_role;
+  public.discover_explore_journey_builds, public.discover_explore_versions, public.discover_explore_events, public.discover_explore_export_log to service_role;
 grant usage, select on sequence public.discover_explore_events_id_seq to service_role;
 comment on table public.discover_explore_events is
   'P-20261123-0711: raw tap/change events, only for subjects with aggregate_research consent. subject_id is for deletion and distinct counting only. 90-day / sent+30-day retention via discover_explore_cleanup().';
@@ -156,7 +167,7 @@ create or replace function public.discover_explore_cleanup()
 returns jsonb
 language plpgsql security definer set search_path to ''
 as $function$
-declare n_ev integer; n_links integer; n_j integer;
+declare n_ev integer; n_links integer; n_j integer; n_b integer;
 begin
   delete from public.discover_explore_events e
   where e.occurred_at < now() - interval '90 days'
@@ -168,8 +179,37 @@ begin
   get diagnostics n_links = row_count;
   delete from public.discover_explore_journeys where fetched_at < now() - interval '30 days';
   get diagnostics n_j = row_count;
-  return jsonb_build_object('events', n_ev, 'menu_links', n_links, 'journeys', n_j);
+  delete from public.discover_explore_journey_builds where started_at < now() - interval '1 day';
+  get diagnostics n_b = row_count;
+  return jsonb_build_object('events', n_ev, 'menu_links', n_links, 'journeys', n_j, 'journey_builds', n_b);
 end
+$function$;
+
+-- One build per Journey at a time. true = you may build now (no marker, or the marker is older than p_hold_seconds and is taken over);
+-- false = a fresh marker exists, so a build is already running. A single insert ... on conflict statement: race-safe, no lock needed.
+create or replace function public.discover_explore_journey_build_claim(p_item_kind text, p_item_ref text, p_hold_seconds integer)
+returns boolean
+language plpgsql security definer set search_path to ''
+as $function$
+declare v_started timestamptz;
+begin
+  if p_item_kind is null or p_item_ref is null or p_hold_seconds is null or p_hold_seconds < 0 or p_hold_seconds > 86400 then
+    raise exception 'invalid_arguments' using errcode = '22023';
+  end if;
+  insert into public.discover_explore_journey_builds as b (item_kind, item_ref, started_at)
+  values (p_item_kind, p_item_ref, pg_catalog.clock_timestamp())
+  on conflict (item_kind, item_ref) do update set started_at = excluded.started_at
+    where b.started_at < pg_catalog.clock_timestamp() - pg_catalog.make_interval(secs => p_hold_seconds)
+  returning b.started_at into v_started;
+  return v_started is not null;
+end
+$function$;
+
+create or replace function public.discover_explore_journey_build_release(p_item_kind text, p_item_ref text)
+returns void
+language sql security definer set search_path to ''
+as $function$
+  delete from public.discover_explore_journey_builds where item_kind = p_item_kind and item_ref = p_item_ref;
 $function$;
 
 revoke all on function public.discover_explore_save_version(uuid, integer, text, jsonb, text, text, text, text[], uuid) from public, anon, authenticated;
@@ -182,6 +222,10 @@ grant execute on function public.discover_explore_pending_weeks() to service_rol
 grant execute on function public.discover_explore_weekly_export(integer) to service_role;
 grant execute on function public.discover_explore_mark_week_sent(date, integer, integer) to service_role;
 grant execute on function public.discover_explore_cleanup() to service_role;
+revoke all on function public.discover_explore_journey_build_claim(text, text, integer) from public, anon, authenticated;
+revoke all on function public.discover_explore_journey_build_release(text, text) from public, anon, authenticated;
+grant execute on function public.discover_explore_journey_build_claim(text, text, integer) to service_role;
+grant execute on function public.discover_explore_journey_build_release(text, text) to service_role;
 
 -- Guest limits: add the three new kinds. Same signature and logic as PR #127.
 alter table public.discover_guest_usage drop constraint if exists discover_guest_usage_kind_check;

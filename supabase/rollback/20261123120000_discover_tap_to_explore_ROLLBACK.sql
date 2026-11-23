@@ -8,10 +8,13 @@ drop function if exists public.discover_explore_weekly_export(integer);
 drop function if exists public.discover_explore_pending_weeks();
 drop function if exists public.discover_explore_mark_week_sent(date, integer, integer);
 drop function if exists public.discover_explore_cleanup();
+drop function if exists public.discover_explore_journey_build_claim(text, text, integer);
+drop function if exists public.discover_explore_journey_build_release(text, text);
 
 drop table if exists public.discover_explore_events;
 drop table if exists public.discover_explore_export_log;
 drop table if exists public.discover_explore_versions;
+drop table if exists public.discover_explore_journey_builds;
 drop table if exists public.discover_explore_journeys;
 drop table if exists public.discover_explore_menu_links;
 

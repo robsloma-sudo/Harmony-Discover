@@ -6,6 +6,7 @@
 export const PHG_COMMANDS = {
   linkLines: "discover_menu_lines_link",        // part 1 (Brands): link menu drink lines to cocktails / products
   changeCocktail: "discover_cocktail_change",   // part 2 (Cocktails): apply guest changes to a cocktail recipe
+  recipe: "discover_cocktail_recipe",           // part 2 (Cocktails): read a cocktail's recipe + cards, changes nothing, no AI
   journey: "discover_journey_fetch_or_build",   // part 2 (Cocktails): fetch a Journey, or build + save it once
   counts: "discover_explore_counts_submit",     // part 2 (Cocktails): landing table for combined counts
 } as const;
@@ -62,6 +63,16 @@ export interface ChangedCocktail {
   change_types: ChangeType[];
   ai_used: boolean;         // true when PHG had to call an AI model (counts toward guest limits)
 }
+
+// get_recipe: the unchanged recipe with amounts, so the cocktail maker shows amounts from the start.
+export interface CocktailRecipe {
+  recipe: Recipe;
+  bartender_card: string;
+  home_recipe: string;
+}
+
+// journey with peek: true (look only): never reserves a guest build, never starts a build, never records an open.
+export type JourneyPeekStatus = "ready" | "building" | "none";
 
 export interface JourneyResult {
   status: "ready" | "built" | "building" | "none";
