@@ -43,7 +43,7 @@ const MAX_VERSIONS_GUEST = intFromEnv("DISCOVER_EXPLORE_MAX_VERSIONS_GUEST", 25)
 const MAX_VERSIONS_MEMBER = intFromEnv("DISCOVER_EXPLORE_MAX_VERSIONS_MEMBER", 200);
 const MIN_GUESTS = Math.max(3, intFromEnv("DISCOVER_EXPLORE_MIN_GUESTS", 5)); // privacy cut-off, never below 3
 // Per-minute limits per person (existing discover_rate_limit RPC).
-const MINUTE: Record<string, number> = { explore_link: 6, explore_change: 20, explore_journey: 30, explore_tap: 120, explore_save: 20, explore_recipe: 30 };
+const MINUTE: Record<string, number> = { explore_link: 6, explore_change: 20, explore_journey: 30, explore_journey_peek: 120, explore_tap: 120, explore_save: 20, explore_recipe: 30 };
 
 const KINDS: ItemKind[] = ["cocktail", "spirit", "wine", "beer", "other"];
 const CHANGE_TYPES: ChangeType[] = ["swap_base", "smokier", "lower_proof", "stronger", "sweeter", "drier", "more_citrus", "less_ice", "no_alcohol", "other"];
@@ -97,6 +97,17 @@ async function guestRefusal(
   if (error) return { status: 503, body: { error: "daily_limit_unavailable" } };
   if (data !== true) return { status: 429, body: { error: "daily_limit_reached", limit: "guest", message: GUEST_LIMIT_MESSAGE } };
   return null;
+}
+
+// Give back units reserved by guestRefusal when the paid work never started. Members: nothing to give back.
+async function guestRefund(
+  // deno-lint-ignore no-explicit-any
+  db: any, user: { id: string; is_anonymous?: boolean }, req: Request, secret: string, kind: GuestKind, units: number,
+): Promise<void> {
+  if (user.is_anonymous !== true) return;
+  const network = await guestNetworkKey(req, secret).catch(() => null);
+  const { error } = await db.rpc("discover_guest_refund", { p_account: user.id, p_network: network, p_kind: kind, p_units: units });
+  if (error) throw new Error("refund_failed");
 }
 
 function timingSafeEqual(a: string, b: string): Promise<boolean> {
@@ -242,7 +253,8 @@ Deno.serve(async (req: Request) => {
     const kind = itemKind(body.item_kind), ref = clean(body.item_ref, 120);
     if (!kind || !ref) return reply({ error: "item_required" }, 400, origin);
     const peek = body.peek === true;
-    const stop = await minuteStop("explore_journey"); if (stop) return stop;
+    // Look-only checks are free and the app re-checks / pre-loads, so they get their own, higher per-minute limit.
+    const stop = await minuteStop(peek ? "explore_journey_peek" : "explore_journey"); if (stop) return stop;
     const obs = body.observation_id ? await ownObservation(body.observation_id) : null;
     let cfg: Awaited<ReturnType<typeof loadPhgConfig>> | null = null;
     try {
@@ -266,6 +278,7 @@ Deno.serve(async (req: Request) => {
         },
         release: async (k, r) => { await db.rpc("discover_explore_journey_build_release", { p_item_kind: k, p_item_ref: r }); },
         reserve: () => guestRefusal(db, user, req, serviceKey, "journey_build", 1),
+        refund: () => guestRefund(db, user, req, serviceKey, "journey_build", 1),
         phgFetch: async (k, r, build) => { cfg ??= await loadPhgConfig(db); return await phgJourney(cfg, { item_kind: k, item_ref: r, build }); },
         record: (k, r) => record(obs?.venue_id ?? null, [{ kind: k, ref: r, event: "journey_open" }]),
       }, { kind, ref, peek, limitMessage: GUEST_LIMIT_MESSAGE });

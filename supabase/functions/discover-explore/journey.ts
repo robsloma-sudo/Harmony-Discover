@@ -16,6 +16,8 @@ export interface JourneyDeps {
   release(kind: ItemKind, ref: string): Promise<void>;
   /** Guest daily build reservation. null = go ahead (members always). Otherwise the refusal to send. */
   reserve(): Promise<{ status: number; body: Record<string, unknown> } | null>;
+  /** Give back a build reserved by reserve() when no build actually started (no-op for members). */
+  refund(): Promise<void>;
   /** PHG call. build:false = fetch only. Throws Error("phg_unavailable" | "phg_timeout"). */
   phgFetch(kind: ItemKind, ref: string, build: boolean): Promise<JourneyResult>;
   /** journey_open event (consent checked inside). */
@@ -68,28 +70,35 @@ export async function runJourney(
   }
 
   // We hold the marker. Any early exit below must release it.
+  // A guest build is reserved only when a build really starts: first look (free), and reserve only if PHG has nothing yet.
+  // If PHG then says "none" (nothing to build / no builder live), answers ready without building, or fails, the build is given back.
+  const refundQuiet = async () => { try { await deps.refund(); } catch { /* best effort: at worst the guest loses one build today */ } };
   try {
+    const pre = await deps.phgFetch(kind, ref, false);
+    if (isReady(pre)) return await readyReply(pre, false);
+    if (pre.status === "building") return building(); // already being built on PHG: keep the marker, spend nothing
+
     const g = await deps.reserve();
     if (g) {
       await releaseQuiet();
       if (g.status !== 429) return { status: g.status, body: g.body };
-      const res = await deps.phgFetch(kind, ref, false);
-      if (isReady(res)) return await readyReply(res, false);
-      if (res.status === "none") {
-        return ok({ status: "limit", built_now: false, from_cache: false, journey: null, message: a.limitMessage });
-      }
-      return building();
+      return ok({ status: "limit", built_now: false, from_cache: false, journey: null, message: a.limitMessage });
     }
     let res: JourneyResult;
     try { res = await deps.phgFetch(kind, ref, true); }
     catch (e) {
       // A build that outlasts our wait is most likely still running on PHG: keep the marker (it expires after the hold)
-      // so the app's re-polls look only instead of reserving another build.
+      // and the reservation, so the app's re-polls look only instead of reserving another build.
       if ((e as Error)?.message === "phg_timeout") return building();
+      await refundQuiet(); // no build started
       throw e;
     }
-    if (isReady(res)) return await readyReply(res, true);
-    if (res.status === "building") return building(); // keep the marker: the build is still running
+    if (isReady(res)) {
+      if (!res.built_now) await refundQuiet(); // PHG already had it: nothing was built
+      return await readyReply(res, true);
+    }
+    if (res.status === "building") return building(); // keep the marker and the reservation: the build is running
+    await refundQuiet(); // "none": no build started
     await releaseQuiet();
     return ok({ status: "none", built_now: false, from_cache: false, journey: null });
   } catch (e) {

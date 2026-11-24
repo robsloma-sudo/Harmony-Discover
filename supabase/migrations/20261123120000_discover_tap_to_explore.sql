@@ -11,6 +11,7 @@
 --   discover_explore_pending_weeks / discover_explore_weekly_export  combined rows, privacy cut-off applied
 --   discover_explore_mark_week_sent, discover_explore_cleanup (also removes build markers older than 1 day)
 --   discover_explore_journey_build_claim / _release  one build per Journey at a time, so a guest's re-polling does not burn their daily builds
+--   discover_guest_refund  gives back a reserved guest Journey build when no build actually started (PHG said none / failed)
 -- Changes to existing objects (nothing else is touched):
 --   * discover_guest_usage kind check + discover_guest_allow: kinds menu_link, cocktail_change, journey_build added
 --     (same signature and logic as PR #127).
@@ -294,6 +295,38 @@ $function$;
 
 revoke all on function public.discover_guest_allow(uuid, uuid, text, integer, integer, integer, integer) from public, anon, authenticated;
 grant execute on function public.discover_guest_allow(uuid, uuid, text, integer, integer, integer, integer) to service_role;
+
+-- Give back units reserved by discover_guest_allow when the paid work never started. Today's rows only, never below 0.
+-- Limited to journey_build (the only caller). Same advisory lock as discover_guest_allow so it cannot race a reservation.
+create or replace function public.discover_guest_refund(
+  p_account uuid, p_network uuid, p_kind text, p_units integer)
+returns boolean
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+declare
+  v_day date := (now() at time zone 'utc')::date;
+begin
+  if p_account is null or p_kind is null or p_units is null or p_units < 1 or p_units > 50
+     or p_kind not in ('journey_build') then
+    return false;
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('discover-guest:' || p_kind || ':' || v_day::text, 0)
+  );
+  update public.discover_guest_usage set units = greatest(units - p_units, 0)
+  where day = v_day and kind = p_kind and key_kind = 'account' and key_id = p_account;
+  if p_network is not null then
+    update public.discover_guest_usage set units = greatest(units - p_units, 0)
+    where day = v_day and kind = p_kind and key_kind = 'network' and key_id = p_network;
+  end if;
+  return true;
+end
+$function$;
+
+revoke all on function public.discover_guest_refund(uuid, uuid, text, integer) from public, anon, authenticated;
+grant execute on function public.discover_guest_refund(uuid, uuid, text, integer) to service_role;
 
 -- Delete-my-data: identical to the live function plus the two personal tap-to-explore tables.
 create or replace function public.discover_delete_subject_data(p_subject uuid) returns jsonb

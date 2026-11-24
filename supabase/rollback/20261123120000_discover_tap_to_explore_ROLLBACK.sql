@@ -10,6 +10,7 @@ drop function if exists public.discover_explore_mark_week_sent(date, integer, in
 drop function if exists public.discover_explore_cleanup();
 drop function if exists public.discover_explore_journey_build_claim(text, text, integer);
 drop function if exists public.discover_explore_journey_build_release(text, text);
+drop function if exists public.discover_guest_refund(uuid, uuid, text, integer);
 
 drop table if exists public.discover_explore_events;
 drop table if exists public.discover_explore_export_log;
