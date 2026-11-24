@@ -3,7 +3,8 @@ import { View, Text, Image, Pressable, ScrollView, ActivityIndicator, TextInput 
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
-import { ExploreLimitError, getMenuLinks, prefetchJourneys, type MenuLineLink } from '../src/services/menuExplore';
+import { ExploreLimitError, getMenuLinks, type MenuLineLink } from '../src/services/menuExplore';
+import { useVisibleLinePrefetch } from '../src/explore/useVisibleLinePrefetch';
 import { LineTitle, LinkedLineBlock, LinksNotice } from '../src/explore/MenuLineList';
 import { getMockJourney } from '../src/services/mockJourneyApi';
 import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, confirmObservationVenue, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
@@ -27,6 +28,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
   const [contributionBusy, setContributionBusy] = useState(false);
   const [links, setLinks] = useState<MenuLineLink[]>([]);
   const [linksNotice, setLinksNotice] = useState('');
+  const visible = useVisibleLinePrefetch(links);
 
   useEffect(() => {
     let active = true;
@@ -57,7 +59,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
       setEditingId(null);
       setLinks([]); setLinksNotice('');
       // Links are a bonus: if they fail the menu review carries on with unlinked lines.
-      getMenuLinks(result.id, result.items || []).then(found => { setLinks(found); void prefetchJourneys(found); }).catch(e => { if (e instanceof ExploreLimitError) setLinksNotice(e.message); });
+      getMenuLinks(result.id, result.items || []).then(found => { setLinks(found); }).catch(e => { if (e instanceof ExploreLimitError) setLinksNotice(e.message); });
       if (result.status !== 'ready_for_review') setMessage(`Scan status: ${result.status}. Some pages may need another attempt.`);
       if (!result.items?.length) setMessage('No readable menu items were returned. Try a clearer photo with the menu filling the frame.');
     } catch (e) { setMessage(e instanceof Error ? e.message : 'Could not process this menu.'); }
@@ -80,7 +82,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
 
   const journey = journeyItemId ? getMockJourney(journeyItemId) : null;
 
-  return <Screen hideTabs={!!onClose}>
+  return <Screen hideTabs={!!onClose} onScroll={visible.onScroll} onLayout={visible.onScreenLayout}>
     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
       <Text style={styles.back} onPress={() => onClose ? onClose() : router.back()}>‹  Back</Text>
       <Text style={styles.back} onPress={() => router.push('/my-versions' as never)}>My versions</Text>
@@ -125,7 +127,7 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
       <Text style={styles.sectionTitle}>Review extracted items · {items.length}</Text>
       <Text style={styles.footnote}>Check the transcription carefully. Save each correction to update your private Discover scan and retain an audit of what changed.</Text>
       <LinksNotice message={linksNotice} />
-      {items.map(item => <View key={item.id} style={[styles.item, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+      {items.map(item => <View key={item.id} onLayout={visible.onLineLayout(item.id)} style={[styles.item, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
         {editingId === item.id ? <>
           <Text style={styles.eyebrow}>CORRECT TRANSCRIPTION</Text>
           <TextInput value={item.name} onChangeText={value => setItems(old => old?.map(x => x.id === item.id ? { ...x, name: value } : x) || null)} placeholder="Drink or item name" placeholderTextColor="#858C95" style={reviewField} />

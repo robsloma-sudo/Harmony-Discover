@@ -1,5 +1,5 @@
 // Tappable drink lines for the menu review. Used by app/preview.tsx and the dev-only /dev-menu-explore page.
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import { router } from 'expo-router';
 import { recordTap, type ExploreKind, type LinkedItem, type MenuLineLink } from '../services/menuExplore';
 import { LinkedChip } from './ExploreKit';
@@ -70,12 +70,12 @@ export function LinksNotice({ message }: { message?: string | null }) {
 }
 
 /** Plain list used by the dev page. */
-export function MenuLineList({ items, links, observationId, notice }: { items: LineItem[]; links: MenuLineLink[]; observationId?: string | null; notice?: string | null }) {
+export function MenuLineList({ items, links, observationId, notice, onLineLayout }: { items: LineItem[]; links: MenuLineLink[]; observationId?: string | null; notice?: string | null; onLineLayout?: (id: string) => (e: LayoutChangeEvent) => void }) {
   return <View style={{ gap: 10 }}>
     <LinksNotice message={notice} />
     {items.map(item => {
       const link = links.find(l => l.line_id === item.id);
-      return <View key={item.id} style={{ padding: 14, backgroundColor: '#171E27', borderRadius: 14, gap: 10 }}>
+      return <View key={item.id} onLayout={onLineLayout?.(item.id)} style={{ padding: 14, backgroundColor: '#171E27', borderRadius: 14, gap: 10 }}>
         <LineTitle item={item} link={link} observationId={observationId}>
           <Text style={{ color: '#F4F1E9', fontWeight: '700', fontSize: 15 }}>{item.name}</Text>
           <Text style={{ color: '#7D8995', fontSize: 11 }}>{item.category}</Text>

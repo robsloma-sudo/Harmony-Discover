@@ -83,7 +83,7 @@ const cacheable = (j: Journey) => (j.status === 'ready' || j.status === 'built')
 const fresh = (e: CacheEntry | undefined) => !!e && cacheable(e.journey) && Date.now() - e.cachedAt < JOURNEY_TTL_MS;
 
 /** Test helper: clears in-memory state only. */
-export function _resetExploreMemory() { memory.clear(); inflight.clear(); lineIndex.clear(); }
+export function _resetExploreMemory() { memory.clear(); inflight.clear(); lineIndex.clear(); recentPeeks.clear(); prefetchTail = Promise.resolve(); }
 
 async function cacheJourney(journey: Journey) {
   if (!cacheable(journey)) return;
@@ -143,10 +143,13 @@ export async function getJourney(kind: ExploreKind, ref: string, name: string): 
   return (await getJourneyTimed(kind, ref, name)).journey;
 }
 
-/** Polls (peek only, never builds) while 'building'; stops on any other status, including 'none'. On timeout onUpdate receives a synthetic 'failed' Journey. Returns cancel(). */
+export const JOURNEY_POLL_INTERVAL_MS = 5000;
+export const JOURNEY_POLL_TIMEOUT_MS = 180000;
+
+/** Polls (peek only, never builds) while 'building'; stops on any other status, including 'none'. On timeout onUpdate receives a synthetic 'still_building' Journey. Returns cancel(). */
 export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpdate: (j: Journey) => void, opts: PollOptions = {}): () => void {
-  const intervalMs = opts.intervalMs ?? 2000;
-  const timeoutMs = opts.timeoutMs ?? 60000;
+  const intervalMs = opts.intervalMs ?? JOURNEY_POLL_INTERVAL_MS;
+  const timeoutMs = opts.timeoutMs ?? JOURNEY_POLL_TIMEOUT_MS;
   const started = Date.now();
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -162,7 +165,7 @@ export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpda
     if (cancelled) return;
     if (Date.now() - started + intervalMs > timeoutMs) {
       stop();
-      onUpdate({ kind, ref, status: 'failed', title: name, sections: [] });
+      onUpdate({ kind, ref, status: 'still_building', title: name, sections: [] });
       return;
     }
     timer = setTimeout(tick, intervalMs);
@@ -171,22 +174,34 @@ export function pollJourney(kind: ExploreKind, ref: string, name: string, onUpda
   return stop;
 }
 
-/** Pre-load Journeys for linked lines using peek only (free, never builds, so fine for guests). Caches ready results. Concurrency 3, deduped, never throws. */
-export async function prefetchJourneys(links: MenuLineLink[], concurrency = 3): Promise<void> {
+// ---- Prefetch (peek only, one at a time, each item at most once per 5 minutes per app session) ----
+export const PREFETCH_RECHECK_MS = 5 * 60 * 1000;
+const recentPeeks = new Map<string, number>();
+let prefetchTail: Promise<void> = Promise.resolve();
+
+/** Pre-load Journeys for visible lines using peek only (free, never builds). Serial across all calls, skips cached and recently peeked items, deduped, never throws. */
+export function prefetchVisibleLines(links: MenuLineLink[]): Promise<void> {
   try {
     const jobs = new Map<string, { kind: ExploreKind; ref: string; name: string }>();
     for (const l of links) {
       if (l.cocktail?.id) jobs.set(keyOf('cocktail', l.cocktail.id), { kind: 'cocktail', ref: l.cocktail.id, name: l.cocktail.name });
       for (const it of l.items) if (it.phg_product_id) jobs.set(keyOf(it.kind, it.phg_product_id), { kind: it.kind, ref: it.phg_product_id, name: it.name });
     }
-    const queue = [...jobs.values()];
-    const worker = async () => {
-      for (let job = queue.shift(); job; job = queue.shift()) {
-        try { if (!(await readJourneyCache(keyOf(job.kind, job.ref)))) await fetchJourneyShared(job.kind, job.ref, job.name, true); } catch { /* best effort */ }
+    const run = async () => {
+      for (const [key, job] of jobs) {
+        try {
+          const last = recentPeeks.get(key);
+          if (last !== undefined && Date.now() - last < PREFETCH_RECHECK_MS) continue;
+          if (await readJourneyCache(key)) continue;
+          recentPeeks.set(key, Date.now());
+          await fetchJourneyShared(job.kind, job.ref, job.name, true);
+        } catch { /* best effort */ }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
-  } catch { /* never throws */ }
+    const p = prefetchTail.then(run, run);
+    prefetchTail = p.catch(() => {});
+    return p.catch(() => {});
+  } catch { return Promise.resolve(); }
 }
 
 // ---- Cocktail change ----

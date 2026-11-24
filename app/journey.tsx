@@ -48,9 +48,11 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
   const retry = useCallback(() => setAttempt(n => n + 1), []);
   const status = journey?.status;
   const building = !failed && (!journey || status === 'building');
+  const stillBuilding = !failed && status === 'still_building';
   const ready = !failed && !!journey && (status === 'ready' || status === 'built');
   const limited = !failed && status === 'limit';
-  const noStory = failed || status === 'none' || status === 'failed';
+  const noStory = failed || status === 'failed';
+  const none = !failed && status === 'none';
   const openedLabel = kind === 'cocktail' ? 'COCKTAIL STORY' : `${kind.toUpperCase()} STORY`;
 
   return (
@@ -64,10 +66,19 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
         <Text style={{ ...type.body, color: palette.muted }}>Signing in is free and lets you keep exploring.</Text>
         <BigActionButton primary icon="log-in-outline" label="Sign in" onPress={() => router.push('/sign-in' as never)} />
       </ExploreSheet>}
-      {noStory && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+      {stillBuilding && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+        <Text style={{ ...type.value, color: palette.ivory }}>Still being written</Text>
+        <Text style={{ ...type.body, color: palette.muted }}>This story is taking a little longer. Check back soon.</Text>
+        <BigActionButton icon="refresh" label="Check again" onPress={retry} />
+      </ExploreSheet>}
+      {none && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
         <Text style={{ ...type.value, color: palette.ivory }}>No story for this one yet.</Text>
         <Text style={{ ...type.body, color: palette.muted }}>Nothing is wrong on your side. Check back a little later.</Text>
-        {(failed || status === 'failed') && <BigActionButton icon="refresh" label="Try again" onPress={retry} />}
+      </ExploreSheet>}
+      {noStory && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+        <Text style={{ ...type.value, color: palette.ivory }}>We could not load this story.</Text>
+        <Text style={{ ...type.body, color: palette.muted }}>Check your connection and try again.</Text>
+        <BigActionButton icon="refresh" label="Try again" onPress={retry} />
       </ExploreSheet>}
       {ready && journey && <>
         {!!journey.intro && <Text style={{ ...type.body, color: palette.muted, marginTop: space.md }}>{journey.intro}</Text>}

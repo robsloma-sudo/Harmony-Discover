@@ -16,7 +16,7 @@ vi.mock('../src/services/supabase', () => ({
 
 import {
   _resetExploreMemory, changeCocktail, deleteMyVersion, ExploreLimitError, findMenuLine, getJourneyTimed, getRecipe, getMenuLinks, listMyVersions,
-  pollJourney, prefetchJourneys, recordTap, saveMyVersion, startingRecipe,
+  JOURNEY_POLL_INTERVAL_MS, JOURNEY_POLL_TIMEOUT_MS, pollJourney, prefetchVisibleLines, recordTap, saveMyVersion, startingRecipe,
 } from '../src/services/menuExplore';
 import { resetMockJourneys } from '../src/services/menuExplore/mock';
 import type { ChangedCocktail, Journey, MenuLineLink, Recipe } from '../src/services/menuExplore';
@@ -147,36 +147,86 @@ describe('journey', () => {
     expect(f).toHaveBeenCalledTimes(3);
   });
 
-  it('poll timeout gives a synthetic failed journey', async () => {
+  it('poll defaults are 5s interval and 3 min timeout', () => {
+    expect(JOURNEY_POLL_INTERVAL_MS).toBe(5000);
+    expect(JOURNEY_POLL_TIMEOUT_MS).toBe(180000);
+  });
+
+  it('default poll waits 5s between checks and ends with still_building after 3 min', async () => {
+    vi.useFakeTimers();
+    const { f } = mockServer(() => json({ status: 'building', journey: null }));
+    const seen: string[] = [];
+    pollJourney('spirit', 'p5', 'E', j => seen.push(j.status));
+    await vi.advanceTimersByTimeAsync(4900);
+    expect(f).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(f).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(200000);
+    expect(seen.at(-1)).toBe('still_building');
+    expect(f.mock.calls.length).toBeLessThanOrEqual(37);
+  });
+
+  it('poll keeps going after transient errors', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    mockServer(() => (++n < 3 ? json({ error: 'x' }, 500) : json(readyReply())));
+    const seen: string[] = [];
+    pollJourney('spirit', 'p6', 'F', j => seen.push(j.status), { intervalMs: 100, timeoutMs: 10000 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(seen).toEqual(['ready']);
+  });
+
+  it('poll timeout gives a synthetic still_building journey', async () => {
     vi.useFakeTimers();
     mockServer(() => json({ status: 'building', journey: null }));
     const seen: string[] = [];
     pollJourney('spirit', 'p4', 'D', j => seen.push(j.status), { intervalMs: 100, timeoutMs: 350 });
     await vi.advanceTimersByTimeAsync(2000);
-    expect(seen.at(-1)).toBe('failed');
+    expect(seen.at(-1)).toBe('still_building');
   });
 });
 
-describe('prefetch', () => {
+describe('prefetchVisibleLines', () => {
   const links: MenuLineLink[] = [1, 2, 3, 4, 5, 6].map(i => ({
     line_id: `l${i}`, status: 'linked', kind: 'spirit', cocktail: null, confidence: 1,
-    items: [{ kind: 'spirit', phg_product_id: i === 6 ? null : `p${i % 5}`, name: `P${i}`, role: 'base' }], // p1..p4,p0 + p1 duplicate? i=6 -> null
+    items: [{ kind: 'spirit', phg_product_id: i === 6 ? null : `p${i % 5}`, name: `P${i}`, role: 'base' }], // p1..p4,p0; i=6 -> null
   }));
-  it('dedupes, skips null product ids, and runs at most 3 at once', async () => {
+  it('dedupes, skips null product ids, and never has more than 1 in flight', async () => {
     let active = 0, peak = 0;
     const { f } = mockServer(async () => { active++; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, 5)); active--; return json(readyReply()); });
-    await prefetchJourneys([...links, links[0]]);
+    await prefetchVisibleLines([...links, links[0]]);
     expect(f).toHaveBeenCalledTimes(5);
-    expect(peak).toBeLessThanOrEqual(3);
-    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBe(1);
+  });
+  it('overlapping calls stay serial and do not repeat items', async () => {
+    let active = 0, peak = 0;
+    const { f } = mockServer(async () => { active++; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, 5)); active--; return json(readyReply()); });
+    await Promise.all([prefetchVisibleLines(links), prefetchVisibleLines(links.slice(2)), prefetchVisibleLines(links)]);
+    expect(f).toHaveBeenCalledTimes(5);
+    expect(peak).toBe(1);
   });
   it('for an anonymous guest sends only peek:true calls and caches ready results', async () => {
     session.anonymous = true;
     const { calls } = mockServer(() => json(readyReply()));
-    await prefetchJourneys(links);
+    await prefetchVisibleLines(links);
     expect(calls.length).toBe(5);
     for (const c of calls) expect(c.body).toMatchObject({ action: 'journey', peek: true });
     expect((await getJourneyTimed('spirit', 'p1', 'P')).source).toBe('memory');
+  });
+  it('skips cached items and items peeked in the last 5 minutes, then re-peeks after', async () => {
+    vi.useFakeTimers();
+    const { f } = mockServer((_a, b) => json(b.item_ref === 'p1' ? readyReply() : { ok: true, peek: true, status: 'none', journey: null }));
+    await prefetchVisibleLines(links);
+    expect(f).toHaveBeenCalledTimes(5);
+    await prefetchVisibleLines(links);
+    expect(f).toHaveBeenCalledTimes(5); // p1 cached, others recently peeked
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
+    await prefetchVisibleLines(links);
+    expect(f).toHaveBeenCalledTimes(9); // 4 uncached re-peeked, p1 still cached
+  });
+  it('never throws when the server fails', async () => {
+    mockServer(() => json({ error: 'boom' }, 500));
+    await expect(prefetchVisibleLines(links)).resolves.toBeUndefined();
   });
 });
 

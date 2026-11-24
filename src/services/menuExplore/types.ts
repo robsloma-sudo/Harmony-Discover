@@ -52,7 +52,7 @@ export const MAKER_BUTTON_CHANGE: Record<MakerButton, ChangeType> = {
 // ---- journey ----
 // peek: true = look only (ready | building | none); never spends a guest's daily build. Used for pre-loading and polling.
 // Server statuses: ready | built | building | none | limit. 'failed' is app-only (polling gave up / network error).
-export type JourneyStatus = 'ready' | 'built' | 'building' | 'none' | 'limit' | 'failed';
+export type JourneyStatus = 'ready' | 'built' | 'building' | 'none' | 'limit' | 'failed' | 'still_building';
 export type JourneySection = { heading: string; body: string; evidence?: string | null };
 export type Journey = {
   kind: ExploreKind;
