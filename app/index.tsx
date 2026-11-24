@@ -27,6 +27,7 @@ import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
 import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
+import { publishScreenContext } from '../src/voice/screenContext';
 import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
 import { clientLog, installClientLog } from '../src/services/clientLog';
 import { layoutBoxes } from '../src/live/boxDepth';
@@ -237,6 +238,14 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [activeJourney, setActiveJourney] = useState<JourneyScanItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
   const [martyConsentOpen, setMartyConsentOpen] = useState(false);
+  // Tell Marty what is on screen (menu lines, bottles in view, the open Journey) whenever it changes.
+  useEffect(() => {
+    publishScreenContext({
+      menu: liveMenu?.visible && liveMenu.items.length ? { title: liveMenu.title, lines: liveMenu.items } : null,
+      bottles: liveBottles.filter(b => b.state !== 'unsure').map(b => ({ brand: b.resolved?.brand ?? b.brand, product: b.product, category: b.category })),
+      journey: activeJourney ? { kind: activeJourney.kind, name: activeJourney.name, subtitle: activeJourney.subtitle } : null,
+    });
+  }, [liveMenu, liveBottles, activeJourney]);
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
   const [nearbyCommand,setNearbyCommand] = useState<{id:number;action:'set_radius'|'set_category'|'search'|'recenter'|'configure';radius_miles?:number;category?:string;search?:string}|null>(null);
   const nearbyCommandId = useRef(0);

@@ -10,7 +10,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test:learning": "vitest run tests/learning-ingest-policy.test.ts",
-    "test:voice": "vitest run tests/voice-session-state.test.ts tests/voice-session-contract.test.ts tests/voice-session-client.test.ts tests/voice-session-coordinator.test.ts",
+    "test:voice": "vitest run tests/voice-turn-controller.test.ts tests/voice-screen-context.test.ts tests/voice-session-state.test.ts tests/voice-session-contract.test.ts tests/voice-session-client.test.ts tests/voice-session-coordinator.test.ts",
     "prebuild:ios": "expo prebuild --platform ios",
     "build:dev:ios": "eas build --profile development --platform ios",
     "doctor": "expo-doctor",
