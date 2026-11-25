@@ -4,7 +4,7 @@ import { CameraView } from 'expo-camera';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import { frameSharpness, SteadyGate } from './steadyCapture';
 import { isReadableLabel, SAMPLE_GAP_MS, samplesForLabel, zoomReadiness } from './distanceCapture';
-import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
+import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, verifyLabelRead, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
@@ -13,8 +13,12 @@ import { calculateLabelCrop } from './labelCrop';
 import { selectLabelBatchCandidates, selectSecondLookCrops } from './labelBatch';
 import { LabelTextReader, OCR_MAX_EDGE, PHONE_READ_GAP_MS, cylinderForCrop, isPhoneUserAgent, textReaderEnabled, type Cylinder } from './labelTextReader';
 import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, probableFromFragments, sameBrand } from './letterGuess';
-import { noLabelStep } from './labelBatch';
-import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
+import { NO_LABEL_REST_MS, noLabelStep } from './labelBatch';
+import { fragmentLookup, letterLookup, logScanTimings, partialLookup, type ScanTimingRow } from '../services/discoverLetterApi';
+import { anchorsFor, checkNames, guessLabel, nameWords, partialGuess, pieceFit, piecesFromWords, rankNames, type PartialGuess, type PriorName } from './partialEvidence';
+import { occlusionForAll, type Occlusion } from './occlusion';
+import { confirmChoices, type ConfirmChoice } from './confirmChoices';
+import { expressionShown } from './identityBacking';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
 import { applyLocalTrackerBoxes, buildTrackingSeeds, type LocalTrackerBox, type TrackingSeed } from './nativeLocalTracking';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
@@ -28,11 +32,12 @@ import {
 } from './cameraMotion';
 import { computeAppearanceSignature } from './appearanceSignature';
 import { checkPreviousScannerExit, markScannerRunning, markScannerStopped, markTextReaderRunning } from './scannerHealth';
-import { TrackEvidence, identityKey } from './trackEvidence';
+import { TrackEvidence, foldWords, identityKey, sameBottleIdentity } from './trackEvidence';
 import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
+import { carryLiquidState, screenLiquidObservation, statusFromConsensus, type LiquidReadStatus } from '../services/liquidReadStatus';
 import { LiquidTrackGuard } from './liquidTrackGuard';
 import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
 import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
@@ -50,6 +55,8 @@ export type ARTrackingUpdate = {
   reason: string;
 };
 
+export type UserChoice = { trackId: number; at: number; brand?: string; product?: string; none?: boolean };
+
 export type ARViewEvent = { nativeEvent: { state?: string; reason?: string; message?: string } };
 
 export type ARKitDepthFrame = { width: number; height: number; sourceWidth: number; sourceHeight: number; depthMeters: number[]; confidence: number[]; cameraIntrinsics: number[]; cameraTransform: number[]; timestamp: number; unit: 'meters'; source: 'sceneDepth' | 'smoothedSceneDepth'; imageOrientation: number };
@@ -61,6 +68,10 @@ type NativeProps = ViewProps & {
   recognitionEnabled?: boolean;
   /** Settings > Quick Guess: the phone reads the biggest label words for an instant "Probably …". */
   quickGuess?: boolean;
+  /** What the scene already shows (the checked-in venue's bottles and menus): tips close calls on partly hidden labels. */
+  sceneNames?: PriorName[];
+  /** What the person scanning picked for a bottle the scanner asked about ("Which one is it?"); none = not a bottle / skip. */
+  userChoices?: UserChoice[];
   captureRequestId?: number;
   /** iOS only, set by DiscoverARSurface itself: cloud boxes the phone's Vision tracker should follow between reads. */
   trackingSeeds?: TrackingSeed[];
@@ -71,7 +82,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } }; liquidStatus?: LiquidReadStatus }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
@@ -139,8 +150,8 @@ function WebLiveCamera(props: NativeProps) {
   const [digitalZoom, setDigitalZoom] = useState(1);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
   const containerRef = useRef<any>(null);
-  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess });
-  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess };
+  const callbacksRef = useRef({ onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess, sceneNames: props.sceneNames, userChoices: props.userChoices });
+  callbacksRef.current = { onTrackingUpdate, onARReady: props.onARReady, onARError, onRecognitionUpdate: props.onRecognitionUpdate, onVisualCandidates: props.onVisualCandidates, onDepthEstimate: props.onDepthEstimate, onDepthStatus: props.onDepthStatus, onLiquidMetrics: props.onLiquidMetrics, onCapturedImage: props.onCapturedImage, recognitionEnabled: props.recognitionEnabled, quickGuess: props.quickGuess, sceneNames: props.sceneNames, userChoices: props.userChoices };
 
   useEffect(() => {
     if (!captureRequestId || !active) return;
@@ -245,15 +256,31 @@ function WebLiveCamera(props: NativeProps) {
     let saveQueue: Array<{ key: string; input: LiveSightingInput }> = [];
     let saveBusy = false;
     let saveRetryAt = 0;
+    // Names confirmed in this scan session: the scene that tips close calls on partly hidden labels.
+    const sessionNames = new Map<string, PriorName>();
+    // "Which one is it?" (Rob, 17 Nov 2026): a bottle whose maker is known but not for certain which bottle it is
+    // is never put in the found strip or saved on its own; its box asks the person scanning, with these choices.
+    const choicesByTrack = new Map<number, { key: string; choices: ConfirmChoice[] }>();
+    const choicesBusy = new Set<number>();
+    const handledChoices = new Set<string>();
+    // Brands saved in this session with a product name: a later brand-only read of the same bottle (a different
+    // box on the same George T. Stagg) is not saved again as a second, vaguer bottle.
+    const savedFullBrands = new Set<string>();
     const resetAutoSave = () => {
       scanSessionId = newScanSessionId();
+      sessionNames.clear();
       saveState.clear();
+      savedFullBrands.clear();
       saveQueue = [];
       saveRetryAt = 0;
     };
     const queueAutoSave = (read: BottleRead, identityConfidence: number, agreeingReads: number) => {
       const key = identityKey(read);
       if (!key || saveState.has(key) || !read.brand) return;
+      const brandKey = foldWords(read.match?.brand || read.brand);
+      const hasProduct = !!foldWords(read.match?.product || read.product);
+      if (!hasProduct && savedFullBrands.has(brandKey)) { saveState.set(key, 'saved'); return; }
+      if (hasProduct) savedFullBrands.add(brandKey);
       // Agreement between independent reads is the evidence: carry it into the
       // brand/product confidence the server uses for matching and research.
       const fieldConfidence: Record<string, number> = { ...(read.fieldConfidence ?? {}) };
@@ -312,12 +339,37 @@ function WebLiveCamera(props: NativeProps) {
     };
     const probableByTrack = new Map<number, { brand: string; at: number }>();
     let lastPhoneReadAt = 0;
+    // Partial evidence (Rob, 17 Nov 2026): a label partly hidden behind a nearer bottle, or cut off at the picture's
+    // edge. Its reads are clues: their words are pooled per bottle and looked up together across brand and product
+    // ("TAYLO" + "CURED"), with what this session and the checked-in venue already show tipping close calls. A clear
+    // leading name shows as "Probably …"; it is never saved. One targeted check of the label crop ("which of these
+    // names does the visible text belong to?") can confirm it; otherwise only a read of the whole label does.
+    const occlusionByTrack = new Map<number, Occlusion & { at: number }>();
+    const clueWordsByTrack = new Map<number, string[]>();
+    const partialGuessByTrack = new Map<number, PartialGuess & { at: number }>();
+    const partialKeyByTrack = new Map<number, string>();
+    const partialLookupBusy = new Set<number>();
+    const lastCropByTrack = new Map<number, { image: string; at: number }>();
+    const checksByTrack = new Map<number, number>();
+    // Partial reads in a row per bottle: a bottle that stays hidden rests a while instead of being re-read every 6 s.
+    const partialReadsByTrack = new Map<number, number>();
+    let checkBusy = false;
+    let lastCheckAt = 0;
+    const MAX_CHECKS_PER_BOTTLE = 2, CHECK_GAP_MS = 4_000, CROP_FRESH_MS = 6_000;
+    const clearPartialEvidence = () => {
+      occlusionByTrack.clear(); clueWordsByTrack.clear(); partialGuessByTrack.clear(); partialKeyByTrack.clear();
+      partialLookupBusy.clear(); choicesByTrack.clear(); lastCropByTrack.clear(); checksByTrack.clear(); partialReadsByTrack.clear();
+    };
     // Boxes the label reader said are not drinks at all (a book, sign, phone...): hidden and not read again.
     // Boxes whose label could not be seen twice: not read again until this time (the box stays on screen).
     const restingUntil = new Map<number, number>();
     const noLabelVotes = new Map<number, number>();
     // How fast each bottle was named (no photos): one row per bottle per scan session.
-    type TimingDraft = { startedAt: number; labelPx: number; ocrMs?: number; textAt?: number; guessAt?: number; guess?: string; words?: string[] };
+    type TimingDraft = {
+      startedAt: number; labelPx: number; ocrMs?: number; textAt?: number; guessAt?: number; guess?: string; words?: string[];
+      /** Partial evidence: label partly hidden at some read; where the first guess came from; targeted checks. */
+      partial?: boolean; guessSource?: 'letters' | 'partial'; checks?: number; verdict?: 'match' | 'none' | 'error';
+    };
     const timingByTrack = new Map<number, TimingDraft>();
     const loggedTimingTracks = new Set<number>();
     let timingQueue: ScanTimingRow[] = [];
@@ -331,20 +383,21 @@ function WebLiveCamera(props: NativeProps) {
       const guessFirst = !!draft.guessAt && (!confirmedBrand || !!draft.guess && sameBrand(draft.guess, confirmedBrand));
       timingQueue.push({
         scan_session_id: scanSessionId, track_id: String(trackId),
-        named_by: guessFirst ? 'letters' : confirmedBrand ? 'ai_label' : 'none',
+        named_by: guessFirst ? (draft.guessSource ?? 'letters') : confirmedBrand ? 'ai_label' : 'none',
         ms_to_text: draft.textAt ? draft.textAt - draft.startedAt : null,
         ms_to_name: draft.guessAt ? draft.guessAt - draft.startedAt : null,
         ms_to_confirm: confirmedBrand ? Date.now() - draft.startedAt : null,
         brand: confirmedBrand || null, product: read?.product || null,
-        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'ocr2-' + (textReader?.backend ?? 'none'),
+        label_px: draft.labelPx, zoom: zoomRef.current, device: deviceName, app_version: 'pe1-' + (textReader?.backend ?? 'none'),
         guess_brand: draft.guess ?? null, guess_agreed: draft.guess && confirmedBrand ? sameBrand(draft.guess, confirmedBrand) : null,
         ocr_ms: draft.ocrMs ?? null, ocr_words: draft.words ?? [],
+        partial: draft.partial ?? false, guess_source: draft.guessSource ?? null, verify_calls: draft.checks ?? null, verify_verdict: draft.verdict ?? null,
       });
     };
     const flushTimings = () => {
-      // Bottles never named within 20 s are recorded as unnamed.
+      // Bottles never named within 20 s (30 s when the label was partly hidden) are recorded as unnamed.
       const now = Date.now();
-      for (const [trackId, draft] of timingByTrack) if (now - draft.startedAt > 20_000) finishTiming(trackId, null);
+      for (const [trackId, draft] of timingByTrack) if (now - draft.startedAt > (draft.partial ? 30_000 : 20_000)) finishTiming(trackId, null);
       if (!timingQueue.length || !callbacksRef.current.recognitionEnabled) return;
       const batch = timingQueue.slice(0, 50);
       timingQueue = timingQueue.slice(50);
@@ -380,7 +433,7 @@ function WebLiveCamera(props: NativeProps) {
         if (labelReadsByTrack.get(trackId)?.brand || evidence.identity(trackId)) return;
         probableByTrack.set(trackId, { brand, at: Date.now() });
         const timing = timingByTrack.get(trackId);
-        if (timing && !timing.guessAt) { timing.guessAt = Date.now(); timing.guess = brand; }
+        if (timing && !timing.guessAt) { timing.guessAt = Date.now(); timing.guess = brand; timing.guessSource = 'letters'; }
         publishVisibleCandidates();
       }).catch(() => { /* the cloud read carries on */ });
     };
@@ -402,7 +455,7 @@ function WebLiveCamera(props: NativeProps) {
     let lastLiveBottleCount = 0;
     const unchangedFrameHeartbeatMs = 7_500;
     const emptyFrameRetryMs = 5_000;
-    let nextLabelBatchAt = Date.now() + 2200;
+    let nextLabelBatchAt = Date.now() + 1200;
     const labelReadsByTrack = new Map<number, LabelBatchRead>();
     const lastLabelReadAt = new Map<number, number>();
     // Second looks (stronger reader) run on their own, so easy bottles never wait for hard ones.
@@ -432,6 +485,7 @@ function WebLiveCamera(props: NativeProps) {
         evidence.clear();
         lastHitsByLocalTrack.clear();
         probableByTrack.clear();
+        clearPartialEvidence();
         timingByTrack.clear();
         loggedTimingTracks.clear();
         restingUntil.clear();
@@ -536,7 +590,7 @@ function WebLiveCamera(props: NativeProps) {
     // attached between recognition passes instead of resetting by array index.
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; timestamp: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
-    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; source: 'local'; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> = [];
+    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; source: 'local'; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } }; liquidStatus?: LiquidReadStatus }> = [];
     // Positions of every device-followed track (cloud ids > 0, local ids < 0),
     // used to move late cloud results into the current view.
     const trackPositionsNow = (): TrackPosition[] => [
@@ -653,7 +707,7 @@ function WebLiveCamera(props: NativeProps) {
         };
         next.push(track);
         evidence.observeDetection(track.id, detection.confidence);
-        if (hasIdentity(detection.bottle)) evidence.observeIdentity(track.id, detection.bottle, 'frame:' + frameTimestamp + ':' + track.id);
+        if (hasIdentity(detection.bottle)) evidence.observeIdentity(track.id, { ...detection.bottle, partial: !!occlusionByTrack.get(track.id)?.partial }, 'frame:' + frameTimestamp + ':' + track.id);
         return { trackId: track.id, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, contour: track.contour };
       });
       webTracks.forEach((track, index) => {
@@ -679,7 +733,8 @@ function WebLiveCamera(props: NativeProps) {
           x: local.bounds.x, y: local.bounds.y,
           width: local.bounds.width, height: local.bounds.height,
           confidence: local.confidence, timestamp, source: 'local' as const, contour: local.contour,
-          liquidLevel: previous.get(trackId)?.liquidLevel,
+          // A reading is carried only while fresh and while the box is not cut off at the frame edge.
+          ...carryLiquidState(previous.get(trackId), { x: local.bounds.x, y: local.bounds.y, width: local.bounds.width, height: local.bounds.height }, timestamp),
         };
       });
     };
@@ -699,13 +754,65 @@ function WebLiveCamera(props: NativeProps) {
         liquidGuard.bump(source);
         liquidGuard.bump(target);
         if (reverifyTracks.delete(source)) reverifyTracks.add(target);
+        // Partly hidden label clues follow the bottle too.
+        const clues = clueWordsByTrack.get(source);
+        if (clues) { clueWordsByTrack.delete(source); addClues(target, clues); }
+        for (const map of [partialGuessByTrack, lastCropByTrack, checksByTrack, occlusionByTrack] as Array<Map<number, unknown>>) {
+          const value = map.get(source);
+          if (value !== undefined && !map.has(target)) map.set(target, value);
+          map.delete(source);
+        }
+        partialKeyByTrack.delete(source);
+        partialKeyByTrack.delete(target);
         const rest = restingUntil.get(source);
         if (rest !== undefined) { restingUntil.delete(source); restingUntil.set(target, Math.max(rest, restingUntil.get(target) ?? 0)); }
       }
     };
 
+    // Fully identified: the person scanning picked it, or the label's own words show the expression, the
+    // catalogue knows that exact bottle, and two reads agree. Anything less is asked about, never assumed.
+    const fullyIdentified = (identity: { read: BottleRead; agreeingReads: number; confirmed?: boolean }) =>
+      !!identity.confirmed || (expressionShown(identity.read) && !!identity.read.match?.id && identity.agreeingReads >= 2);
+    const ensureChoices = (trackId: number, read: BottleRead) => {
+      const key = identityKey(read) ?? '';
+      if (choicesByTrack.get(trackId)?.key === key || choicesBusy.has(trackId)) return;
+      const words = [read.match?.brand || read.brand, ...(read.words ?? [])];
+      const anchors = anchorsFor(piecesFromWords(words));
+      const settle = (candidates: Parameters<typeof confirmChoices>[1]) => {
+        choicesByTrack.set(trackId, { key, choices: confirmChoices({ brand: read.match?.brand || read.brand, product: read.match?.product || read.product, words: read.words }, candidates, scenePriors()) });
+        publishVisibleCandidates();
+      };
+      if (!anchors.length) { settle([]); return; }
+      choicesBusy.add(trackId);
+      partialLookup(anchors).then(settle, () => settle([])).finally(() => choicesBusy.delete(trackId));
+    };
+    // The person scanning answered: their pick becomes the bottle's name (and it is saved); "none" drops the read.
+    const applyUserChoices = () => {
+      for (const choice of callbacksRef.current.userChoices ?? []) {
+        const id = choice.trackId + ':' + choice.at;
+        if (handledChoices.has(id)) continue;
+        handledChoices.add(id);
+        const current = evidence.identity(choice.trackId)?.read;
+        if (choice.none || !choice.brand) {
+          evidence.delete(choice.trackId);
+          choicesByTrack.delete(choice.trackId);
+          restingUntil.set(choice.trackId, Date.now() + 30_000);
+          continue;
+        }
+        const picked: BottleRead = {
+          ...(current ?? { box: { x0: 0, y0: 0, x1: 0, y1: 0 }, label_box: null, edgePaths: [], words: [], category: 'other', proof: '', size: '', origin: '', detectionConfidence: 1, fieldConfidence: {}, researchSources: [], details: {} } as unknown as BottleRead),
+          brand: choice.brand, product: choice.product ?? '', confidence: 1, match: null, state: 'reported',
+          fieldConfidence: { brand: 1, product: choice.product ? 1 : 0 },
+          details: { ...(current?.details ?? {}), confirmed_by: 'person_scanning' },
+        };
+        evidence.confirm(choice.trackId, picked);
+        choicesByTrack.delete(choice.trackId);
+      }
+    };
+
     const publishVisibleCandidates = () => {
       lastPublishAt = performance.now();
+      applyUserChoices();
       // Local geometry (detector + camera motion) is preferred; a confirmed
       // cloud box is shown only where no local box covers the same bottle.
       const now = Date.now();
@@ -715,8 +822,19 @@ function WebLiveCamera(props: NativeProps) {
       const withEvidence = <C extends { trackId: number; confidence: number }>(candidate: C) => {
         const identity = evidence.identity(candidate.trackId);
         const confidence = evidence.detection(candidate.trackId) || candidate.confidence;
+        if (identity?.reliable && !fullyIdentified(identity)) {
+          // Known maker, not certain which bottle: ask ("Which one is it?") instead of naming or saving it.
+          ensureChoices(candidate.trackId, identity.read);
+          const asked = choicesByTrack.get(candidate.trackId);
+          return { ...candidate, confidence, bottle: undefined, identifying: identity.confidence, provisional: identity.read,
+            ask: { choices: asked?.choices ?? [] }, stage: { name: 'confirm' as const } };
+        }
         if (identity?.reliable) {
           queueAutoSave(identity.read, identity.confidence, identity.agreeingReads);
+          rememberSessionName(identity.read);
+          partialGuessByTrack.delete(candidate.trackId);
+          // A partly hidden bottle's time to name runs until it is confirmed.
+          if (timingByTrack.get(candidate.trackId)?.partial) finishTiming(candidate.trackId, identity.read);
           const key = identityKey(identity.read);
           const resolved = key ? resolvedByKey.get(key) : undefined;
           const researchAt = key ? researchSince.get(key) : undefined;
@@ -731,8 +849,10 @@ function WebLiveCamera(props: NativeProps) {
         const stage = readAt !== undefined ? { name: 'reading' as const, since: readAt }
           : identity ? { name: 'identifying' as const }
           : small !== undefined ? { name: 'zoom' as const, value: small } : { name: 'scanning' as const };
-        // "Probably …" only until the cloud has read something for this bottle.
-        const probable = identity ? undefined : probableByTrack.get(candidate.trackId)?.brand;
+        // "Probably …": the leading name from a partly hidden label's clues, until the bottle is confirmed;
+        // otherwise the phone's quick guess, only until the cloud has read something for this bottle.
+        const partialHint = partialGuessByTrack.get(candidate.trackId);
+        const probable = partialHint ? guessLabel(partialHint) : identity ? undefined : probableByTrack.get(candidate.trackId)?.brand;
         return { ...candidate, confidence, bottle: undefined, identifying: identity ? identity.confidence : undefined, provisional: identity ? identity.read : undefined, probable, stage };
       };
       const cloudCandidates = webTracks
@@ -753,7 +873,7 @@ function WebLiveCamera(props: NativeProps) {
             isConfirmedWebBottleTrack(track) && visibleFraction(track) >= 0.5 && isCrossSourceSameBottle(track, candidate)
           );
           if (matchingCloud && hasIdentity(matchingCloud.bottle)) {
-            evidence.observeIdentity(candidate.trackId, matchingCloud.bottle, 'cloud:' + matchingCloud.id + ':' + matchingCloud.timestamp);
+            evidence.observeIdentity(candidate.trackId, { ...matchingCloud.bottle, partial: !!occlusionByTrack.get(candidate.trackId)?.partial }, 'cloud:' + matchingCloud.id + ':' + matchingCloud.timestamp);
           }
           return withEvidence(candidate);
         });
@@ -763,8 +883,9 @@ function WebLiveCamera(props: NativeProps) {
       const signature = visibleCandidates.map(candidate => {
         const bottle = (candidate as { bottle?: BottleRead }).bottle;
         const liquid = (candidate as { liquidLevel?: { heightPercent: number } }).liquidLevel;
-        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; probable?: string; stage?: { name: string; since?: number; value?: number } };
+        const shown = candidate as { identityConfidence?: number; identifying?: number; saved?: boolean; probable?: string; ask?: { choices: ConfirmChoice[] }; stage?: { name: string; since?: number; value?: number } };
         return [
+          shown.ask ? 'ask' + shown.ask.choices.length : '',
           shown.probable ?? '',
           shown.saved ? 'S' : '', shown.stage ? shown.stage.name + (shown.stage.since ?? '') + (shown.stage.value !== undefined ? Math.round(shown.stage.value * 100) : '') : '',
           Math.round(candidate.confidence * 100), Math.round((shown.identityConfidence ?? shown.identifying ?? 0) * 100),
@@ -773,6 +894,7 @@ function WebLiveCamera(props: NativeProps) {
           Math.round(candidate.width * 2000), Math.round(candidate.height * 2000),
           bottle ? (bottle.match?.id || bottle.brand + '|' + bottle.product + '|' + bottle.state) : '',
           liquid ? liquid.heightPercent : '',
+          (candidate as { liquidStatus?: LiquidReadStatus }).liquidStatus && (candidate as { liquidStatus?: LiquidReadStatus }).liquidStatus!.state === 'unreadable' ? ((candidate as { liquidStatus?: { reason?: string } }).liquidStatus!.reason ?? '') : '',
         ].join(',');
       }).join(';');
       if (signature === lastPublishedSignature) return;
@@ -896,14 +1018,23 @@ function WebLiveCamera(props: NativeProps) {
         const current = latestLocalCandidates.find(candidate => candidate.trackId === item.trackId);
         if (!current) continue; // Track disappeared while the worker was busy.
         if (!liquidGuard.accepts(timestamp, item.trackId)) continue; // Track changed while the worker was busy.
-        if (item.optical.status !== 'observable' || item.optical.score < 0.55) {
-          liquidHistoryByTrack.delete(item.trackId);
-          continue;
-        }
-        if (item.result.status !== 'candidate' || item.result.confidence < 0.7 || item.result.boundaryShape === 'irregular') continue;
         const labelRead = labelReadsByTrack.get(item.trackId);
         const readKey = labelRead ? identityKey(labelRead) : null;
         const calibrationKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size, readKey ? resolvedByKey.get(readKey) : undefined);
+        const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? bottleVolumeProfiles[calibrationKey]) : undefined;
+        const rejected = screenLiquidObservation({
+          box: current, optical: item.optical, result: item.result,
+          hadOcclusion: item.occlusionBands.length > 0, hasMeasuredRecord: !!profile, at: timestamp,
+        });
+        if (rejected) {
+          // Unreadable now: forget the history AND clear the old reading so no stale % stays on screen.
+          liquidHistoryByTrack.delete(item.trackId);
+          changed = true; // publishVisibleCandidates skips identical updates.
+          current.liquidLevel = undefined;
+          current.liquidStatus = rejected;
+          continue;
+        }
+        if (item.result.status !== 'candidate') continue;
         const previous = liquidHistoryByTrack.get(item.trackId);
         // A new or changed identity starts a fresh fill reading: never mix bottles.
         const history = previous && timestamp - previous.updatedAt <= 2200 && previous.calibrationKey === calibrationKey ? previous.observations : [];
@@ -915,8 +1046,13 @@ function WebLiveCamera(props: NativeProps) {
         }].slice(-5);
         liquidHistoryByTrack.set(item.trackId, { observations, updatedAt: timestamp, calibrationKey });
         const consensus = assessLiquidInterface(observations);
+        current.liquidStatus = statusFromConsensus(consensus, timestamp);
+        if (consensus.status !== 'visible') {
+          // Not a steady, clear line yet: drop any old reading instead of leaving it up.
+          if (current.liquidLevel) current.liquidLevel = undefined;
+          changed = true;
+        }
         if (consensus.status === 'visible') {
-          const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? bottleVolumeProfiles[calibrationKey]) : undefined;
           const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
             heightPercent: Math.round(consensus.normalizedHeight * 100),
@@ -940,6 +1076,114 @@ function WebLiveCamera(props: NativeProps) {
       if (changed) publishVisibleCandidates();
     }, undefined, metrics => callbacksRef.current.onLiquidMetrics?.({ nativeEvent: { ...metrics, segmentationMs: lastSegmentationMs, localFrameMs: lastLocalFrameMs } }));
 
+    // ---- Partial evidence (steps 1-4) ----
+    const scenePriors = (): PriorName[] => [...sessionNames.values(), ...(callbacksRef.current.sceneNames ?? [])].slice(0, 200);
+    const rememberSessionName = (read: BottleRead) => {
+      const key = identityKey(read);
+      const brand = read.match?.brand || read.brand;
+      if (!key || !brand || sessionNames.has(key) || sessionNames.size >= 60) return;
+      sessionNames.set(key, { brand, product: read.match?.product || read.product || '', source: 'session' });
+    };
+    // Every box in view (cloud boxes, and local boxes not already covered by one), for who stands in front of whom.
+    const updateOcclusion = (now: number) => {
+      const cloud = webTracks.filter(track => track.misses === 0 && visibleFraction(track) >= 0.5)
+        .map(track => ({ trackId: track.id, ...clipBoxToFrame({ x: track.x, y: track.y, width: track.width, height: track.height }) }));
+      const local = latestLocalCandidates.filter(candidate => now - candidate.timestamp <= 2_500 && !cloud.some(box => isCrossSourceSameBottle(box, candidate)))
+        .map(candidate => ({ trackId: candidate.trackId, x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height }));
+      for (const [trackId, next] of occlusionForAll([...cloud, ...local])) {
+        const previous = occlusionByTrack.get(trackId);
+        // More of the label came into view (the phone moved): read it again now instead of waiting.
+        if (previous?.partial && (previous.covered - next.covered >= 0.2 || (previous.edgeCut && !next.edgeCut))) {
+          lastLabelReadAt.delete(trackId);
+          restingUntil.delete(trackId);
+        }
+        occlusionByTrack.set(trackId, { ...next, at: now });
+      }
+      for (const [trackId, item] of occlusionByTrack) if (now - item.at > 30_000) occlusionByTrack.delete(trackId);
+    };
+    const addClues = (trackId: number, words: Array<string | null | undefined>) => {
+      const list = clueWordsByTrack.get(trackId) ?? [];
+      for (const word of words) {
+        const text = String(word ?? '').trim();
+        if (text && !list.some(kept => kept.toLowerCase() === text.toLowerCase())) list.push(text);
+      }
+      clueWordsByTrack.set(trackId, list.slice(-24));
+    };
+    // Step 4: one pointed question about the label crop, for the leading names (at most twice per bottle).
+    const checkLeadingName = async (trackId: number, guess: PartialGuess, generation: number) => {
+      const now = Date.now();
+      const crop = lastCropByTrack.get(trackId);
+      const tries = checksByTrack.get(trackId) ?? 0;
+      if (checkBusy || tries >= MAX_CHECKS_PER_BOTTLE || now - lastCheckAt < CHECK_GAP_MS || !crop || now - crop.at > CROP_FRESH_MS) return;
+      if (!callbacksRef.current.recognitionEnabled || evidence.identity(trackId)?.reliable) return;
+      const names = checkNames(guess);
+      if (!names.length) return;
+      checkBusy = true;
+      lastCheckAt = now;
+      checksByTrack.set(trackId, tries + 1);
+      const timing = timingByTrack.get(trackId);
+      if (timing) timing.checks = (timing.checks ?? 0) + 1;
+      try {
+        const result = await verifyLabelRead(crop.image, names);
+        if (disposed || generation !== recognitionGeneration) return;
+        if (timing) timing.verdict = result.verdict;
+        if (result.verdict !== 'match') {
+          // The visible text names something else: drop the hint.
+          if (result.reason === 'contradicted' && partialGuessByTrack.delete(trackId)) publishVisibleCandidates();
+          return;
+        }
+        const chosen = names[result.choice - 1];
+        if (!chosen) return;
+        const confidence = result.confidence;
+        const checked: BottleRead = {
+          box: { x0: 0, y0: 0, x1: 0, y1: 0 }, label_box: null, edgePaths: [], words: result.visibleWords,
+          brand: chosen.brand, product: result.level === 'product' ? chosen.product : '', category: 'other',
+          proof: '', size: '', origin: '', confidence, detectionConfidence: confidence,
+          fieldConfidence: result.level === 'product' ? { brand: confidence, product: confidence } : { brand: confidence },
+          researchSources: [], details: {}, match: null, state: 'reported',
+        };
+        evidence.observeIdentity(trackId, checked, 'check:' + now + ':' + trackId);
+        publishVisibleCandidates();
+      } catch {
+        if (timing) timing.verdict = 'error';
+      } finally {
+        checkBusy = false;
+      }
+    };
+    // Steps 1-2: pooled clue words -> catalogue names (brand and product together) -> scored with the scene.
+    const runPartialLookup = async (trackId: number, generation: number) => {
+      if (partialLookupBusy.has(trackId) || evidence.identity(trackId)?.reliable) return;
+      // Words that belong to the bottle in front (its label shows in this crop) are not clues about this one.
+      const occluderId = occlusionByTrack.get(trackId)?.occluderId;
+      const occluder = occluderId != null ? evidence.identity(occluderId) : null;
+      const frontWords = occluder?.reliable ? nameWords((occluder.read.match?.brand || occluder.read.brand) + ' ' + (occluder.read.match?.product || occluder.read.product || '')) : [];
+      const pieces = piecesFromWords(clueWordsByTrack.get(trackId) ?? []).filter(piece => !frontWords.some(word => pieceFit(piece.text, word) >= 0.85));
+      const anchors = anchorsFor(pieces);
+      if (!anchors.length) return;
+      const priors = scenePriors();
+      const key = pieces.map(piece => piece.text).join(',') + '|' + priors.length;
+      if (partialKeyByTrack.get(trackId) === key) return;
+      partialKeyByTrack.set(trackId, key);
+      partialLookupBusy.add(trackId);
+      try {
+        const candidates = await partialLookup(anchors);
+        if (disposed || generation !== recognitionGeneration || evidence.identity(trackId)?.reliable) return;
+        const guess = partialGuess(pieces, rankNames(pieces, candidates, priors));
+        if (!guess) {
+          if (partialGuessByTrack.delete(trackId)) publishVisibleCandidates();
+          return;
+        }
+        partialGuessByTrack.set(trackId, { ...guess, at: Date.now() });
+        const timing = timingByTrack.get(trackId);
+        if (timing && !timing.guessAt) { timing.guessAt = Date.now(); timing.guess = guess.brand; timing.guessSource = 'partial'; }
+        publishVisibleCandidates();
+        void checkLeadingName(trackId, guess, generation);
+      } catch {
+        partialKeyByTrack.delete(trackId);   // best effort: the next read tries again
+      } finally {
+        partialLookupBusy.delete(trackId);
+      }
+    };
     const readCandidateLabels = async () => {
       syncTextReader();
       // Label reads no longer wait behind the slower whole-frame read: a new bottle gets its first name fast.
@@ -963,6 +1207,7 @@ function WebLiveCamera(props: NativeProps) {
       const frameCanvas = { width: Math.round(frameRegion.width), height: Math.round(frameRegion.height) };
       const generation = recognitionGeneration;
       const now = Date.now();
+      updateOcclusion(now);
       const isVerifiedRead = (trackId: number) => {
         const read = labelReadsByTrack.get(trackId);
         // A bottle re-found from memory gets one fresh check before its
@@ -1078,17 +1323,22 @@ function WebLiveCamera(props: NativeProps) {
         releaseCanvas(plan.best);
         if (image.length > budget) continue;
         crops.push({ trackId: plan.trackId, image });
+        // Kept a few seconds for a targeted check of a partly hidden label (the newest few bottles only).
+        lastCropByTrack.delete(plan.trackId);
+        lastCropByTrack.set(plan.trackId, { image, at: now });
+        if (lastCropByTrack.size > 8) lastCropByTrack.delete(lastCropByTrack.keys().next().value as number);
       }
       // A bottle that has never been read is read again soon, so a name shows
       // within about a second; after that, reads come at the normal pace.
       const unreadWaiting = candidates.some(candidate => !lastLabelReadAt.has(candidate.trackId) && !crops.some(crop => crop.trackId === candidate.trackId));
-      nextLabelBatchAt = now + (unreadWaiting ? 1500 : 4000);
+      nextLabelBatchAt = now + (unreadWaiting ? 1000 : 4000);
       if (!crops.length) return;
       labelBatchBusy = true;
       crops.forEach(crop => { lastLabelReadAt.set(crop.trackId, now); if (!readingSince.has(crop.trackId)) readingSince.set(crop.trackId, now); });
       publishVisibleCandidates();
       const applyReads = (reads: LabelBatchRead[], readAt: number) => {
         for (const read of reads) readingSince.delete(read.trackId);
+        const clueTracks: number[] = [];
         for (const read of reads) {
           // Two reads with no label and no words pause reading this box for a while; the box stays
           // (a bottle behind another, or turned away, often shows no label until the phone moves).
@@ -1098,16 +1348,43 @@ function WebLiveCamera(props: NativeProps) {
           else if (read.brand) restingUntil.delete(read.trackId);
           // A blank second look adds nothing; keep what the first read had.
           if (read.tier === 'escalate' && !read.brand) continue;
-          labelReadsByTrack.set(read.trackId, read);
-          reverifyTracks.delete(read.trackId);
-          if (read.brand) { probableByTrack.delete(read.trackId); finishTiming(read.trackId, read); }
-          evidence.observeIdentity(read.trackId, labelReadToBottle(read), 'label:' + read.tier + ':' + readAt + ':' + read.trackId);
-          const cloudTrack = webTracks.find(track => track.id === read.trackId);
-          if (cloudTrack) {
-            cloudTrack.bottle = mergeBottleRead(cloudTrack.bottle, read);
+          // Partly hidden behind a nearer bottle, or cut off (by the picture's edge, or as the reader says): a clue.
+          const occlusion = occlusionByTrack.get(read.trackId);
+          const partial = !!occlusion?.partial || read.unreadableReason === 'cut_off';
+          const timing = timingByTrack.get(read.trackId);
+          if (partial && timing) timing.partial = true;
+          // Still hidden after 3 reads: rest it (the box stays; it is read again sooner if more of it comes into view).
+          const partialReads = partial ? (partialReadsByTrack.get(read.trackId) ?? 0) + 1 : 0;
+          if (partialReads >= 3 && !evidence.identity(read.trackId)?.reliable) {
+            restingUntil.set(read.trackId, Math.max(restingUntil.get(read.trackId) ?? 0, readAt + NO_LABEL_REST_MS));
+            partialReadsByTrack.delete(read.trackId);
+          } else if (partialReads) partialReadsByTrack.set(read.trackId, partialReads);
+          else partialReadsByTrack.delete(read.trackId);
+          // The crop of a bottle behind another can show the front bottle's label: that read is not about this one.
+          const front = partial && occlusion?.occluderId != null ? evidence.identity(occlusion.occluderId) : null;
+          const frontLabel = !!front?.reliable && !!read.brand && sameBottleIdentity(front.read, read);
+          if (!frontLabel) {
+            labelReadsByTrack.set(read.trackId, read);
+            reverifyTracks.delete(read.trackId);
+            if (read.brand && !partial) {
+              probableByTrack.delete(read.trackId);
+              if (read.state !== 'unsure') partialGuessByTrack.delete(read.trackId);
+              if (!timing?.partial) finishTiming(read.trackId, read);
+            }
+            evidence.observeIdentity(read.trackId, { ...labelReadToBottle(read), partial }, 'label:' + read.tier + ':' + readAt + ':' + read.trackId);
+            const cloudTrack = webTracks.find(track => track.id === read.trackId);
+            if (cloudTrack) {
+              cloudTrack.bottle = mergeBottleRead(cloudTrack.bottle, read);
+            }
+          }
+          // What a partly hidden, unsure or nameless read saw is pooled for the "Probably …" lookup.
+          if (!evidence.identity(read.trackId)?.reliable && (partial || read.state === 'unsure' || !read.brand)) {
+            addClues(read.trackId, [...read.words, read.brand, read.product]);
+            clueTracks.push(read.trackId);
           }
         }
         publishVisibleCandidates();
+        for (const trackId of clueTracks) void runPartialLookup(trackId, generation);
       };
       try {
         const video = videoRef.current;
@@ -1118,7 +1395,8 @@ function WebLiveCamera(props: NativeProps) {
         crops.filter(crop => !returnedTrackIds.has(crop.trackId)).forEach(crop => lastLabelReadAt.delete(crop.trackId));
         applyReads(reads, now);
         // Hard labels only: send the unsure or guessed ones (same crops) for a second look, in the background.
-        const secondLook = secondLookBusy ? [] : selectSecondLookCrops(crops, reads, lastSecondLookAt, Date.now());
+        // A partly hidden label with a leading name gets the cheaper targeted check instead.
+        const secondLook = secondLookBusy ? [] : selectSecondLookCrops(crops.filter(crop => !partialGuessByTrack.has(crop.trackId)), reads, lastSecondLookAt, Date.now());
         if (secondLook.length) {
           secondLookBusy = true;
           const lookAt = Date.now();
@@ -1197,14 +1475,16 @@ function WebLiveCamera(props: NativeProps) {
           };
         }), now, { countMisses });
         migrateLocalTrackIds(localBottleTracker.takeMergedTrackIds());
-        for (const trackId of localBottleTracker.takeReacquiredTrackIds()) {
+        // Re-found where it was and looking the same: its name stands (no re-read, no re-save).
+        const confidentlyBack = new Set(localBottleTracker.takeConfidentReacquiredTrackIds());
+        for (const trackId of [...localBottleTracker.takeReacquiredTrackIds(), ...confidentlyBack]) {
           const id = -Math.abs(trackId);
-          reverifyTracks.add(id);
+          if (!confidentlyBack.has(trackId)) reverifyTracks.add(id);
           // Same spot is not proof of the same bottle: its fill reading starts again.
           liquidGuard.bump(id);
           liquidHistoryByTrack.delete(id);
           const shown = latestLocalCandidates.find(candidate => candidate.trackId === id);
-          if (shown) shown.liquidLevel = undefined;
+          if (shown) { shown.liquidLevel = undefined; shown.liquidStatus = undefined; }
         }
         for (const local of localTracks) {
           if ((lastHitsByLocalTrack.get(local.trackId) ?? 0) < local.hits) evidence.observeDetection(-Math.abs(local.trackId), local.confidence);
@@ -1362,7 +1642,7 @@ function WebLiveCamera(props: NativeProps) {
               .sort((a, b) => Math.abs(a.x + a.width / 2 - cx) - Math.abs(b.x + b.width / 2 - cx))[0];
             if (host) { trackId = host.trackId; boundLocal.add(host.trackId); }
           }
-          if (trackId !== null) evidence.observeIdentity(trackId, bottle, 'frame:' + frameTimestamp + ':' + index);
+          if (trackId !== null) evidence.observeIdentity(trackId, { ...bottle, partial: !!occlusionByTrack.get(trackId)?.partial }, 'frame:' + frameTimestamp + ':' + index);
         });
         updateWebTracks(result.bottles.map((b, index) => ({ ...currentBoxes[index]!, confidence: b.detectionConfidence, bottle: b })), frameTimestamp);
         // Publish model detections immediately; optional local segmentation must
@@ -1473,6 +1753,7 @@ function WebLiveCamera(props: NativeProps) {
         localBottleTracker.reset();
         evidence.clear();
         lastHitsByLocalTrack.clear();
+        clearPartialEvidence();
         resetAutoSave();
         reverifyTracks.clear();
         nextWebTrackId = 1;
@@ -1509,6 +1790,7 @@ function WebLiveCamera(props: NativeProps) {
       window.clearInterval(autoSaveTimer);
       window.clearInterval(timingTimer);
       probableByTrack.clear();
+      clearPartialEvidence();
       timingByTrack.clear();
       textReader?.dispose();
       markTextReaderRunning(false);
@@ -1713,6 +1995,7 @@ type NativeCandidate = {
   trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
   source?: 'cloud' | 'local';
   liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
+  liquidStatus?: LiquidReadStatus;
 };
 
 export function DiscoverARSurface(props: NativeProps) {
@@ -1850,8 +2133,23 @@ export function DiscoverARSurface(props: NativeProps) {
             let changed = false;
             for (const item of analyses) {
               const current = candidates.find(candidate => candidate.trackId === item.trackId);
-              if (!current || item.opticalScore < 0.55 || item.confidence < 0.7 || item.boundaryShape === 'irregular') {
+              if (!current) { nativeLiquidHistory.current.delete(item.trackId); continue; }
+              const calibrationKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size, current.bottle.resolved);
+              const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? nativeVolumeProfiles.current[calibrationKey]) : undefined;
+              const rejected = screenLiquidObservation({
+                box: current,
+                optical: { score: item.opticalScore },
+                result: item.confidence >= 0 && Number.isFinite(item.normalizedHeight)
+                  ? { status: 'candidate', normalizedHeight: item.normalizedHeight, confidence: item.confidence, boundaryShape: item.boundaryShape }
+                  : { status: 'insufficient_evidence' },
+                hasMeasuredRecord: !!profile, at: Date.now(),
+              });
+              if (rejected) {
+                // Unreadable now: forget the history and clear any old reading on this bottle.
                 nativeLiquidHistory.current.delete(item.trackId);
+                current.liquidLevel = undefined;
+                current.liquidStatus = rejected;
+                changed = true;
                 continue;
               }
               const previous = nativeLiquidHistory.current.get(item.trackId);
@@ -1863,9 +2161,9 @@ export function DiscoverARSurface(props: NativeProps) {
               }].slice(-5);
               nativeLiquidHistory.current.set(item.trackId, { observations, updatedAt: frame.timestamp });
               const consensus = assessLiquidInterface(observations);
+              current.liquidStatus = statusFromConsensus(consensus, Date.now());
+              if (consensus.status !== 'visible') { current.liquidLevel = undefined; changed = true; }
               if (consensus.status === 'visible') {
-                const calibrationKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size, current.bottle.resolved);
-                const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? nativeVolumeProfiles.current[calibrationKey]) : undefined;
                 const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
                 current.liquidLevel = {
                   heightPercent: Math.round(consensus.normalizedHeight * 100),
@@ -1877,6 +2175,16 @@ export function DiscoverARSurface(props: NativeProps) {
                 };
                 changed = true;
               }
+            }
+            // A bottle we asked about that came back with nothing (box too small, bad crop) is unreadable, not blank.
+            for (const sent of tracked.slice(0, 4)) {
+              if (analyses.some(item => item.trackId === sent.trackId)) continue;
+              const current = candidates.find(candidate => candidate.trackId === sent.trackId);
+              if (!current) continue;
+              nativeLiquidHistory.current.delete(sent.trackId);
+              current.liquidLevel = undefined;
+              current.liquidStatus = screenLiquidObservation({ box: current, optical: { status: 'observable', score: 1 }, result: { status: 'insufficient_evidence' }, hasMeasuredRecord: false, at: Date.now() }) ?? undefined;
+              changed = true;
             }
             for (const [trackId, history] of nativeLiquidHistory.current) {
               if (frame.timestamp - history.updatedAt > 7) nativeLiquidHistory.current.delete(trackId);

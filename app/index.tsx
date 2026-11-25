@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView, Animated, Easing } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions, ScrollView, Animated, Easing, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useScan } from '../src/state/ScanContext';
 import LiveScanner from '../src/live/LiveScanner';
-import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose } from '../src/live/DiscoverARSurface';
+import { DiscoverARSurface, type ARTrackingUpdate, type ARKitCameraPose, type UserChoice } from '../src/live/DiscoverARSurface';
 import { WorldBottleAnchorOverlay } from '../src/live/WorldBottleAnchorOverlay';
 import { emptyCandidatesAction } from '../src/live/worldAnchorFramePolicy';
 import type { ARKitDepthFrame } from '../src/live/DiscoverARSurface';
@@ -20,12 +20,15 @@ import PrivacyPanel from '../src/home-panels/PrivacyPanel';
 import NearbyPanel from '../src/home-panels/NearbyPanel';
 import VenueCheckinPrompt from '../src/home-panels/VenueCheckinPrompt';
 import { useVenueCheckin } from '../src/services/useVenueCheckin';
+import { fetchVenueFeed } from '../src/services/discoverVenueApi';
+import { sceneFromVenueFeed, type PriorName } from '../src/live/partialEvidence';
 import JourneyPlayerOverlay, { type JourneyScanItem } from '../src/home-panels/JourneyPlayerOverlay';
-import { MartyPanel } from '../src/home-panels/MartyPanel';
 import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
+import { MartyOverlay, useMartyPresence } from '../src/marty/MartyOverlay';
+import { openMarty, setMartyEnabled } from '../src/marty/martyPresence';
 import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
 import { publishScreenContext } from '../src/voice/screenContext';
 import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
@@ -37,6 +40,8 @@ import { QUICK_GUESS_DATA_NOTICE, QUICK_GUESS_DESCRIPTION } from '../src/live/qu
 import { forwardOnlyStage, type ShownStage, type StageMemory } from '../src/live/boxStageProgress';
 
 const C = { bg: '#07090C', panel: 'rgba(10,12,16,0.96)', line: 'rgba(153,163,174,0.22)', brass: '#C6A36A', ivory: '#F0F1F2', muted: '#858C95', red: '#A84343', signal: '#C05A50' };
+// Boxes glide to their new place (web: a short CSS transition) instead of jumping on every detector pass.
+const BOX_GLIDE = (Platform.OS === 'web' ? { transitionProperty: 'left, top, width, height, border-color', transitionDuration: '180ms', transitionTimingFunction: 'ease-out' } : {}) as object;
 
 export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'settings'|'collection'|'taste' } = {}) {
   const insets = useSafeAreaInsets();
@@ -76,7 +81,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [anchorSessionKey, setAnchorSessionKey] = useState(0);
   // Furthest step (1-4) each box has reached; boxes never step backwards (forgotten when the box goes).
   const stageMemoryRef = useRef(new Map<number, StageMemory>());
-  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;probable?:string;saved?:boolean;stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
+  const [liveCandidates, setLiveCandidates] = useState<Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;timestamp?:number;source?:'cloud'|'local';depthFrame?:ARKitDepthFrame;contour?:Array<{x:number;y:number}>;bottle?:BottleRead;identityConfidence?:number;identifying?:number;provisional?:BottleRead;probable?:string;saved?:boolean;ask?:{choices:Array<{brand:string;product:string}>};stage?:{name:'scanning'|'zoom'|'reading'|'identifying'|'researching'|'found'|'confirm';since?:number;value?:number};liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>>([]);
   // Expire image-space boxes by their own source-frame age. Local detections
   // refresh continuously; cloud detections need to bridge the 4.4s read cadence.
   // A single global timeout caused cloud boxes to blink out between reads.
@@ -117,13 +122,31 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [bottomAreaTop, setBottomAreaTop] = useState(0);
   const cameraViewTop = foundTrayTop + 30;
   // Boxes outline labels and never overlap: a bottle behind another is hidden, neighbours are trimmed (see boxDepth.ts).
-  const shownCandidates = liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
+  // Named bottles always show; an unnamed box needs a little more certainty, so a busy shelf is not a wall of boxes.
+  const shownCandidates = liveCandidates.filter(track => track.confidence >= (track.bottle ? 0.45 : 0.55) && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp));
   const boxLayout = layoutBoxes(shownCandidates);
   for (const id of [...stageMemoryRef.current.keys()]) if (!liveCandidates.some(c => c.trackId === id)) stageMemoryRef.current.delete(id);
   const cameraViewBottom = bottomAreaTop > cameraViewTop ? bottomAreaTop - 4 : screenHeight - 150;
+  // A bottle counts as done (solid green ✓, chip in the strip) once it is saved or being researched; if saving is
+  // slow it still counts after 3 s, so a chip never waits forever.
+  const namedSinceRef = useRef(new Map<number, number>());
+  const isDone = (track: (typeof liveCandidates)[number]) => {
+    if (!track.bottle) return false;
+    if (track.saved || track.stage?.name === 'researching') return true;
+    const since = namedSinceRef.current.get(track.trackId);
+    return since !== undefined && Date.now() - since >= 3_000;
+  };
   useEffect(() => {
-    if (!liveCandidates.some(candidate => candidate.bottle)) return;
-    const { list, added } = mergeFound(foundRef.current, liveCandidates, Date.now());
+    const now = Date.now();
+    for (const track of liveCandidates) if (track.bottle && !namedSinceRef.current.has(track.trackId)) namedSinceRef.current.set(track.trackId, now);
+    for (const id of [...namedSinceRef.current.keys()]) if (!liveCandidates.some(track => track.trackId === id) && namedSinceRef.current.size > 200) namedSinceRef.current.delete(id);
+  }, [liveCandidates]);
+  useEffect(() => {
+    // Only a box that is drawn on screen and done sends its chip to the strip (Rob, 17 Nov 2026: chips flew up
+    // before their boxes showed).
+    const ready = liveCandidates.filter(track => isDone(track) && boxLayout.has(track.trackId));
+    if (!ready.length) return;
+    const { list, added } = mergeFound(foundRef.current, ready, Date.now());
     if (list === foundRef.current) return;
     foundRef.current = list;
     setFoundItems(list);
@@ -174,6 +197,26 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
     void venueCheckin.afterScan('live_scan');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveBottles.length > 0]);
+  // While checked in: the bottles seen at this venue and the items on its scanned menus tip close calls on
+  // partly hidden labels ("Probably …" only; nothing is saved from them).
+  const [sceneNames, setSceneNames] = useState<PriorName[]>([]);
+  // "Which one is it?": the bottle the person tapped, and what they picked (sent to the camera surface).
+  const [userChoices, setUserChoices] = useState<UserChoice[]>([]);
+  const [askingTrack, setAskingTrack] = useState<{ trackId: number; seen: string; choices: Array<{ brand: string; product: string }> } | null>(null);
+  const [typedName, setTypedName] = useState('');
+  const answerAsk = (choice: { brand?: string; product?: string; none?: boolean }) => {
+    if (!askingTrack) return;
+    setUserChoices(previous => [...previous.slice(-40), { trackId: askingTrack.trackId, at: Date.now(), ...choice }]);
+    setAskingTrack(null);
+    setTypedName('');
+  };
+  const checkedInVenueRef = venueCheckin.active?.venueRef ?? null;
+  useEffect(() => {
+    if (!checkedInVenueRef) { setSceneNames([]); return; }
+    let live = true;
+    fetchVenueFeed(checkedInVenueRef).then(feed => { if (live) setSceneNames(sceneFromVenueFeed(feed)); }).catch(() => { if (live) setSceneNames([]); });
+    return () => { live = false; };
+  }, [checkedInVenueRef]);
   const [selectedBottleIntelligence, setSelectedBottleIntelligence] = useState<BottleIntelligenceProfile | null>(null);
   const [selectedBottleIntelligenceLoading, setSelectedBottleIntelligenceLoading] = useState(false);
   const closeProfile = () => {
@@ -237,7 +280,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [journeyItems, setJourneyItems] = useState<JourneyScanItem[]>([]);
   const [activeJourney, setActiveJourney] = useState<JourneyScanItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
-  const [martyConsentOpen, setMartyConsentOpen] = useState(false);
+  const martyPresence = useMartyPresence();
+  // The /bartender route opens Marty's face on the scanner (camera keeps running).
+  useEffect(() => { if (initialPanel === 'marty') openMarty(); }, [initialPanel]);
   // Tell Marty what is on screen (menu lines, bottle in view, the open Journey or recipe) whenever it changes.
   useEffect(() => {
     publishScreenContext({
@@ -246,7 +291,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       journey: activeJourney ? { kind: activeJourney.kind, name: activeJourney.name } : null,
     });
   }, [liveMenu, liveBottles, activeJourney]);
-  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
+  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' && initialPanel !== 'marty' ? initialPanel : null);
   const [nearbyCommand,setNearbyCommand] = useState<{id:number;action:'set_radius'|'set_category'|'search'|'recenter'|'configure';radius_miles?:number;category?:string;search?:string}|null>(null);
   const nearbyCommandId = useRef(0);
   const nearbyCommandResolvers = useRef(new Map<number,(result:string)=>void>());
@@ -358,6 +403,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           recognitionEnabled={liveReadConsent && shouldEnableLiveRecognition({ cameraGranted: !!permission.granted, reviewingCapture: !!scanPhotos, scanMode, activePanel, platform: Platform.OS })}
           captureRequestId={captureRequestId}
           quickGuess={quickGuess}
+          sceneNames={sceneNames}
+          userChoices={userChoices}
           onCapturedImage={handleCapturedImage}
           onTrackingUpdate={event => {
             const tracking = event.nativeEvent;
@@ -439,10 +486,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
       )}
       <View pointerEvents="none" style={s.viewfinderShade} />
-      {permission.granted && !scanPhotos && liveCandidates.some(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp)) && (
-        <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}>
+      {permission.granted && !scanPhotos && shownCandidates.length > 0 && (
+        <View pointerEvents="box-none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}>
         <View pointerEvents="box-none" style={[s.liveDetectionLayer, { top: -cameraViewTop, height: screenHeight, bottom: undefined }]}>
-          {liveCandidates.filter(track => track.confidence >= 0.45 && !(track.depthFrame?.unit === 'meters' && track.timestamp === track.depthFrame.timestamp))
+          {shownCandidates
             // Draw big boxes first so a smaller (nearer or front) bottle's box sits on top and can be tapped.
             .slice().sort((a, b) => b.width * b.height - a.width * a.height)
             .map(tracked => {
@@ -457,8 +504,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const provisional = !bottle ? tracked.provisional : undefined;
             const readName = (read?: BottleRead) => read ? displayName(read.match?.brand || read.brand, read.match?.product || read.product) : '';
             const name = bottle ? readName(bottle) : identifying ? (readName(provisional) ? readName(provisional) + '?' : 'IDENTIFYING…') : 'BOTTLE DETECTED';
-            // The phone's instant guess from the biggest label letters, until the cloud read names the bottle.
-            const guess = !bottle && !identifying && tracked.probable ? tracked.probable : undefined;
+            // "Probably …" until the bottle is confirmed: the phone's quick guess, or the leading name from a
+            // partly hidden label's clues (the camera surface decides when there is one).
+            const guess = !bottle && tracked.probable ? tracked.probable : undefined;
             const boxStyle = {
               left: ((left * 100) + '%') as `${number}%`,
               top: ((top * 100) + '%') as `${number}%`,
@@ -469,9 +517,10 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             // Where this bottle is in the 1-2-3-4 steps; a box never goes back to an earlier step.
             // A name confirmed but not yet saved stays at step 3 (99%); once saved, a new bottle shows step 4
             // (researching) and a known bottle shows its name.
+            const done = isDone(tracked);
             const current: ShownStage = bottle
               ? (tracked.stage?.name === 'researching' ? { stage: 'researching', since: tracked.stage.since }
-                : tracked.saved ? { stage: 'found' } : { stage: 'identifying', value: 0.99 })
+                : done ? { stage: 'found' } : { stage: 'identifying', value: 0.99 })
               : tracked.stage?.name === 'reading' ? { stage: 'recognizing', since: tracked.stage.since }
               : identifying ? { stage: 'identifying', value: tracked.identifying }
               : tracked.stage?.name === 'zoom' ? { stage: 'zoom', value: tracked.stage.value }
@@ -479,11 +528,26 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             const staged = forwardOnlyStage(stageMemoryRef.current.get(tracked.trackId), current, Date.now());
             stageMemoryRef.current.set(tracked.trackId, staged.memory);
             const shownStage = staged.shown;
+            if (tracked.ask) {
+              // Known maker, not sure which bottle: amber box the person taps to say which one it is.
+              const seen = readName(provisional);
+              return (
+                <View key={tracked.trackId} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={'Which bottle is this? ' + seen}
+                    onPress={() => setAskingTrack({ trackId: tracked.trackId, seen, choices: tracked.ask!.choices })}
+                    style={[s.liveDetectionBox, s.liveDetectionBoxAsk, boxStyle, BOX_GLIDE]}>
+                    <View pointerEvents="none" style={s.askTag}><Text numberOfLines={1} style={s.askTagText}>{'WHICH ONE? TAP · ' + (seen.split(' ').slice(0, 3).join(' ') || '').toUpperCase()}</Text></View>
+                  </Pressable>
+                </View>
+              );
+            }
+            // Three looks (Rob, 17 Nov 2026): thin white = still looking; amber dashed = "Probably …";
+            // solid green with ✓ = done (named and saved). Boxes glide to their new place instead of jumping.
             if (bottle) {
               // Identified: its chip is in the strip at the top, so the box stays thin with a small tag.
               return (
                 <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
-                  <View style={[s.liveDetectionBox, s.liveDetectionBoxFound, boxStyle]}>
+                  <View style={[s.liveDetectionBox, done ? s.liveDetectionBoxDone : s.liveDetectionBoxNamed, boxStyle, BOX_GLIDE]}>
                     <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} boxWidth={boxPx} />
                   </View>
                 </View>
@@ -493,7 +557,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             // Identified bottles are opened from the found strip at the top.
             return (
               <View key={tracked.trackId} pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <View style={[s.liveDetectionBox, boxStyle]}>
+                <View style={[s.liveDetectionBox, guess ? s.liveDetectionBoxGuess : s.liveDetectionBoxLooking, boxStyle, BOX_GLIDE]}>
                   {/* What the scanner is doing with this bottle right now, with its progress. */}
                   <BoxStage stage={shownStage.stage} since={shownStage.since} value={shownStage.value} name={name} guess={guess} boxWidth={boxPx} />
                 </View>
@@ -505,6 +569,34 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       )}
       {permission.granted && !scanPhotos && <View pointerEvents="none" style={[s.cameraViewClip, { top: cameraViewTop, height: Math.max(0, cameraViewBottom - cameraViewTop) }]}><View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: -cameraViewTop, height: screenHeight }}><WorldBottleAnchorOverlay candidates={liveCandidates} currentDepthFrame={liveDepthFrame} observationFrame={liveSpatialObservationFrame} currentCameraPose={liveCameraPose} sessionKey={anchorSessionKey} visible={liveTracking.state !== 'paused' && liveTracking.state !== 'interrupted' && liveTracking.state !== 'not_available'} /></View></View>}
       {permission.granted && !scanPhotos && <FoundTray items={foundItems} hiddenKeys={foundKeysInFlight} unseenKeys={unseenFoundKeys} selectedKey={selectedFoundKey} top={foundTrayTop} onSelect={openFoundItem} onClear={() => { foundRef.current = []; setFoundItems([]); setFoundFlights([]); closeProfile(); }} />}
+      {permission.granted && !scanPhotos && (foundItems.length > 0 || shownCandidates.length > 0) && (() => {
+        const asking = shownCandidates.filter(track => !!track.ask).length;
+        const working = shownCandidates.filter(track => !isDone(track) && !track.ask).length;
+        return <View pointerEvents="none" style={[s.scanCount, { top: cameraViewTop + 4 }]}>
+          <Text style={s.scanCountDone}>✓ {foundItems.length} DONE</Text>
+          {asking > 0 && <Text style={s.scanCountAsk}>  ·  {asking} TO CONFIRM</Text>}
+          {working > 0 && <Text style={s.scanCountWorking}>  ·  {working} READING</Text>}
+        </View>;
+      })()}
+      {askingTrack && <>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => setAskingTrack(null)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 60, backgroundColor: 'rgba(0,0,0,0.45)' }} />
+        <View style={[s.askSheet, { bottom: Math.max(insets.bottom, 8) + 76 }]}>
+          <Text style={s.askTitle}>WHICH BOTTLE IS THIS?</Text>
+          {!!askingTrack.seen && <Text style={s.askSeen}>The label reads like: {askingTrack.seen}</Text>}
+          {askingTrack.choices.length === 0 && <Text style={s.askSeen}>Looking up choices…</Text>}
+          {askingTrack.choices.map((choice, index) => (
+            <Pressable key={index} accessibilityRole="button" onPress={() => answerAsk({ brand: choice.brand, product: choice.product })} style={s.askChoice}>
+              <Text style={s.askChoiceText}>{displayName(choice.brand, choice.product)}</Text>
+            </Pressable>
+          ))}
+          <View style={s.askTypeRow}>
+            <TextInput value={typedName} onChangeText={setTypedName} placeholder="Something else? Type the name" placeholderTextColor={C.muted} style={s.askInput} returnKeyType="done"
+              onSubmitEditing={() => typedName.trim() && answerAsk({ brand: typedName.trim(), product: '' })} />
+            <Pressable accessibilityRole="button" disabled={!typedName.trim()} onPress={() => answerAsk({ brand: typedName.trim(), product: '' })} style={[s.askOk, !typedName.trim() && { opacity: 0.4 }]}><Text style={s.askOkText}>OK</Text></Pressable>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => answerAsk({ none: true })} style={s.askSkip}><Text style={s.askSkipText}>Not sure / skip this bottle</Text></Pressable>
+        </View>
+      </>}
       {foundFlights.map(flight => <FoundFlightLabel key={flight.id} flight={flight} onDone={done => setFoundFlights(flights => flights.filter(f => f.id !== done.id))} />)}
       {!!cameraMessage && <View style={[s.cameraMessage, { top: Math.max(insets.top, 24) + 75 }]}><Text style={s.cameraMessageText}>{cameraMessage}</Text></View>}
       <View style={[s.topBar, { top: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 8) + 10 }]}>
@@ -525,7 +617,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => setSettingsOpen(v => !v)}><Ionicons name="settings-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => { setActivePanel(null); setSettingsOpen(false); openMarty(); }}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
       {venueCheckin.active && !venueCheckin.prompt && <View style={{position:'absolute',zIndex:30,top:insets.top+8,alignSelf:'center',flexDirection:'row',alignItems:'center',paddingHorizontal:11,paddingVertical:6,borderRadius:14,backgroundColor:'rgba(6,14,30,0.88)',borderWidth:1,borderColor:'rgba(255,209,102,0.7)'}}>
@@ -543,15 +635,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             <Text style={{color:C.ivory,fontSize:activePanel==='nearby'?10:12,fontWeight:'900',letterSpacing:1.5}}>{({favorites:'FAVORITES',nearby:'NEARBY ATLAS',marty:'MARTY SULLIVAN',privacy:'PRIVACY & CONTRIBUTIONS',inventory:'LIVE INVENTORY SCANNER',lidar:'LIVE 3D / LIDAR SCANNER',collection:'MY COLLECTION',taste:'MY TASTE'} as const)[activePanel]}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
-          {activePanel!=='lidar' && activePanel!=='nearby' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
-          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney} checkedInVenueRef={venueCheckin.active?.venueRef ?? null}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
-          {activePanel==='marty' && martyConsentOpen && <>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
-            <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
-              <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:8}}><Text style={{color:C.ivory,fontSize:11,fontWeight:'900',letterSpacing:1.3}}>MARTY · VOICE & MEMORY CONSENT</Text><Pressable onPress={()=>setMartyConsentOpen(false)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable></View>
-              <MartyConsentPanel />
-            </View>
-          </>}
+          {activePanel!=='lidar' && activePanel!=='nearby' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='marty'?'Voice & memory choices':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
+          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney} checkedInVenueRef={venueCheckin.active?.venueRef ?? null}/> : activePanel==='marty' ? <MartyConsentPanel /> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
         </View>
       </>}
       {selectedBottle && (() => {
@@ -596,6 +681,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
         );
       })()}
+      <MartyOverlay bottomOffset={Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76} hidden={settingsOpen || !!activePanel || !!scanPhotos || !!selectedBottle || !!activeJourney || !!askingTrack} onNavigateCommand={handleMartyAppCommand} onOpenConsent={()=>{setActivePanel('marty');}} />
       {activeJourney && <JourneyPlayerOverlay item={activeJourney} onClose={()=>setActiveJourney(null)}/>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
@@ -616,6 +702,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>setLiveReadConsent(value=>!value)}><Ionicons name="scan-outline" size={18} color={liveReadConsent?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live Recognition</Text><Text style={s.menuDesc}>Send cropped live frames to Discover and Anthropic for bottle and menu reading. Images are not saved. Bottles the scanner is sure of are saved as sightings to build the shared catalogue, and their missing facts are looked up on the web.</Text></View><Text style={[s.menuValue,{color:liveReadConsent?'#77E5B5':C.muted}]}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
           {!onPhone && <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={quickGuess ? 'Turn off quick guess' : 'Turn on quick guess'} onPress={()=>setQuickGuess(value=>!value)}><Ionicons name="flash-outline" size={18} color={quickGuess?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Quick Guess</Text><Text style={s.menuDesc}>{QUICK_GUESS_DESCRIPTION}</Text><Text style={s.menuDesc}>{QUICK_GUESS_DATA_NOTICE}</Text></View><Text style={[s.menuValue,{color:quickGuess?'#77E5B5':C.muted}]}>{quickGuess?'ON':'OFF'}</Text></Pressable>}
+          <Pressable style={s.menuRow} accessibilityRole="switch" accessibilityLabel={martyPresence.enabled ? 'Turn Marty off' : 'Turn Marty on'} onPress={()=>setMartyEnabled(!martyPresence.enabled)}><Ionicons name="chatbubble-ellipses-outline" size={18} color={martyPresence.enabled?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Marty</Text><Text style={s.menuDesc}>Marty's button on the scanner. Off stops his listening and talking at once and hides him.</Text></View><Text style={[s.menuValue,{color:martyPresence.enabled?'#77E5B5':C.muted}]}>{martyPresence.enabled?'ON':'OFF'}</Text></Pressable>
           </ScrollView>
         </View>
       </>}
@@ -625,7 +712,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 const s = StyleSheet.create({
  root:{flex:1,backgroundColor:C.bg},menuRow:{minHeight:48,flexDirection:'row',alignItems:'center',gap:11,paddingVertical:7,borderBottomWidth:1,borderBottomColor:'rgba(153,163,174,0.12)'},menuTitle:{color:C.ivory,fontSize:11,fontWeight:'800'},menuDesc:{color:C.muted,fontSize:9,marginTop:3},menuValue:{color:C.brass,fontSize:8,fontWeight:'900',letterSpacing:1},cameraMessage:{position:'absolute',left:24,right:24,zIndex:20,padding:11,borderRadius:10,backgroundColor:'rgba(8,10,13,0.94)',borderWidth:1,borderColor:C.line},cameraMessageText:{color:C.ivory,fontSize:11,lineHeight:16,textAlign:'center'},loading:{flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center'},loadingText:{color:C.brass,letterSpacing:5,fontWeight:'800'},
  permissionFallback:{backgroundColor:'#090B0F',alignItems:'center',justifyContent:'center'},permissionCard:{position:'absolute',left:28,right:28,top:'35%',padding:22,borderRadius:18,backgroundColor:'rgba(9,11,14,0.92)',borderWidth:1,borderColor:C.line},permissionTitle:{color:C.ivory,fontSize:23,fontWeight:'700',marginTop:12},permissionBody:{color:C.muted,fontSize:13,lineHeight:20,marginTop:7},permissionButton:{backgroundColor:C.brass,padding:14,borderRadius:10,alignItems:'center',marginTop:18},permissionButtonText:{color:'#111',fontSize:11,fontWeight:'900',letterSpacing:1.5},
- viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
+ viewfinderShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(3,5,8,0.25)'},liveDetectionLayer:{...StyleSheet.absoluteFillObject,zIndex:5},cameraViewClip:{position:'absolute',left:0,right:0,overflow:'hidden',zIndex:5},liveDetectionBox:{position:'absolute',borderWidth:1.5,borderColor:'#77E5B5',borderRadius:8,backgroundColor:'rgba(54,190,135,0.035)'},liveDetectionLabel:{position:'absolute',left:2,top:2,paddingHorizontal:5,paddingVertical:2,borderRadius:5,backgroundColor:'rgba(5,15,16,0.92)',borderWidth:1,borderColor:'rgba(119,229,181,0.8)'},liveDetectionBoxFound:{backgroundColor:'transparent'},liveDetectionBoxLooking:{borderWidth:1,borderColor:'rgba(233,255,245,0.55)',backgroundColor:'transparent'},liveDetectionBoxGuess:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#FFC857',backgroundColor:'rgba(255,200,87,0.04)'},liveDetectionBoxNamed:{borderWidth:1.5,borderStyle:'dashed',borderColor:'#77E5B5',backgroundColor:'transparent'},liveDetectionBoxAsk:{borderWidth:2,borderColor:'#FFB020',backgroundColor:'rgba(255,176,32,0.08)'},askTag:{position:'absolute',left:0,right:0,top:3,alignItems:'center'},askTagText:{color:'#FFD27A',fontSize:7,fontWeight:'900',letterSpacing:0.3,backgroundColor:'rgba(5,15,16,0.88)',paddingHorizontal:5,paddingVertical:1.5,borderRadius:4,overflow:'hidden'},scanCountAsk:{color:'#FFB020',fontSize:9,fontWeight:'900',letterSpacing:0.8},askSheet:{position:'absolute',zIndex:61,left:10,right:10,maxHeight:'70%',padding:14,borderRadius:18,backgroundColor:'rgba(10,13,18,0.98)',borderWidth:1,borderColor:'rgba(255,176,32,0.7)'},askTitle:{color:'#FFD27A',fontSize:12,fontWeight:'900',letterSpacing:1.4,marginBottom:4},askSeen:{color:C.muted,fontSize:11,marginBottom:8},askChoice:{paddingVertical:11,paddingHorizontal:12,borderRadius:12,borderWidth:1,borderColor:'rgba(240,241,242,0.22)',marginBottom:7},askChoiceText:{color:C.ivory,fontSize:14,fontWeight:'800'},askTypeRow:{flexDirection:'row',alignItems:'center',gap:8,marginTop:2},askInput:{flex:1,color:C.ivory,fontSize:13,paddingVertical:9,paddingHorizontal:11,borderRadius:12,borderWidth:1,borderColor:'rgba(240,241,242,0.22)'},askOk:{paddingVertical:9,paddingHorizontal:14,borderRadius:12,backgroundColor:'#3EF0A0'},askOkText:{color:'#05100A',fontWeight:'900',fontSize:12},askSkip:{alignSelf:'center',marginTop:10,padding:6},askSkipText:{color:C.muted,fontSize:12,fontWeight:'700'},liveDetectionBoxDone:{borderWidth:2.5,borderColor:'#3EF0A0',backgroundColor:'rgba(62,240,160,0.07)'},scanCount:{position:'absolute',zIndex:6,alignSelf:'center',flexDirection:'row',paddingHorizontal:9,paddingVertical:3,borderRadius:10,backgroundColor:'rgba(5,15,16,0.78)'},scanCountDone:{color:'#3EF0A0',fontSize:9,fontWeight:'900',letterSpacing:0.8},scanCountWorking:{color:'rgba(233,255,245,0.75)',fontSize:9,fontWeight:'800',letterSpacing:0.8},liveFoundTag:{position:'absolute',left:-1,top:-15,paddingHorizontal:5,paddingVertical:1,borderRadius:4,backgroundColor:'rgba(5,15,16,0.8)'},liveFoundTagText:{color:'#BFF5DD',fontSize:7,fontWeight:'800'},liveDetectionName:{color:'#E9FFF5',fontSize:7,fontWeight:'900',letterSpacing:0.3},liveDetectionConfidence:{color:'#77E5B5',fontSize:6,fontWeight:'800',marginTop:2,letterSpacing:0.7},topBar:{position:'absolute',top:Platform.OS==='ios'?62:34,left:22,right:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},wordmark:{color:C.ivory,fontSize:17,fontWeight:'900',letterSpacing:4},wordmarkSub:{color:C.brass,fontSize:8,fontWeight:'700',letterSpacing:2.5,marginTop:4},topActions:{flexDirection:'row',alignItems:'center',gap:9},livePill:{flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:9,paddingVertical:7,borderRadius:14,backgroundColor:'rgba(8,10,13,0.7)',borderWidth:1,borderColor:'rgba(153,163,174,0.18)'},liveDot:{width:5,height:5,borderRadius:3,backgroundColor:'#B75D55'},liveText:{color:C.ivory,fontSize:9,fontWeight:'800',letterSpacing:1},profileButton:{width:34,height:34,borderRadius:17,backgroundColor:'rgba(8,10,13,0.7)',alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.line},
  centerHint:{position:'absolute',left:26,right:26,justifyContent:'center',alignItems:'center'},centerHintText:{color:'rgba(240,241,242,0.68)',fontSize:9,letterSpacing:2.4,fontWeight:'700'},corner:{position:'absolute',width:25,height:25,borderColor:'rgba(198,163,106,0.8)'},tl:{top:0,left:0,borderTopWidth:1,borderLeftWidth:1},tr:{top:0,right:0,borderTopWidth:1,borderRightWidth:1},bl:{bottom:0,left:0,borderBottomWidth:1,borderLeftWidth:1},br:{bottom:0,right:0,borderBottomWidth:1,borderRightWidth:1},
  bottomArea:{position:'absolute',bottom:0,backgroundColor:'rgba(7,9,12,0.92)',borderTopWidth:1,borderColor:C.line,borderTopLeftRadius:20,borderTopRightRadius:20,paddingHorizontal:8},controls:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:4},utilityControl:{alignItems:'center',justifyContent:'center',gap:5,minWidth:42,paddingVertical:7},utilityLabel:{color:C.ivory,fontSize:7,fontWeight:'800',letterSpacing:0.7},centerControls:{flexDirection:'row',alignItems:'center',gap:8},primaryControl:{width:36,height:36,borderRadius:18,borderWidth:1,borderColor:C.line,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(20,24,30,0.9)'},primaryControlHalf:{width:30,height:30},primaryControlActive:{borderColor:C.brass},shutterOuter:{width:66,height:66,borderRadius:33,borderWidth:2,borderColor:C.ivory,alignItems:'center',justifyContent:'center'},shutterOuterCompact:{width:58,height:58},shutterInner:{width:52,height:52,borderRadius:26,backgroundColor:C.ivory},shutterInnerCompact:{width:44,height:44},shutterBusy:{opacity:0.55},shutterBusyText:{color:'#111',textAlign:'center',fontSize:20,fontWeight:'900',lineHeight:50}
 });
