@@ -37,7 +37,7 @@ The server strips control characters, trims, truncates to these limits, and drop
 
 ## Realtime session settings
 
-- Voice speed 0.95, `max_output_tokens` 500, `audio.input.noise_reduction = { type: "near_field" }`.
+- Voice speed 1.0 (was 0.95; quicker Boston pace), `max_output_tokens` 500 (a ceiling only: the one-or-two-sentence length comes from the instructions, because a lower hard cap cuts him off mid-word when a guest asks for a full recipe), `audio.input.noise_reduction = { type: "near_field" }`.
 - `push_to_talk`: `turn_detection: null`. The app commits audio and decides when to respond.
 - `hands_free` (the app sends `mode: "hands_free"`): `turn_detection = { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true }`. Marty listens continuously, answers when the guest stops talking, and the guest can cut him off by talking. Rob approved always-on voice on 25 Nov 2026 (P-20261125-0216). Sessions that send `mode: "push_to_talk"` keep hold-to-talk.
 
@@ -95,8 +95,17 @@ then stops local playback, and on release sends `{ "type": "input_audio_buffer.c
 
 ## Variety
 
-Instructions are built in this order: Boston script, comedy craft, the "MARTY CHARACTER BOOK" (`_shared/martyCharacterBook.ts`, passed in by `index.ts`: his fixed fictional backstory, regulars, slang and conversation craft; capped at 16,000 characters; the only personal history he may use; an empty book is skipped), delivery and variety rules (`_shared/martyDelivery.ts`), a random per-session "SESSION FLAVOR" (one mood, one opener style, picked with `crypto.getRandomValues`), navigation, look-up rules, screen context, memory context.
+Instructions are built in this order: Boston script, comedy craft, the "MARTY CHARACTER BOOK" (`_shared/martyCharacterBook.ts`, passed in by `index.ts`: his fixed fictional backstory, regulars, slang and conversation craft; capped at 16,000 characters; the only personal history he may use; an empty book is skipped), delivery, mood-shift and variety rules (`_shared/martyDelivery.ts`), a random per-session "SESSION FLAVOR" (one starting mood and one opener style, picked with `crypto.getRandomValues`; the MOOD SHIFTS rules then move his mood during the chat), navigation, look-up rules, screen context, memory context.
 
 ## Tests
 
 `deno test voice_session_test.ts` (pure functions; no network).
+
+## Marty's voice, Boston profile v1.1.0 (P-20261125-1654)
+
+- Base script (`_shared/martySullivanBoston.ts`): thick, old-school South Boston accent in the voice itself (dropped Rs, broad As, Boston words used freely), never imitating a real person; the base script's accent rule wins over any older "no accent" line later in the instructions.
+- Cursing: everyday profanity is allowed (21+ app), mean-funny at the question or the order, never at who the person is. Unchanged safety: no slurs or group insults, no threats, violence or sexual content, drop the act when someone is upset, unwell, in danger or too drunk (988 stays in the character book), never encourage overdrinking or drunk driving, no made-up drink facts.
+- Length: one or two short sentences per reply unless the guest asks for more.
+- Mood: a random starting mood, then MOOD SHIFTS rules move it during the chat (irritated, grudgingly impressed, warming up, fed up again), shown in pace, emphasis, sighs and grumbles.
+- Voice: default stays `cedar` on `gpt-realtime-2.1`. These voices have no built-in regional accent; the accent comes only from the instructions, so it is audible but not guaranteed thick or steady. Judge it by ear after deploy; the listening test (`discover-voice-compare`) gets the same script for comparison.
+- Age: this program does not check that the guest is 21 or over; it relies on voice consent only.

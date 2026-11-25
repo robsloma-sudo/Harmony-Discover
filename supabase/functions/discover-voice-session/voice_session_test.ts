@@ -67,7 +67,7 @@ Deno.test("voice: cedar default, bogus falls back, allow-list honored", () => {
   assertEquals(buildRealtimeSession({ mode: "push_to_talk", voiceEnv: "bogus" }).voice, "cedar");
   const b = buildRealtimeSession({ mode: "push_to_talk", voiceEnv: "ash" });
   assertEquals(b.voice, "ash");
-  assertEquals(b.session.audio.output, { voice: "ash", speed: 0.95 });
+  assertEquals(b.session.audio.output, { voice: "ash", speed: 1.0 });
   assertEquals(b.session.model, "gpt-realtime-2.1");
 });
 
@@ -131,7 +131,7 @@ Deno.test("instructions: screen + memory + Boston core, in order", () => {
   assertStringIncludes(t, "Never invent recipe origins");
   assertStringIncludes(t, "HUMAN JUDGMENT");
   assertStringIncludes(t, "Jameson");
-  const order = ["IDENTITY", "COMEDY CRAFT", "DELIVERY —", "VARIETY —", "SESSION FLAVOR", "HARMONY DISCOVER NAVIGATION", "WHAT THE GUEST IS LOOKING AT", "USER-APPROVED MEMORY DATA"].map((k) => t.indexOf(k));
+  const order = ["IDENTITY", "CURSING AND ATTITUDE", "COMEDY CRAFT", "DELIVERY —", "MOOD SHIFTS —", "VARIETY —", "SESSION FLAVOR", "HARMONY DISCOVER NAVIGATION", "WHAT THE GUEST IS LOOKING AT", "USER-APPROVED MEMORY DATA"].map((k) => t.indexOf(k));
   assert(order.every((i) => i >= 0));
   assertEquals([...order].sort((x, y) => x - y), order);
   assertFalse(buildRealtimeSession({ mode: "push_to_talk" }).session.instructions.includes("WHAT THE GUEST IS LOOKING AT"));
@@ -293,4 +293,43 @@ Deno.test("instructions: total size stays bounded with book + look-ups + full co
   const ctx = sanitizeScreenContext({ screen: "menu", menuLines: Array.from({ length: 25 }, () => "m".repeat(140)) });
   const t = buildRealtimeSession({ mode: "hands_free", screenContext: ctx, pick: () => 0, memoryContext: "x".repeat(4000), characterBook: martyCharacterBook }).session.instructions;
   assert(t.length < 45000, `instructions ${t.length} chars`);
+});
+
+// P-20261125-1654 part 2: thick Boston accent, cursing (21+), short replies, mood that shifts during the chat.
+Deno.test("P-1654: accent, cursing, short replies and mood shifts in both modes; old no-accent line gone; safety kept", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (const lookupsEnabled of [true, false]) {
+      const t = buildRealtimeSession({ mode, pick: () => 0, characterBook: martyCharacterBook, lookupsEnabled }).session.instructions;
+      for (const k of [
+        "thick, old-school South Boston accent",
+        "Drop your Rs after vowels",
+        "this section wins",
+        "CURSING AND ATTITUDE (21+ APP)",
+        "never at who the person is",
+        "Every reply is one or two short sentences",
+        "MOOD SHIFTS",
+        "grudgingly impressed",
+        "Starting mood:",
+      ]) assertStringIncludes(t, k);
+      for (const old of [
+        "Do not perform a cartoon accent",
+        "Never force \"wicked\"",
+        "Tonight's mood",
+        "Mix a one-word reply with a longer run",
+        "recommendations to one or two sentences",
+      ]) assertFalse(t.includes(old), old);
+      for (const k of [
+        "No slurs", "No threats, no violence, no sexual content", "drop the act at once",
+        "Never encourage overdrinking or drunk driving", "988", "Never invent recipe origins",
+        "11. FACTS RULE", "made-up character voice", "never imitate or claim to be a real person",
+        "Do not invent local facts, real venues, or affiliations.",
+      ]) assertStringIncludes(t, k);
+      // accent and short-reply rules come before the book, so they set the voice; the base wins on accent
+      assert(t.indexOf("thick, old-school South Boston accent") < t.indexOf("CHARACTER BOOK - MARTY SULLIVAN"));
+    }
+  }
+});
+
+Deno.test("P-1654: starting moods never invite made-up facts (no games, scores or news)", () => {
+  for (const m of MARTY_MOODS) assertFalse(/game|score|news|Pats|Sox|Celtics|Bruins/i.test(m), m);
 });
