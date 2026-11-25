@@ -48,13 +48,12 @@ export const MARTY_OPENER_STYLES = [
 
 export interface SessionFlavor { mood: string; opener: string }
 
-/** Picker: returns an integer in [0, n). Injectable for tests. */
 export type Pick = (n: number) => number;
 
 export const cryptoPick: Pick = (n) => {
   if (!Number.isInteger(n) || n <= 0) return 0;
   const buf = new Uint32Array(1);
-  const limit = Math.floor(0x100000000 / n) * n; // avoid modulo bias
+  const limit = Math.floor(0x100000000 / n) * n;
   do { crypto.getRandomValues(buf); } while (buf[0] >= limit);
   return buf[0] % n;
 };

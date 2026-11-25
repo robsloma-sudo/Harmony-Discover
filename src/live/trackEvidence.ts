@@ -32,7 +32,14 @@ export type TrackIdentity<T extends IdentityRead> = {
   confirmed?: boolean;
 };
 
-type Vote<T> = { read: T; weight: number; reads: number; evidence: number; best: number; fullReads: number; matched?: boolean };
+/**
+ * recent / recentAt: the same weight, but fading with time (FIX-015), so what the camera saw lately counts
+ * more than an early read. lastSig / lastAt: the last read that counted, to spot near-identical frames.
+ */
+type Vote<T> = {
+  read: T; weight: number; reads: number; evidence: number; best: number; fullReads: number; matched?: boolean;
+  recent?: number; recentAt?: number; lastSig?: string; lastAt?: number; lastConfidence?: number;
+};
 /**
  * locked: the vote key once a name has been confirmed. A confirmed bottle keeps
  * its name (and its number never goes down) while it stays the same tracked
@@ -44,6 +51,19 @@ type Entry<T> = { detection: number; votes: Map<string, Vote<T>>; seen: Set<stri
 
 /** One clear read at 80% or more confirms a name straight away (Rob: fly up as soon as it hits 80%). */
 export const CONFIDENT_SINGLE_READ = 0.8;
+
+/**
+ * FIX-015 (Rob, 21 Nov 2026: "let the scanner change its mind about a bottle's name"). An automatic name lock
+ * fades: each read's weight halves every LOCK_FADE_HALF_LIFE_MS, so an early wrong guess gives way once
+ * TAKEOVER_READS clear, different reads lately make up TAKEOVER_SHARE of the (faded) weight. A name the
+ * person picked by hand never fades.
+ */
+export const LOCK_FADE_HALF_LIFE_MS = 4000;
+export const TAKEOVER_SHARE = 0.75;
+export const TAKEOVER_READS = 3;
+/** The same words at nearly the same confidence within this time are one camera view, not new proof. */
+export const NEAR_DUPLICATE_MS = 1200;
+const NEAR_DUPLICATE_CONFIDENCE = 0.05;
 
 /** Show a name only when agreeing reads reach this confidence and clearly beat any rival. */
 export const RELIABLE_IDENTITY = 0.75;
@@ -116,8 +136,21 @@ export function mergeReads<T extends IdentityRead>(primary: T, other: T): T {
   return merged as unknown as T;
 }
 
+const fade = (ms: number) => Math.pow(0.5, Math.max(0, ms) / LOCK_FADE_HALF_LIFE_MS);
+const readSignature = (read: IdentityRead) => [read.match?.id ?? '', clean(read.match?.brand || read.brand), clean(read.match?.product || read.product), read.partial ? 'p' : ''].join('|');
+
 export class TrackEvidence<T extends IdentityRead> {
   private entries = new Map<number, Entry<T>>();
+  private readonly now: () => number;
+
+  /** `now` is only replaced in tests. */
+  constructor(options: { now?: () => number } = {}) {
+    this.now = options.now ?? (() => Date.now());
+  }
+
+  private recentWeight(vote: Vote<T>, at: number): number {
+    return vote.recentAt === undefined ? vote.weight : (vote.recent ?? 0) * fade(at - vote.recentAt);
+  }
 
   private entry(trackId: number): Entry<T> {
     let entry = this.entries.get(trackId);
@@ -151,6 +184,16 @@ export class TrackEvidence<T extends IdentityRead> {
     const partial = read.partial === true;
     const strength = clamp(read.confidence) * (matched ? 0.8 : 0.7) * (partial ? 0.6 : 1);
     const vote = entry.votes.get(key) ?? { read, weight: 0, reads: 0, evidence: 0, best: 0, fullReads: 0 };
+    // Near-identical camera frames (same words, about the same confidence, moments apart) are one look at
+    // the bottle, not separate proof: they count once.
+    const at = this.now(), sig = readSignature(read), c = clamp(read.confidence);
+    // Only camera-frame reads ('frame:' sources) are checked: label and cloud reads are separate looks already.
+    const cameraFrame = sourceKey.startsWith('frame:');
+    if (cameraFrame && vote.reads > 0 && vote.lastSig === sig && vote.lastAt !== undefined && at - vote.lastAt < NEAR_DUPLICATE_MS
+      && Math.abs((vote.lastConfidence ?? 0) - c) <= NEAR_DUPLICATE_CONFIDENCE) return;
+    if (cameraFrame) { vote.lastSig = sig; vote.lastAt = at; vote.lastConfidence = c; }
+    vote.recent = this.recentWeight(vote, at) + c;
+    vote.recentAt = at;
     // Show the most informative read: catalogue match first, then a read with
     // an expression, then the most legible; a read of a whole label beats a partial one.
     const rank = (r: T) => (r.match?.id ? 2 : 0) + (clean(r.product) ? 1 : 0) + clamp(r.confidence) * 0.5 - (r.partial ? 1.5 : 0);
@@ -178,11 +221,20 @@ export class TrackEvidence<T extends IdentityRead> {
       total += vote.weight;
       if (!top || vote.evidence > top.evidence) { top = vote; topKey = key; }
     }
-    // A confirmed name stays unless a different name clearly takes over.
+    // A confirmed name stays unless a different name clearly takes over. A name the person picked by hand
+    // always stays. An automatic lock fades (FIX-015): a few clear, different reads lately can replace it.
     const locked = entry.locked ? entry.votes.get(entry.locked) : undefined;
+    let takenOver = false;
     if (locked && entry.locked !== topKey) {
       const challengerShare = total > 0 ? top!.weight / total : 0;
-      if (challengerShare >= 0.85 && top!.reads >= 2) { entry.locked = undefined; entry.peak = 0; }
+      const at = this.now();
+      let recentTotal = 0;
+      entry.votes.forEach(vote => { recentTotal += this.recentWeight(vote, at); });
+      const recentShare = recentTotal > 0 ? this.recentWeight(top!, at) / recentTotal : 0;
+      const fadedOut = recentShare >= TAKEOVER_SHARE && top!.reads >= TAKEOVER_READS && top!.fullReads >= 1;
+      if (!entry.userConfirmed && ((challengerShare >= 0.85 && top!.reads >= 2) || fadedOut)) {
+        entry.locked = undefined; entry.peak = 0; takenOver = fadedOut;
+      }
       else { top = locked; topKey = entry.locked!; }
     }
     const share = total > 0 ? top!.weight / total : 0;
@@ -196,6 +248,8 @@ export class TrackEvidence<T extends IdentityRead> {
     const backed = top!.best >= CONFIDENT_SINGLE_READ || !!top!.matched || top!.reads >= 3;
     let reliable = top!.fullReads >= 1 && ((confidence >= RELIABLE_IDENTITY && share >= RELIABLE_SHARE && top!.reads >= 2 && backed) || strongSingle);
     if (strongSingle) confidence = Math.max(confidence, top!.best);
+    // It beat a confirmed name with several clear reads: it is the confirmed name now.
+    if (takenOver) reliable = true;
     if (entry.locked === topKey) reliable = true;
     else if (reliable) entry.locked = topKey;
     // The number shown never drops while the same name leads.
@@ -235,6 +289,9 @@ export class TrackEvidence<T extends IdentityRead> {
         existing.fullReads += vote.fullReads;
         existing.evidence = 1 - (1 - existing.evidence) * (1 - vote.evidence);
         existing.matched = existing.matched || vote.matched;
+        const at = this.now();
+        existing.recent = this.recentWeight(existing, at) + this.recentWeight(vote, at);
+        existing.recentAt = at;
       }
     }
     source.seen.forEach(key => target.seen.add(key));

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { BottleRead, MenuGlimpse } from '../src/services/discoverLiveApi';
 import type { ARTrackingUpdate, ARKitDepthFrame } from '../src/live/DiscoverARSurface';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { describeLiquidLevel, type LiquidReadStatus } from '../src/services/liquidReadStatus';
 import { createBottleVolumeProfile } from '../src/services/bottleVolumeCalibration';
 import { getBottleCalibrationKey, parseBottleCalibrationSamples, saveBottleVolumeProfileForIdentity } from '../src/services/bottleVolumeProfileStore';
 
@@ -20,7 +21,7 @@ const GROUPS=[
   ['sources','Research & confidence','Source links, verification and conflicts'],
 ] as const;
 
-type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}; onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}}}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
+type LiveInventoryProps = { liquidMetrics?: {jobsDispatched:number;jobsCompleted:number;framesSkipped:number;workerErrors:number;lastWorkerMs:number;maxWorkerMs:number;segmentationMs:number;localFrameMs:number;workerAvailable:boolean}; onClose?: () => void; tracking?: ARTrackingUpdate; depthStatus?: string; depthFrame?: ARKitDepthFrame | null; candidates?: Array<{trackId:number;x:number;y:number;width:number;height:number;confidence:number;bottle?:BottleRead;liquidLevel?:{heightPercent:number;confidence:number;method:'temporal_consensus';calibratedVolume?:{milliliters:number;fluidOunces:number;profileId:string}};liquidStatus?:LiquidReadStatus}>; bottles?: BottleRead[]; barcodes?: Array<{value:string;symbology:string}>; labelText?: string[]; menu?: MenuGlimpse | null; lastReadAt?: number | null };
 
 
 function BottleCalibrationEditor({bottle}:{bottle:BottleRead}) {
@@ -84,13 +85,14 @@ export function LiveInventoryPanel({onClose,tracking,depthStatus='waiting_for_de
       {candidates.length ? candidates.map((candidate,index)=>{
         const bottle=(candidate as typeof candidate & {trackId?:number;bottle?:BottleRead}).bottle;
         const confidence=Math.round(candidate.confidence*100);
-        const fillLabel=candidate.liquidLevel ? ` · FILL HEIGHT ~${candidate.liquidLevel.heightPercent}%` : ''; 
+        const liquidText=describeLiquidLevel(candidate.liquidLevel,candidate.liquidStatus);
+        const fillLabel=liquidText ? ` · ${liquidText.kind==='unreadable' ? liquidText.headline.toUpperCase()+' · '+(liquidText.reason??'').toUpperCase() : liquidText.headline}` : '';
         return <View key={String((candidate as typeof candidate & {trackId?:number}).trackId ?? index)} style={s.group}>
           <View style={s.groupButton}><View style={{flex:1}}>
             <Text style={s.groupTitle}>{bottle ? [bottle.match?.brand||bottle.brand,bottle.product].filter(Boolean).join(' ')||'Bottle detected' : 'Bottle detected · reading label'}</Text>
             <Text style={s.groupHint}>{bottle ? bottle.category.toUpperCase()+' · '+Math.round(bottle.confidence*100)+'% ID CONFIDENCE · '+bottle.state.toUpperCase()+fillLabel : 'PROVISIONAL · '+confidence+'% DETECTION CONFIDENCE · IDENTITY PENDING'+fillLabel}</Text>
           </View></View>
-          <View style={s.groupBody}><Text style={s.emptyHint}>{bottle ? [bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ')||'Bottle detected; additional label facts are still being read.' : 'Spatial track is live. Brand, product and package details will populate when AI recognition returns.'}{candidate.liquidLevel ? ` Visual fill height relative to the detected bottle bounds · ${Math.round(candidate.liquidLevel.confidence*100)}% signal confidence.` : ''}{candidate.liquidLevel?.calibratedVolume ? ` Calibrated volume: ${Math.round(candidate.liquidLevel.calibratedVolume.milliliters)} ml / ${candidate.liquidLevel.calibratedVolume.fluidOunces.toFixed(1)} fl oz.` : candidate.liquidLevel ? ' No bottle-specific volume calibration is saved yet.' : ''}</Text>{bottle && <BottleCalibrationEditor key={(bottle.resolved?.shapeKey ?? bottle.match?.id) + ':' + (bottle.size ?? '')} bottle={bottle}/>}</View>
+          <View style={s.groupBody}><Text style={s.emptyHint}>{bottle ? [bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ')||'Bottle detected; additional label facts are still being read.' : 'Spatial track is live. Brand, product and package details will populate when AI recognition returns.'}{liquidText ? ' '+liquidText.detail : ''}</Text>{bottle && <BottleCalibrationEditor key={(bottle.resolved?.shapeKey ?? bottle.match?.id) + ':' + (bottle.size ?? '')} bottle={bottle}/>}</View>
         </View>;
       }) : bottles.length ? bottles.map((bottle,index)=><View key={`read-${index}-${bottle.box.x0}-${bottle.box.y0}`} style={s.group}><View style={s.groupButton}><View style={{flex:1}}><Text style={s.groupTitle}>{[bottle.brand,bottle.product].filter(Boolean).join(' ') || 'Unidentified beverage'}</Text><Text style={s.groupHint}>{bottle.category.toUpperCase()} · {Math.round(bottle.confidence*100)}% confidence · {bottle.state.toUpperCase()}</Text></View></View><View style={s.groupBody}><Text style={s.emptyHint}>{[bottle.proof,bottle.size,bottle.origin,...bottle.words].filter(Boolean).join(' · ') || 'No additional label facts returned yet.'}</Text></View></View>) : <Text style={s.emptyHint}>Point the camera at bottles. A provisional inventory row appears as soon as local detection stabilizes; product identity fills in when the AI label read completes.</Text>}
       <Text style={s.section}>LIVE LABEL SIGNALS · {barcodes.length} BARCODES · {labelText.length} TEXT READS</Text>

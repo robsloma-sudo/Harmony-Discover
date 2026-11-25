@@ -33,18 +33,18 @@ The server strips control characters, trims, truncates to these limits, and drop
 `sessionId, provider, ephemeralToken, expiresAt, transport, model, voice, mode`
 
 - `voice`: chosen voice (default `cedar`).
-- `mode`: the mode actually granted. `hands_free` requested while the server flag is off silently returns `"push_to_talk"`.
+- `mode`: the mode actually granted. `hands_free` is granted whenever the app asks for it, unless the server stop switch `MARTY_HANDS_FREE=off` is set; then it silently returns `"push_to_talk"`.
 
 ## Realtime session settings
 
 - Voice speed 0.95, `max_output_tokens` 500, `audio.input.noise_reduction = { type: "near_field" }`.
 - `push_to_talk`: `turn_detection: null`. The app commits audio and decides when to respond.
-- `hands_free` (only if `MARTY_HANDS_FREE=on`): `turn_detection = { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true }`. Guest can cut Marty off by talking. Product rule today is push-to-talk only (no background listening), so leave it off unless that rule changes.
+- `hands_free` (the app sends `mode: "hands_free"`): `turn_detection = { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true }`. Marty listens continuously, answers when the guest stops talking, and the guest can cut him off by talking. Rob approved always-on voice on 25 Nov 2026 (P-20261125-0216). Sessions that send `mode: "push_to_talk"` keep hold-to-talk.
 
 ## Server secrets
 
 - `MARTY_VOICE` (optional): one of `cedar, ash, marin, verse, ballad, echo, sage`. Anything else or unset gives `cedar`.
-- `MARTY_HANDS_FREE` (optional): exactly `on` enables hands_free. Default off.
+- `MARTY_HANDS_FREE` (optional): stop switch. `off` (any case) turns every session back to push-to-talk. Unset or any other value lets the app choose per session.
 
 ## Mid-session screen update (app to Realtime data channel)
 
