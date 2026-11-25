@@ -1,7 +1,8 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1";
 import {
   buildGeminiTokenBody, buildGptLiveSession, compareAllowed, DEFAULT_ORDER, GEMINI_AUTH_TOKENS_URL,
-  MARTY_BOSTON_CONSENT_VERSION, mintContender, parseCompareRequest, parseOrder, resolveContender,
+  GPT_LIVE_SESSIONS_URL, MARTY_BOSTON_CONSENT_VERSION, MAX_REQUEST_BYTES, MAX_SDP_BYTES, mintContender,
+  OPENAI_CLIENT_SECRETS_URL, parseCompareRequest, parseOrder, resolveContender,
 } from "./_shared/compare.ts";
 import { DEPLOY_FILES } from "./_shared/compare.ts";
 import {
@@ -10,6 +11,9 @@ import {
 import { martyCharacterBook } from "../discover-voice-session/_shared/martyCharacterBook.ts";
 
 const UID = "11111111-2222-3333-4444-555555555555";
+const OFFER = "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\n";
+const ANSWER = "v=0\r\no=openai 3 4 IN IP4 0.0.0.0\r\ns=-\r\n";
+const LIVE_OK = { session: { id: "live_123", extra: "SECRET-PROVIDER-FIELD" }, transport: { type: "webrtc", sdp: ANSWER } };
 const OK = { consentVersion: MARTY_BOSTON_CONSENT_VERSION, contender: "A", mode: "push_to_talk" };
 
 Deno.test("gate: off, not listed, listed", () => {
@@ -40,6 +44,13 @@ Deno.test("request validation", () => {
   assertFalse(parseCompareRequest({ ...OK, screenContext: {} }).ok);
   assertFalse(parseCompareRequest([]).ok);
   assertFalse(parseCompareRequest(null).ok);
+  // voice B relay: an optional WebRTC offer, plain SDP text, size-capped
+  const withSdp = parseCompareRequest({ ...OK, sdp: OFFER });
+  assert(withSdp.ok && withSdp.sdp === OFFER);
+  assertFalse(parseCompareRequest({ ...OK, sdp: "hello" }).ok);
+  assertFalse(parseCompareRequest({ ...OK, sdp: 5 }).ok);
+  assertFalse(parseCompareRequest({ ...OK, sdp: "v=0" + "a".repeat(MAX_SDP_BYTES) }).ok);
+  assert(MAX_SDP_BYTES < MAX_REQUEST_BYTES);
 });
 
 function stub(status: number, payload: unknown, calls: { url: string; init: RequestInit }[] = []) {
@@ -68,21 +79,54 @@ Deno.test("current: session equals buildRealtimeSession session; blind unless re
   assertEquals(rev.body.model, "gpt-realtime-2.1");
 });
 
-Deno.test("gpt-live-1: same instructions + nav tools, no unsupported fields", async () => {
+Deno.test("gpt-live-1: relayed by the server, never a browser pass", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
-  const r = await mintContender({ contender: "B", mode: "hands_free", reveal: true }, env, stub(200, OPENAI_OK, calls));
-  assertEquals(r.body.connectHint, "live");
-  assertEquals(r.body.model, "gpt-live-1");
-  assertEquals(r.body.voice, "marin");
-  const s = JSON.parse(calls[0].init.body as string).session;
-  assertEquals(Object.keys(s).sort(), ["audio", "instructions", "model", "tools", "type"]);
-  assertEquals(s.tools, JSON.parse(JSON.stringify(DISCOVER_NAVIGATION_TOOLS)));
-  assertEquals(s.tools.length, 2);
-  assertEquals(s.audio, { output: { voice: "marin" } });
-  assert(s.instructions.includes("HARMONY DISCOVER NAVIGATION"));
+  const r = await mintContender({ contender: "B", mode: "hands_free", reveal: true, sdp: OFFER }, env, stub(201, LIVE_OK, calls));
+  assertEquals(r.status, 200);
+  // only the answer, the opaque session id and (on reveal) the model go back to the app
+  assertEquals(r.body, { contender: "B", provider: "openai_live", transport: "webrtc_relay", sdpAnswer: ANSWER, sessionId: "live_123", model: "gpt-live-1" });
+  assertFalse(JSON.stringify(r).includes("sk-secret"));
+  assertFalse(JSON.stringify(r).includes("SECRET-PROVIDER-FIELD"));
+  assertFalse("ephemeralToken" in r.body);
+  // one call, to the live sessions address, with the server key, the app's offer forwarded unchanged
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].url, GPT_LIVE_SESSIONS_URL);
+  assertEquals(calls[0].url, "https://api.openai.com/v1/live/sessions");
+  assert(calls[0].url !== OPENAI_CLIENT_SECRETS_URL);
+  assertEquals((calls[0].init.headers as Record<string, string>).Authorization, "Bearer sk-secret");
+  assertEquals((calls[0].init.headers as Record<string, string>)["Content-Type"], "application/json");
+  const sent = JSON.parse(calls[0].init.body as string);
+  assertEquals(Object.keys(sent).sort(), ["session", "transport"]);
+  assertEquals(sent.transport, { type: "webrtc", sdp: OFFER });
+  assertEquals(Object.keys(sent.session).sort(), ["instructions", "model", "tools"]);
+  assertEquals(sent.session.model, "gpt-live-1");
+  assertEquals(sent.session.tools, JSON.parse(JSON.stringify(DISCOVER_NAVIGATION_TOOLS)));
+  assert(sent.session.instructions.includes("HARMONY DISCOVER NAVIGATION"));
+  // blind unless reveal
+  const blind = await mintContender({ contender: "B", mode: "push_to_talk", reveal: false, sdp: OFFER }, env, stub(201, LIVE_OK));
+  assertFalse("model" in blind.body);
+  // no offer: refused before any call to OpenAI
+  const noOffer: { url: string; init: RequestInit }[] = [];
+  const r2 = await mintContender({ contender: "B", mode: "push_to_talk", reveal: false }, env, stub(201, LIVE_OK, noOffer));
+  assertEquals(r2, { status: 400, body: { error: "This contender needs a connection offer.", needsOffer: true } });
+  assertEquals(noOffer.length, 0);
+  // a reply without a usable answer is a failure, status code only
+  const bad = await mintContender({ contender: "B", mode: "push_to_talk", reveal: false, sdp: OFFER }, env, stub(201, { session: { id: "x" } }));
+  assertEquals(bad, { status: 502, body: { error: "This contender could not start.", status: 201 } });
   const direct = buildGptLiveSession("hello");
   assertEquals(direct.instructions, "hello");
-  for (const k of ["max_output_tokens", "speed", "turn_detection", "output_modalities"]) assertFalse(JSON.stringify(direct).includes(k));
+  for (const k of ["max_output_tokens", "speed", "turn_detection", "output_modalities", "client_secret", "expires_after"]) {
+    assertFalse(JSON.stringify(direct).includes(k));
+  }
+});
+
+Deno.test("voice A unchanged: still a one-time pass from client_secrets, offer ignored", async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const r = await mintContender({ contender: "A", mode: "push_to_talk", reveal: false, sdp: OFFER }, env, stub(200, OPENAI_OK, calls));
+  assertEquals(calls[0].url, OPENAI_CLIENT_SECRETS_URL);
+  assertEquals(r.body.ephemeralToken, "ek_test");
+  assertEquals(r.body.connectHint, "realtime");
+  assertFalse(JSON.stringify(calls[0].init.body).includes("v=0"));
 });
 
 Deno.test("gemini: body shape, token returned, not configured", async () => {
@@ -106,20 +150,20 @@ Deno.test("gemini: body shape, token returned, not configured", async () => {
 
 Deno.test("errors: status only, never provider body, key or token", async () => {
   for (const letter of ["A", "B", "C"] as const) {
-    const r = await mintContender({ contender: letter, mode: "push_to_talk", reveal: true }, env,
+    const r = await mintContender({ contender: letter, mode: "push_to_talk", reveal: true, sdp: OFFER }, env,
       stub(400, { error: { message: "SECRET-PROVIDER-BODY sk-secret gk-secret" } }));
     assertEquals(r.status, 502);
     assertEquals(r.body, { error: "This contender could not start.", status: 400 });
     assertFalse(JSON.stringify(r).includes("SECRET"));
   }
-  const thrown = await mintContender({ contender: "B", mode: "push_to_talk", reveal: false }, env,
+  const thrown = await mintContender({ contender: "B", mode: "push_to_talk", reveal: false, sdp: OFFER }, env,
     () => Promise.reject(new Error("boom sk-secret")));
   assertEquals(thrown, { status: 502, body: { error: "This contender could not start.", status: 0 } });
 });
 
 Deno.test("custom order moves the models", async () => {
-  const r = await mintContender({ contender: "A", mode: "push_to_talk", reveal: true },
-    { ...env, orderEnv: "gpt-live-1,gemini,current" }, stub(200, OPENAI_OK));
+  const r = await mintContender({ contender: "A", mode: "push_to_talk", reveal: true, sdp: OFFER },
+    { ...env, orderEnv: "gpt-live-1,gemini,current" }, stub(201, LIVE_OK));
   assertEquals(r.body.model, "gpt-live-1");
 });
 
@@ -133,8 +177,8 @@ Deno.test("every contender gets the character book and no look-up instructions o
   for (const letter of ["A", "B", "C"] as const) {
     for (const mode of ["push_to_talk", "hands_free"] as const) {
       const calls: { url: string; init: RequestInit }[] = [];
-      const payload = letter === "C" ? { name: "t" } : OPENAI_OK;
-      const r = await mintContender({ contender: letter, mode, reveal: false }, env, stub(200, payload, calls));
+      const payload = letter === "C" ? { name: "t" } : letter === "B" ? LIVE_OK : OPENAI_OK;
+      const r = await mintContender({ contender: letter, mode, reveal: false, sdp: OFFER }, env, stub(200, payload, calls));
       assertEquals(r.status, 200);
       const sent = JSON.parse(calls[0].init.body as string);
       const instructions: string = letter === "C"

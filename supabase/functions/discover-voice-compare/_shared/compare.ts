@@ -11,7 +11,7 @@ import {
 
 export { MARTY_BOSTON_CONSENT_VERSION, CURRENT_MODEL };
 
-export const MAX_REQUEST_BYTES = 1024;
+export const MAX_REQUEST_BYTES = 16384; // room for one WebRTC offer (voice B relay)
 export const RATE_LIMIT = 4;
 
 export type ModelKey = "current" | "gpt-live-1" | "gemini";
@@ -44,9 +44,9 @@ export function resolveContender(orderEnv: string | undefined | null, letter: st
 }
 
 // ---- request -----------------------------------------------------------------------------------
-const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal"]);
+const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp"]);
 export type CompareRequestResult =
-  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean }
+  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string }
   | { ok: false };
 export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
@@ -56,29 +56,42 @@ export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (typeof body.contender !== "string" || !LETTERS.includes(body.contender)) return { ok: false };
   if (body.mode !== "push_to_talk" && body.mode !== "hands_free") return { ok: false };
   if (body.reveal !== undefined && typeof body.reveal !== "boolean") return { ok: false };
-  return { ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true };
+  if (body.sdp !== undefined && !validSdp(body.sdp)) return { ok: false };
+  const out: CompareRequestResult = { ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true };
+  if (typeof body.sdp === "string") out.sdp = body.sdp;
+  return out;
 }
 
 // ---- contender payloads ------------------------------------------------------------------------
-// OpenAI client secret endpoint. Used by "current" (confirmed, today's flow) and "gpt-live-1" (UNCONFIRMED).
+// OpenAI client secret endpoint. Used by "current" only (confirmed, today's flow).
 export const OPENAI_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 
-// UNCONFIRMED (from OpenAI's model page only; guide pages could not be read): model id "gpt-live-1";
-// function calling supported; default voice "marin", fixed per session; turns are server-driven (no client
-// response.create or cancel); WebRTC recommended; WebSocket wss://api.openai.com/v1/live/sessions.
-// We therefore send only type, model, instructions, tools and the voice. Left out on purpose because it may not
-// accept them: max_output_tokens, speed, turn_detection, input transcription, noise reduction, output_modalities.
+// GPT-Live-1 does NOT hand out browser session passes (client secrets). Per OpenAI's GPT-Live WebRTC guide
+// (developers.openai.com/api/docs/guides/voice-webrtc?api=live) the server relays the connection: the app sends
+// its WebRTC offer (SDP) to us, we POST it with the server key to OpenAI's live sessions address as JSON
+// { session, transport: { type: "webrtc", sdp } }, and OpenAI answers (201) with JSON { session: { id },
+// transport: { sdp } }. We return only the SDP answer and the opaque session id; the key never leaves the server.
+// Confirmed from the guide: path /v1/live/sessions, JSON body with session + transport, answer in transport.sdp.
+// UNCONFIRMED (guide text only partly readable): host api.openai.com (same as the WebSocket address on the model
+// page), Bearer auth like every OpenAI API call, top-level function tools in the live session, no voice field
+// (the guide sets none, so the default voice is used). Each is one line here.
 export const GPT_LIVE_MODEL = "gpt-live-1";
-export const GPT_LIVE_VOICE = "marin";
-export const GPT_LIVE_CLIENT_SECRETS_URL = OPENAI_CLIENT_SECRETS_URL;
-export function buildGptLiveSession(instructions: string, voice: string = GPT_LIVE_VOICE) {
-  return {
-    type: "realtime",
-    model: GPT_LIVE_MODEL,
-    instructions,
-    tools: DISCOVER_NAVIGATION_TOOLS, // the 2 navigation tools only: no look-ups, so voices compare fairly
-    audio: { output: { voice } },
-  };
+export const GPT_LIVE_SESSIONS_URL = "https://api.openai.com/v1/live/sessions";
+export const GPT_LIVE_SEND_NAV_TOOLS = true;
+export function buildGptLiveSession(instructions: string) {
+  const session: Record<string, unknown> = { model: GPT_LIVE_MODEL, instructions };
+  // the 2 navigation tools only: no look-ups, so voices compare fairly
+  if (GPT_LIVE_SEND_NAV_TOOLS) session.tools = DISCOVER_NAVIGATION_TOOLS;
+  return session;
+}
+export function buildGptLiveRelayBody(instructions: string, sdpOffer: string) {
+  return { session: buildGptLiveSession(instructions), transport: { type: "webrtc", sdp: sdpOffer } };
+}
+// A WebRTC offer is plain text starting "v=0". Kept small so the relay cannot be used to push large bodies.
+export const MAX_SDP_BYTES = 12000;
+export function validSdp(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith("v=0") &&
+    new TextEncoder().encode(value).byteLength <= MAX_SDP_BYTES;
 }
 
 // UNCONFIRMED (ephemeral-tokens page could not be read): Gemini Live API, model "gemini-3.8-live",
@@ -138,7 +151,7 @@ const COULD_NOT_START = "This contender could not start.";
 
 // Never returns, logs or forwards a provider response body or key; only the status code.
 export async function mintContender(
-  req: { contender: Letter; mode: VoiceMode; reveal: boolean },
+  req: { contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string },
   env: MintEnv,
   fetchImpl: FetchLike = fetch,
   now: Date = new Date(),
@@ -171,12 +184,41 @@ export async function mintContender(
   }
 
   const built = buildCurrent(req.mode, env.voiceEnv, env.handsFreeEnv);
-  const isCurrent = which === "current";
-  const session = isCurrent ? built.session : buildGptLiveSession(built.session.instructions);
-  const url = isCurrent ? OPENAI_CLIENT_SECRETS_URL : GPT_LIVE_CLIENT_SECRETS_URL;
+
+  if (which === "gpt-live-1") {
+    // Server relay: the app must send its WebRTC offer; we forward it and return only the answer.
+    if (!req.sdp) return { status: 400, body: { error: "This contender needs a connection offer.", needsOffer: true } };
+    let res: Response;
+    try {
+      res = await fetchImpl(GPT_LIVE_SESSIONS_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.openAiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(buildGptLiveRelayBody(built.session.instructions, req.sdp)),
+      });
+    } catch {
+      return { status: 502, body: { error: COULD_NOT_START, status: 0 } };
+    }
+    if (!res.ok) return { status: 502, body: { error: COULD_NOT_START, status: res.status } };
+    let payload: { session?: { id?: unknown }; transport?: { sdp?: unknown } } = {};
+    try { payload = await res.json(); } catch { /* handled below */ }
+    const answer = payload?.transport?.sdp;
+    const sessionId = payload?.session?.id;
+    if (typeof answer !== "string" || !answer.startsWith("v=0")) {
+      return { status: 502, body: { error: COULD_NOT_START, status: res.status } };
+    }
+    const body: Record<string, unknown> = {
+      contender: req.contender, provider: "openai_live", transport: "webrtc_relay", sdpAnswer: answer,
+    };
+    if (typeof sessionId === "string" && sessionId) body.sessionId = sessionId;
+    if (req.reveal) body.model = GPT_LIVE_MODEL;
+    return { status: 200, body };
+  }
+
+  // "current": today's Marty, unchanged one-time pass flow.
+  const session = built.session;
   let res: Response;
   try {
-    res = await fetchImpl(url, {
+    res = await fetchImpl(OPENAI_CLIENT_SECRETS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.openAiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: 60 }, session }),
@@ -196,9 +238,9 @@ export async function mintContender(
     ephemeralToken: payload.value,
     expiresAt: new Date(Number(payload.expires_at) * 1000).toISOString(),
     transport: "webrtc",
-    connectHint: isCurrent ? "realtime" : "live",
-    voice: isCurrent ? built.voice : GPT_LIVE_VOICE,
+    connectHint: "realtime",
+    voice: built.voice,
   };
-  if (req.reveal) body.model = isCurrent ? CURRENT_MODEL : GPT_LIVE_MODEL;
+  if (req.reveal) body.model = CURRENT_MODEL;
   return { status: 200, body };
 }
