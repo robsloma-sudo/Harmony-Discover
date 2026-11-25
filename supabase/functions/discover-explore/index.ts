@@ -9,7 +9,9 @@
 //                   reserves ONE guest build, not one per poll. Decision logic: journey.ts.
 //   tap             record a tap (no AI)
 //   save_version / list_versions / delete_version   "my version" saved on the person's account
-//   push_counts     server-only weekly job (worker secret, not a user token): sends combined counts to PHG main
+//   push_counts     server-only weekly job (worker secret, not a user token): sends combined counts to PHG main.
+//                   v0.3.0: the secret is checked against the Discover dev vault (discover_check_explore_worker_secret),
+//                   not a program setting. dry_run:true = report what would be sent (sizes only), send nothing, mark nothing.
 // Guards: signed-in Discover user (anonymous guests included) except push_counts, exact-origin allow-list, DEV project only,
 // per-minute limits per person, daily guest limits for the AI-cost actions (menu_link, cocktail_change, journey_build).
 // Privacy: raw tap/change events are stored ONLY when the person has aggregate_research consent (learning_current_consent);
@@ -20,8 +22,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import type { ChangeType, CocktailChange, CountRow, ItemKind, LinkedLine, Recipe } from "./contract.ts";
 import { loadPhgConfig, menuLinesFromItems, phgChangeCocktail, phgGetRecipe, phgJourney, phgLinkLines, phgSendCounts } from "./phg.ts";
 import { runJourney } from "./journey.ts";
+import { dryRunSummary, WORKER_HEADER, workerAllowed } from "./worker.ts";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const MAX_BODY_BYTES = 100_000;
 const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
@@ -110,17 +113,6 @@ async function guestRefund(
   if (error) throw new Error("refund_failed");
 }
 
-function timingSafeEqual(a: string, b: string): Promise<boolean> {
-  // Compare SHA-256 digests byte by byte without early exit: length and content leak nothing.
-  const enc = new TextEncoder();
-  return Promise.all([crypto.subtle.digest("SHA-256", enc.encode(a)), crypto.subtle.digest("SHA-256", enc.encode(b))]).then(([x, y]) => {
-    const p = new Uint8Array(x), q = new Uint8Array(y);
-    let diff = 0;
-    for (let i = 0; i < p.length; i++) diff |= p[i] ^ q[i];
-    return diff === 0;
-  });
-}
-
 function phgFailure(e: unknown, origin: string | null) {
   const m = String((e as Error)?.message || "");
   if (m === "phg_timeout") return reply({ error: "phg_timeout", message: "That is taking longer than usual. Please try again." }, 504, origin);
@@ -151,10 +143,9 @@ Deno.serve(async (req: Request) => {
 
   // ---- push_counts: server-only. Worker secret (constant-time compare), never a user token. ----
   if (action === "push_counts") {
-    const secret = Deno.env.get("DISCOVER_EXPLORE_WORKER_SECRET") || "";
-    const given = req.headers.get("x-worker-secret") || "";
-    if (secret.length < 24 || !given || !(await timingSafeEqual(given, secret))) return reply({ error: "unauthorized" }, 401, origin);
-    return await pushCounts(db, origin);
+    const ok = await workerAllowed(req.headers.get(WORKER_HEADER), (fn, args) => db.rpc(fn, args));
+    if (!ok) return reply({ error: "unauthorized" }, 401, origin);
+    return await pushCounts(db, origin, body.dry_run === true);
   }
 
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -340,10 +331,11 @@ Deno.serve(async (req: Request) => {
 // Weekly job: finished weeks not yet sent -> combined rows (>= MIN_GUESTS distinct people) -> PHG main -> mark week sent.
 // A week is marked sent only after PHG accepted its rows; a failure leaves it for the next run.
 // deno-lint-ignore no-explicit-any
-async function pushCounts(db: any, origin: string | null) {
+async function pushCounts(db: any, origin: string | null, dryRun = false) {
   const weeksRes = await db.rpc("discover_explore_pending_weeks");
   if (weeksRes.error) return reply({ error: "weeks_unavailable" }, 503, origin);
   const weeks: string[] = (weeksRes.data || []).map((w: { week_start: string }) => w.week_start);
+  if (!weeks.length && dryRun) return reply(dryRunSummary([], [], MIN_GUESTS), 200, origin);
   if (!weeks.length) { const cleanup = await db.rpc("discover_explore_cleanup"); return reply({ ok: true, weeks: 0, sent: 0, cleanup: cleanup.data ?? null }, 200, origin); }
   const exp = await db.rpc("discover_explore_weekly_export", { p_min_guests: MIN_GUESTS });
   if (exp.error) return reply({ error: "export_unavailable" }, 503, origin);
@@ -351,6 +343,7 @@ async function pushCounts(db: any, origin: string | null) {
     venue_id: (r.venue_id as string | null) ?? null, week_start: String(r.week_start), item_kind: r.item_kind as ItemKind, item_ref: String(r.item_ref),
     event: r.event as CountRow["event"], change_type: (r.change_type as ChangeType | null) ?? null, count: Number(r.count), guests: Number(r.guests),
   })).filter((r: CountRow) => r.guests >= MIN_GUESTS); // second check on top of the database cut-off
+  if (dryRun) return reply(dryRunSummary(weeks, all, MIN_GUESTS), 200, origin);
   let cfg;
   try { cfg = await loadPhgConfig(db); } catch (e) { return phgFailure(e, origin); }
   let sentWeeks = 0, sentRows = 0;
