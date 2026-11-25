@@ -1,6 +1,7 @@
 /**
  * Proves the app's Marty fields match the Discover backend (PR #131, P-20261124-2352 part 1) by name.
  * The names below are copied from supabase/functions/discover-voice-session/README.md on #131.
+ * age_confirmed is added by P-20261125-2244 (part 2 teaches the server to require it).
  * Once #131 is on main, the second block also runs the backend's own cleaner over the app's output.
  */
 import { existsSync } from 'node:fs';
@@ -16,7 +17,7 @@ const BACKEND = {
   bottleKeys: ['name', 'brand', 'category', 'abvPercent'],
   journeyKeys: ['name', 'stepTitle'],
   recipeKeys: ['name', 'ingredients'],
-  requestKeys: ['consentVersion', 'mode', 'screenContext'],
+  requestKeys: ['consentVersion', 'mode', 'screenContext', 'age_confirmed'],
   grantKeys: ['sessionId', 'provider', 'ephemeralToken', 'expiresAt', 'transport', 'model', 'voice', 'mode'],
 };
 
@@ -40,7 +41,7 @@ describe('Marty app fields match the backend by name', () => {
     expect(SCREEN_CONTEXT_LIMITS.menuLines).toBe(25);
   });
 
-  it('session request sends only consentVersion, mode and screenContext', async () => {
+  it('session request sends only consentVersion, mode, screenContext and age_confirmed', async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = (async (_url: string, init: RequestInit) => {
       body = JSON.parse(String(init.body));
@@ -50,7 +51,7 @@ describe('Marty app fields match the backend by name', () => {
       }) };
     }) as unknown as typeof fetch;
     const result = await requestVoiceSession({
-      supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co', accessToken: 'a', consentVersion: 'v',
+      supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co', accessToken: 'a', consentVersion: 'v', ageConfirmed: true,
       screenContext: screenContextFromSources({ menu: { lines: [{ name: 'Last Word', price: '$16' }] } }), fetchImpl,
     });
     expect(Object.keys(body).sort()).toEqual([...BACKEND.requestKeys].sort());
@@ -65,7 +66,7 @@ describe('Marty app fields match the backend by name', () => {
     expect(v.ok && Object.keys(v.grant).sort()).toEqual([...BACKEND.grantKeys].sort());
     expect(validateVoiceSessionGrant({ ...grant, mode: 'always_on' }).ok).toBe(false);
     const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => grant })) as unknown as typeof fetch;
-    const r = await requestVoiceSession({ supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co', accessToken: 'a', consentVersion: 'v', fetchImpl });
+    const r = await requestVoiceSession({ supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co', accessToken: 'a', consentVersion: 'v', ageConfirmed: true, fetchImpl });
     expect(r.ok).toBe(false);
   });
 

@@ -6,6 +6,7 @@ import {
 } from '../src/marty/martyPresence';
 import { faceCaption, faceStateFor, microphoneLive, mouthOpenFromLevel, rmsFromBytes } from '../src/marty/faceState';
 import { MARTY_REQUESTED_MODE, martySessionConfig } from '../src/marty/martyVoiceConfig';
+import { _reloadMartyAgeFromStorage, setMartyAgeAnswer } from '../src/marty/martyAge';
 import { requestVoiceSession } from '../src/voice/voiceSessionClient';
 import { VoiceSessionCoordinator } from '../src/voice/voiceSessionCoordinator';
 import { TurnController, type RealtimeClientEvent, type TurnPhase } from '../src/voice/turnController';
@@ -27,6 +28,7 @@ function fakeFetch(granted: string) {
 class MemoryStorage { m = new Map<string, string>(); getItem(k: string) { return this.m.get(k) ?? null; } setItem(k: string, v: string) { this.m.set(k, v); } }
 
 describe('the Marty screen asks for always-on listening', () => {
+  beforeEach(() => { _reloadMartyAgeFromStorage(); setMartyAgeAnswer('yes'); });
   it('the screen config asks for mode "hands_free"', () => {
     expect(MARTY_REQUESTED_MODE).toBe('hands_free');
     expect(martySessionConfig({ supabaseUrl: URL, accessToken: 'a', screenContext: null }).mode).toBe('hands_free');
@@ -41,19 +43,19 @@ describe('the Marty screen asks for always-on listening', () => {
     expect(bodies).toHaveLength(1);
     expect(bodies[0].mode).toBe('hands_free');
     expect(bodies[0]).not.toHaveProperty('hands_free');
-    expect(Object.keys(bodies[0]).sort()).toEqual(['consentVersion', 'mode']);
+    expect(Object.keys(bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode']);
     expect(platform.connect).toHaveBeenCalledWith(expect.objectContaining({ mode: 'hands_free' }));
   });
 
   it('server stop switch: asked hands_free, granted push_to_talk -> still connects (hold-to-talk fallback)', async () => {
     const { fetchImpl } = fakeFetch('push_to_talk');
-    const r = await requestVoiceSession({ supabaseUrl: URL, accessToken: 'a', consentVersion: 'v', mode: 'hands_free', fetchImpl });
+    const r = await requestVoiceSession({ supabaseUrl: URL, accessToken: 'a', consentVersion: 'v', ageConfirmed: true, mode: 'hands_free', fetchImpl });
     expect(r.ok && r.grant.mode).toBe('push_to_talk');
   });
 
   it('never runs always-on listening the app did not ask for', async () => {
     const { bodies, fetchImpl } = fakeFetch('hands_free');
-    const r = await requestVoiceSession({ supabaseUrl: URL, accessToken: 'a', consentVersion: 'v', fetchImpl });
+    const r = await requestVoiceSession({ supabaseUrl: URL, accessToken: 'a', consentVersion: 'v', ageConfirmed: true, fetchImpl });
     expect(bodies[0].mode).toBe('push_to_talk');
     expect(r.ok).toBe(false);
   });
@@ -245,7 +247,7 @@ describe('Marty controls (CEO notes 25 Nov)', () => {
 describe('carried over from #142', () => {
   it('opening the face starts Marty by itself only once consent is given, once per opening', async () => {
     const { shouldAutoStart } = await import('../src/marty/martyControls');
-    const base = { open: true, web: true, loadingConsent: false, consent: true, connected: false, busy: false, alreadyTried: false };
+    const base = { open: true, web: true, ageConfirmed: true, loadingConsent: false, consent: true, connected: false, busy: false, alreadyTried: false };
     expect(shouldAutoStart(base)).toBe(true);
     expect(shouldAutoStart({ ...base, consent: false })).toBe(false);
     expect(shouldAutoStart({ ...base, loadingConsent: true })).toBe(false);
@@ -254,6 +256,7 @@ describe('carried over from #142', () => {
     expect(shouldAutoStart({ ...base, web: false })).toBe(false);
     expect(shouldAutoStart({ ...base, connected: true })).toBe(false);
     expect(shouldAutoStart({ ...base, busy: true })).toBe(false);
+    expect(shouldAutoStart({ ...base, ageConfirmed: false })).toBe(false); // 21+ first (P-20261125-2244)
   });
 
   it('a right-click or long press on a Marty button never opens the browser menu', async () => {

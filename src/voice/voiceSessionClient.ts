@@ -10,6 +10,11 @@ export interface VoiceSessionClientConfig {
   supabaseUrl: string;
   accessToken: string;
   consentVersion: string;
+  /**
+   * The guest confirmed on this device that they are 21 or older (P-20261125-2244). Must be true:
+   * the request is refused here, before any network call, without it, and the server checks it too.
+   */
+  ageConfirmed?: boolean;
   /** What is on screen when the session starts; goes into Marty's instructions. */
   screenContext?: ScreenContext | null;
   /**
@@ -35,6 +40,7 @@ export async function requestVoiceSession(
 ): Promise<VoiceSessionClientResult> {
   if (!config.accessToken.trim()) return { ok: false, message: 'Sign in before starting voice.' };
   if (!config.consentVersion.trim()) return { ok: false, message: 'Voice consent is required.' };
+  if (config.ageConfirmed !== true) return { ok: false, message: 'Marty is only for guests 21 or older.' };
 
   const baseUrl = config.supabaseUrl.replace(/\/+$/, '');
   if (baseUrl !== 'https://lqqmwqrffelgnbngrkep.supabase.co') {
@@ -45,6 +51,7 @@ export async function requestVoiceSession(
   const request: VoiceSessionRequest = {
     consentVersion: config.consentVersion,
     mode: requestedMode,
+    age_confirmed: true,
   };
   const screenContext = normalizeScreenContext(config.screenContext);
   if (screenContext) request.screenContext = screenContext;

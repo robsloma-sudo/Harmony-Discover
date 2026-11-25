@@ -19,7 +19,7 @@ describe('requestVoiceSession', () => {
     const result = await requestVoiceSession({
       supabaseUrl: testSupabaseUrl,
       accessToken: '',
-      consentVersion: 'voice-consent-v1',
+      consentVersion: 'voice-consent-v1', ageConfirmed: true,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result.ok).toBe(false);
@@ -35,7 +35,7 @@ describe('requestVoiceSession', () => {
     const result = await requestVoiceSession({
       supabaseUrl: testSupabaseUrl,
       accessToken: 'user-access-token',
-      consentVersion: 'voice-consent-v1',
+      consentVersion: 'voice-consent-v1', ageConfirmed: true,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result.ok).toBe(true);
@@ -50,7 +50,7 @@ describe('requestVoiceSession', () => {
     const result = await requestVoiceSession({
       supabaseUrl: 'https://example.com',
       accessToken: 'user-access-token',
-      consentVersion: 'voice-consent-v1',
+      consentVersion: 'voice-consent-v1', ageConfirmed: true,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result.ok).toBe(false);
