@@ -28,8 +28,11 @@ export function selectLabelBatchCandidates(
       !(candidate.bottle?.brand && candidate.bottle?.product && (candidate.bottle.confidence ?? 0) >= 0.85) &&
       now - (lastReadAt.get(candidate.trackId) ?? 0) >= retryAfterMs,
     )
+    // Least recently read first; among equals the biggest (nearest, most readable) label first, so the first
+    // green boxes come from the bottles most likely to read cleanly.
     .sort((a, b) =>
       (lastReadAt.get(a.trackId) ?? 0) - (lastReadAt.get(b.trackId) ?? 0) ||
+      b.width * b.height - a.width * a.height ||
       b.confidence - a.confidence,
     )
     .slice(0, limit);

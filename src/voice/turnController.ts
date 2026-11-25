@@ -9,6 +9,11 @@
  *  - pressing talk while Marty speaks cuts him off at once (barge-in),
  *  - interrupt stops the audio now, cancels the reply and trims what he "said" to what was heard,
  *  - a quick accidental tap does not commit an empty buffer (which errors and used to end the session).
+ *
+ * Hands-free (always listening, P-20261125-0216): the server hears when the guest starts and stops
+ * talking and starts Marty's reply itself (semantic VAD, create_response + interrupt_response).
+ * The controller then only follows those events: speech_started = guest talking (Marty is cut off
+ * at once, locally via onBargeIn), speech_stopped = thinking, audio = speaking, silence = listening.
  */
 
 export type RealtimeClientEvent = Record<string, unknown> & { type: string };
@@ -32,6 +37,10 @@ export interface TurnControllerOptions {
   minTalkMs?: number;
   onPhase?: (phase: TurnPhase) => void;
   onTiming?: (timing: TurnTiming) => void;
+  /** Always-on listening: follow the server's speech events instead of the talk button. */
+  handsFree?: boolean;
+  /** Hands-free only: the guest started talking over Marty; mute his audio now. */
+  onBargeIn?: () => void;
 }
 
 /** Realtime error codes that are harmless race results, not a broken session. */
@@ -72,6 +81,8 @@ export class TurnController {
   private pendingGapMs: number | null = null;
   private phaseNow: TurnPhase = 'idle';
   private interruptedItems = new Set<string>();
+  private readonly handsFree: boolean;
+  private readonly onBargeIn?: () => void;
 
   constructor(options: TurnControllerOptions) {
     this.send = options.send;
@@ -79,7 +90,11 @@ export class TurnController {
     this.minTalkMs = options.minTalkMs ?? 180;
     this.onPhase = options.onPhase;
     this.onTiming = options.onTiming;
+    this.handsFree = options.handsFree === true;
+    this.onBargeIn = options.onBargeIn;
   }
+
+  get isHandsFree(): boolean { return this.handsFree; }
 
   get phase(): TurnPhase { return this.phaseNow; }
   get isResponseActive(): boolean { return this.responseActive; }
@@ -93,7 +108,8 @@ export class TurnController {
 
   /** Talk button pressed. Returns true when the microphone should be opened now. */
   pressTalk(): boolean {
-    if (this.phaseNow === 'talking') return false;
+    // Hands-free has no talk button: the microphone is already open and the server hears the turn.
+    if (this.handsFree || this.phaseNow === 'talking') return false;
     const gap = this.lastAudioEndedAt != null && !this.audioPlaying ? this.now() - this.lastAudioEndedAt : null;
     if (this.audioPlaying || this.responseActive) this.stopMarty();
     // Drop any stray audio left in the input buffer so the new turn starts clean.
@@ -109,6 +125,7 @@ export class TurnController {
    * Returns 'sent' when a reply was requested, 'too_short' for an accidental tap.
    */
   releaseTalk(): 'sent' | 'too_short' | 'not_talking' {
+    if (this.handsFree) return 'not_talking';
     if (this.phaseNow !== 'talking' || this.talkStartedAt == null) return 'not_talking';
     const heldMs = this.now() - this.talkStartedAt;
     this.talkStartedAt = null;
@@ -180,6 +197,32 @@ export class TurnController {
   /** Feed every server event here. */
   handleServerEvent(event: RealtimeServerEvent): void {
     switch (event.type) {
+      case 'input_audio_buffer.speech_started': {
+        if (!this.handsFree) break;
+        // The server cancels the reply and clears its audio itself (interrupt_response); here we
+        // mark what was cut off, forget the reply and mute locally so he stops this instant.
+        if (this.audioPlaying || this.responseActive) {
+          const startedAt = this.now();
+          if (this.audioItemId) this.interruptedItems.add(this.audioItemId);
+          this.responseActive = false;
+          this.responseQueued = false;
+          this.audioPlaying = false;
+          this.audioItemId = null;
+          this.audioStartedAt = null;
+          this.lastAudioEndedAt = this.now();
+          this.onBargeIn?.();
+          this.onTiming?.({ releaseToFirstAudioMs: null, interruptToSilenceMs: this.now() - startedAt, gapBeforeTalkMs: null });
+        }
+        this.talkStartedAt = this.now();
+        this.setPhase('talking');
+        break;
+      }
+      case 'input_audio_buffer.speech_stopped':
+        if (!this.handsFree) break;
+        this.talkStartedAt = null;
+        this.releasedAt = this.now();
+        this.setPhase('thinking');
+        break;
       case 'response.created':
         this.responseActive = true;
         break;

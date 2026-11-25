@@ -6,6 +6,7 @@ import { getMockJourney } from '../src/services/mockJourneyApi';
 import { getJourneyTimed, GUEST_LIMIT_MESSAGE, pollJourney, type ExploreKind, type Journey as JourneyData, type JourneySource } from '../src/services/menuExplore';
 import { BigActionButton, BuildingStoryState, ExploreSheet, SectionEyebrow } from '../src/explore/ExploreKit';
 import { palette, space, type } from '../src/explore/exploreTheme';
+import { journeyView } from '../src/explore/journeyView';
 
 const KINDS: ExploreKind[] = ['cocktail', 'spirit', 'wine', 'beer', 'other'];
 const one = (v?: string | string[]) => (Array.isArray(v) ? v[0] : v);
@@ -46,13 +47,8 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
   }, [kind, refId, name, attempt]);
 
   const retry = useCallback(() => setAttempt(n => n + 1), []);
-  const status = journey?.status;
-  const building = !failed && (!journey || status === 'building');
-  const stillBuilding = !failed && status === 'still_building';
-  const ready = !failed && !!journey && (status === 'ready' || status === 'built');
-  const limited = !failed && status === 'limit';
-  const noStory = failed || status === 'failed';
-  const none = !failed && status === 'none';
+  const view = journeyView(journey, failed);
+  const ready = view.kind === 'ready';
   const openedLabel = kind === 'cocktail' ? 'COCKTAIL STORY' : `${kind.toUpperCase()} STORY`;
 
   return (
@@ -60,22 +56,23 @@ function RealJourney({ kind, refId, name }: { kind: ExploreKind; refId: string; 
       <Text style={styles.back} onPress={() => router.back()}>‹  Back</Text>
       <SectionEyebrow>{openedLabel}</SectionEyebrow>
       <Text style={{ ...type.hero, color: palette.ivory, marginTop: space.sm }}>{journey?.title || name}</Text>
-      {building && <BuildingStoryState style={{ marginTop: space.lg }} />}
-      {limited && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+      {view.kind === 'loading' && <BuildingStoryState style={{ marginTop: space.lg }} title="Opening this Journey…" sub="One moment." />}
+      {view.kind === 'building' && view.watching && <BuildingStoryState style={{ marginTop: space.lg }} title={view.title} sub={view.sub} />}
+      {view.kind === 'building' && !view.watching && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+        <Text style={{ ...type.value, color: palette.ivory }}>{view.title}</Text>
+        <Text style={{ ...type.body, color: palette.muted }}>{view.sub}</Text>
+      </ExploreSheet>}
+      {view.kind === 'limit' && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
         <Text style={{ ...type.value, color: palette.ivory }}>{journey?.message || GUEST_LIMIT_MESSAGE}</Text>
         <Text style={{ ...type.body, color: palette.muted }}>Signing in is free and lets you keep exploring.</Text>
         <BigActionButton primary icon="log-in-outline" label="Sign in" onPress={() => router.push('/sign-in' as never)} />
       </ExploreSheet>}
-      {stillBuilding && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
-        <Text style={{ ...type.value, color: palette.ivory }}>Still being written</Text>
-        <Text style={{ ...type.body, color: palette.muted }}>This story is taking a little longer. Check back soon.</Text>
+      {view.kind === 'still_building' && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+        <Text style={{ ...type.value, color: palette.ivory }}>{view.title}</Text>
+        <Text style={{ ...type.body, color: palette.muted }}>{view.sub}</Text>
         <BigActionButton icon="refresh" label="Check again" onPress={retry} />
       </ExploreSheet>}
-      {none && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
-        <Text style={{ ...type.value, color: palette.ivory }}>No story for this one yet.</Text>
-        <Text style={{ ...type.body, color: palette.muted }}>Nothing is wrong on your side. Check back a little later.</Text>
-      </ExploreSheet>}
-      {noStory && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
+      {view.kind === 'error' && <ExploreSheet style={{ marginTop: space.lg, gap: space.md }}>
         <Text style={{ ...type.value, color: palette.ivory }}>We could not load this story.</Text>
         <Text style={{ ...type.body, color: palette.muted }}>Check your connection and try again.</Text>
         <BigActionButton icon="refresh" label="Try again" onPress={retry} />

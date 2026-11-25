@@ -6,7 +6,8 @@
 //   RECOGNIZING  the label is being read; % grows with the time a read usually takes (~1-3 s)
 //   IDENTIFYING  a name was read and is being confirmed; % = how sure the name is
 //   RESEARCHING  a new bottle is being looked up on the web; % grows with the time research usually takes (~20-40 s)
-// While the cloud read is on its way, the phone's own quick guess may show instead: "2/4 PROBABLY JAMESON…".
+// While a bottle is not confirmed yet, a guess may show instead: "2/4 PROBABLY JAMESON…" (the phone's quick guess, or
+// the leading name from a partly hidden label's words). A guess is never saved.
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { LABEL, STAGE_STEP, TYPICAL_MS, stagePercent, type BoxStageName } from './boxStageProgress';
@@ -19,7 +20,7 @@ type Props = {
   since?: number;
   /** Shown on a found bottle. */
   name?: string;
-  /** The phone's instant guess ("Probably Jameson"), shown until the cloud read names the bottle. */
+  /** A guess ("Probably Jameson"), shown until the bottle is confirmed. */
   guess?: string;
   /** Box width in screen points (text shrinks to fit). */
   boxWidth: number;
