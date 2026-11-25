@@ -14,6 +14,7 @@ import { supabase } from '../services/supabase';
 import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voiceSessionCoordinator';
 import type { VoiceSessionGrant } from '../voice/sessionContract';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
+import { isMartyLookupTool, runMartyLookup } from '../voice/martyLookups';
 import { ensureMartySession, grantMartyVoiceConsent } from '../voice/martyGuest';
 import { TurnController, isFatalRealtimeError, type TurnPhase, type TurnTiming } from '../voice/turnController';
 import { buildScreenContextUpdateEvent, getScreenContext, screenContextKey, subscribeScreenContext, withCapturedAt } from '../voice/screenContext';
@@ -82,6 +83,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
   const sessionStartedResolveRef = useRef<(() => void) | null>(null);
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
   const transportClosingRef = useRef(false);
+  const accessTokenRef = useRef('');
   /** Bumped by every Stop; a start that began before the latest Stop never opens the mic. */
   const stopGenRef = useRef(0);
   const startGenRef = useRef(0);
@@ -238,6 +240,13 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
         if (data.type === 'conversation.item.input_audio_transcription.completed' && data.transcript) addLine('you', data.transcript);
         if (data.type === 'response.function_call_arguments.done' && typeof data.name === 'string' && typeof data.call_id === 'string') {
           void (async () => {
+            if (isMartyLookupTool(data.name)) {
+              // Look-ups run on the server; the answer goes back to Marty unchanged and is not shown as a line.
+              const output = await runMartyLookup({ supabaseUrl, accessToken: accessTokenRef.current, tool: data.name, rawArguments: typeof data.arguments === 'string' ? data.arguments : '{}' });
+              if (dc.readyState !== 'open' || turnRef.current !== turn) return;
+              turn.sendToolResult(data.call_id, output);
+              return;
+            }
             const result = await runMartyNavigationTool(data.name, data.arguments || '{}');
             if (dc.readyState !== 'open' || turnRef.current !== turn) return;
             addLine('system', result);
@@ -353,6 +362,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     if (!accessToken || busy || coordinatorRef.current || !(consent || override?.consentGiven)) return;
     if (!getMartyPresence().enabled) return;
     if (Platform.OS !== 'web') { setError('Marty’s voice in the phone app still needs testing on a real iPhone. Use the web preview for now.'); return; }
+    accessTokenRef.current = accessToken;
     setBusy(true); setError(''); setNotice('');
     const gen = stopGenRef.current;
     startGenRef.current = gen;
