@@ -9,11 +9,15 @@ import { MartyFace } from './MartyFace';
 import { closeMartyFace, getMartyPresence, martyButtonVisible, openMarty, subscribeMartyPresence, turnMartyOff, type MartyPresence } from './martyPresence';
 import { faceCaption, faceStateFor, microphoneLive } from './faceState';
 import { useMartyVoice } from './useMartyVoice';
+import { NO_SELECT_WEB, SELECT_TEXT_WEB, showHoldToTalk, showStopButton } from './martyControls';
 import { martyAccountNote } from '../voice/martyGuest';
 import { useAuth } from '../auth/AuthContext';
 
 const C = { panel: 'rgba(10,13,18,0.97)', line: 'rgba(198,163,106,0.55)', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0', live: '#FF5A4E' };
 const native = Platform.OS !== 'web';
+// Long press must never select button text (web); typed text stays selectable.
+const noSelect = (native ? {} : NO_SELECT_WEB) as object;
+const textOk = (native ? {} : SELECT_TEXT_WEB) as object;
 
 export function useMartyPresence(): MartyPresence {
   const [p, setP] = useState(getMartyPresence());
@@ -52,7 +56,7 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
   if (hidden) {
     // Still listening while something else is on screen: always show it.
     return micOn ? (
-      <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 90 }]}>
+      <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 90 }, noSelect]}>
         <Pressable testID="marty-listening-pill" accessibilityRole="button" accessibilityLabel="Marty is listening. Turn Marty off" onPress={turnMartyOff} style={s.pill}>
           <View style={s.dot} /><Text style={s.fabBadgeText}>MARTY LISTENING · TAP TO TURN OFF</Text>
         </Pressable>
@@ -61,7 +65,7 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
   }
 
   return (
-    <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 65 }]}>
+    <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 65 }, noSelect]}>
       {martyButtonVisible(presence, hidden) && (
         <Pressable
           testID="marty-button"
@@ -113,13 +117,23 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
             <Pressable testID="marty-start" style={[s.primary, voice.busy && s.disabled]} disabled={voice.busy} onPress={() => void voice.startSession()}><Text style={s.primaryText}>{voice.busy ? 'CONNECTING…' : 'TALK TO MARTY'}</Text></Pressable>
           ) : (
             <View style={s.block}>
-              {!voice.handsFree && <Pressable style={s.talk} onPressIn={voice.beginTalk} onPressOut={voice.endTalk}><Text style={s.talkText}>HOLD TO TALK</Text></Pressable>}
+              {showHoldToTalk(voice) && <Pressable testID="marty-hold-to-talk" style={[s.talk, noSelect]} onPressIn={voice.beginTalk} onPressOut={voice.endTalk}><Text selectable={false} style={s.talkText}>HOLD TO TALK</Text></Pressable>}
               <View style={s.row}>
-                <TextInput value={draft} onChangeText={setDraft} placeholder="Or type to Marty…" placeholderTextColor="#707985" style={s.input} onSubmitEditing={() => { voice.sendText(draft); setDraft(''); }} />
+                <TextInput value={draft} onChangeText={setDraft} placeholder="Or type to Marty…" placeholderTextColor="#707985" style={[s.input, textOk]} onSubmitEditing={() => { voice.sendText(draft); setDraft(''); }} />
                 <Pressable style={s.secondary} onPress={() => { voice.sendText(draft); setDraft(''); }}><Text style={s.secondaryText}>SEND</Text></Pressable>
               </View>
-              <Pressable testID="marty-stop" style={s.secondary} onPress={() => void voice.stop()}><Text style={s.secondaryText}>STOP LISTENING</Text></Pressable>
             </View>
+          )}
+          {showStopButton(voice) && (
+            <Pressable
+              testID="marty-stop"
+              accessibilityRole="button"
+              accessibilityLabel="Stop Marty. The microphone goes off and the conversation ends"
+              style={[s.stop, noSelect]}
+              onPress={() => void voice.stop()}
+            >
+              <Text selectable={false} style={s.stopText}>■ STOP · MICROPHONE OFF</Text>
+            </Pressable>
           )}
           {!!voice.notice && <Text style={s.small}>{voice.notice}</Text>}
           {!!voice.error && <Text style={s.error}>{voice.error}</Text>}
@@ -162,6 +176,8 @@ const s = StyleSheet.create({
   talkText: { color: '#111', fontSize: 13, fontWeight: '900', letterSpacing: 1.4 },
   row: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   input: { flex: 1, backgroundColor: '#0D1117', borderColor: '#303741', borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 9, color: C.text, fontSize: 12 },
+  stop: { backgroundColor: 'rgba(255,90,78,0.14)', borderWidth: 1, borderColor: C.live, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  stopText: { color: C.text, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
   secondary: { borderWidth: 1, borderColor: C.gold, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 9, alignItems: 'center' },
   secondaryText: { color: C.gold, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   error: { color: '#E3A29A', fontSize: 11, lineHeight: 16, textAlign: 'center' },

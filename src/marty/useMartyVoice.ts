@@ -82,6 +82,9 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
   const sessionStartedResolveRef = useRef<(() => void) | null>(null);
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
   const transportClosingRef = useRef(false);
+  /** Bumped by every Stop; a start that began before the latest Stop never opens the mic. */
+  const stopGenRef = useRef(0);
+  const startGenRef = useRef(0);
   const onNavigateRef = useRef(onNavigateCommand);
   onNavigateRef.current = onNavigateCommand;
 
@@ -122,6 +125,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
 
   /** Ends the session now. Safe to call any time; the mic goes off before the first await. */
   const stop = useCallback(async () => {
+    stopGenRef.current += 1;
     micOffNow();
     const coordinator = coordinatorRef.current;
     coordinatorRef.current = null;
@@ -307,6 +311,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     };
     // Last check: if Marty was switched off while connecting, never open the microphone.
     if (!getMartyPresence().enabled) throw new Error('Marty was turned off.');
+    if (startGenRef.current !== stopGenRef.current) throw new Error('Marty was stopped.');
     setHandsFree(alwaysOn);
     setConnected(true);
     if (alwaysOn) {
@@ -349,11 +354,15 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     if (!getMartyPresence().enabled) return;
     if (Platform.OS !== 'web') { setError('Marty’s voice in the phone app still needs testing on a real iPhone. Use the web preview for now.'); return; }
     setBusy(true); setError(''); setNotice('');
+    const gen = stopGenRef.current;
+    startGenRef.current = gen;
     const adapter: VoicePlatformAdapter = {
       requestMicrophonePermission: async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
           stream.getTracks().forEach(track => { track.enabled = false; });
+          // Stop was pressed while the browser was asking: close the mic straight away.
+          if (gen !== stopGenRef.current || !getMartyPresence().enabled) { stream.getTracks().forEach(track => track.stop()); return 'denied'; }
           streamRef.current = stream;
           return 'granted';
         } catch { return 'denied'; }
@@ -373,12 +382,12 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
       if (result.voice.state !== 'listening' && coordinatorRef.current === coordinator) {
         coordinatorRef.current = null;
         await adapter.close().catch(() => undefined);
-        setError(result.error ?? 'Could not start Marty’s voice.');
+        if (gen === stopGenRef.current) setError(result.error ?? 'Could not start Marty’s voice.');
       }
     } catch {
       if (coordinatorRef.current === coordinator) coordinatorRef.current = null;
       await adapter.close().catch(() => undefined);
-      setError('Could not start Marty. Try again.');
+      if (gen === stopGenRef.current) setError('Could not start Marty. Try again.');
     } finally { setBusy(false); }
   }
 
@@ -386,6 +395,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
   async function enableVoice() {
     if (busy) return;
     setBusy(true); setError('');
+    const gen = stopGenRef.current;
     let token = '';
     try {
       const active = await ensureMartySession();
@@ -396,6 +406,8 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
       setError(e instanceof Error ? e.message : 'Could not get Marty ready. Please try again.');
       return;
     } finally { setBusy(false); }
+    // Stop pressed while getting ready: do not go on to the microphone.
+    if (gen !== stopGenRef.current) return;
     await startSession({ accessToken: token, consentGiven: true });
   }
 

@@ -211,3 +211,33 @@ describe('always-on turn taking', () => {
     expect(phases).toEqual([]);
   });
 });
+
+describe('Marty controls (CEO notes 25 Nov)', () => {
+  it('one Stop shows while connected and while still connecting, never when idle', async () => {
+    const { showStopButton } = await import('../src/marty/martyControls');
+    expect(showStopButton({ connected: true, busy: false })).toBe(true);
+    expect(showStopButton({ connected: false, busy: true })).toBe(true);
+    expect(showStopButton({ connected: false, busy: false })).toBe(false);
+  });
+  it('hold-to-talk is only the hidden fallback (push_to_talk granted)', async () => {
+    const { showHoldToTalk } = await import('../src/marty/martyControls');
+    expect(showHoldToTalk({ connected: true, handsFree: true })).toBe(false);
+    expect(showHoldToTalk({ connected: true, handsFree: false })).toBe(true);
+    expect(showHoldToTalk({ connected: false, handsFree: false })).toBe(false);
+  });
+  it('a long press never selects button text on the web, typed text stays selectable', async () => {
+    const { NO_SELECT_WEB, SELECT_TEXT_WEB } = await import('../src/marty/martyControls');
+    expect(NO_SELECT_WEB.userSelect).toBe('none');
+    expect(NO_SELECT_WEB.WebkitUserSelect).toBe('none');
+    expect(NO_SELECT_WEB.WebkitTouchCallout).toBe('none');
+    expect(SELECT_TEXT_WEB.userSelect).toBe('text');
+  });
+  it('Stop bumps the stop counter before anything async, so a start still in flight never opens the mic', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(process.cwd(), 'src/marty/useMartyVoice.ts'), 'utf8');
+    expect(src).toMatch(/const stop = useCallback\(async \(\) => \{\n\s+stopGenRef\.current \+= 1;\n\s+micOffNow\(\);/);
+    expect(src).toContain("if (startGenRef.current !== stopGenRef.current) throw new Error('Marty was stopped.');");
+    expect(src).toContain("if (gen !== stopGenRef.current || !getMartyPresence().enabled) { stream.getTracks().forEach(track => track.stop()); return 'denied'; }");
+  });
+});
