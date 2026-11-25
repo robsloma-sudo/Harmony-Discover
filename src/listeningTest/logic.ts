@@ -65,6 +65,11 @@ export function failureMessage(letter: Letter, status?: number): string {
   return status ? `${letter} could not start (provider said ${status})` : `${letter} could not start.`;
 }
 
+/** Shown when a contender's connection still needs a server change (GPT-Live relay). Neutral: names no model. */
+export function notWiredMessage(letter: Letter): string {
+  return `${letter} needs a server change before it can connect.`;
+}
+
 export const TOOL_UNAVAILABLE_OUTPUT = '{"status":"unavailable","note":"listening test"}';
 
 export type ConnectHint = 'realtime' | 'live';
@@ -125,6 +130,18 @@ export function geminiAudioMessage(pcm16: Uint8Array): string {
 }
 
 /** Pulls audio chunks (base64) and flags out of one Gemini server message. */
+/**
+ * Gemini's model id, mirrored from the server's GEMINI_MODEL (discover-voice-compare). Google's reference marks
+ * setup.model as required in the first message, so we send it rather than an empty setup. The token's constraints
+ * still decide the rest of the setup.
+ */
+export const GEMINI_LIVE_MODEL = 'models/gemini-3.8-live';
+
+/** The first (and only first) client message on a Gemini Live socket. */
+export function geminiSetupMessage(model: string = GEMINI_LIVE_MODEL): string {
+  return JSON.stringify({ setup: { model } });
+}
+
 export function parseGeminiMessage(data: unknown): { setupComplete: boolean; interrupted: boolean; audio: string[]; text: string[]; toolCalls: { id: string; name: string }[] } {
   const r = { setupComplete: false, interrupted: false, audio: [] as string[], text: [] as string[], toolCalls: [] as { id: string; name: string }[] };
   if (!data || typeof data !== 'object') return r;

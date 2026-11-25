@@ -86,3 +86,22 @@ describe('PCM16 and Gemini helpers', () => {
     expect(parseGeminiMessage(null).audio).toEqual([]);
   });
 });
+
+describe('provider connection details (checked Nov 25)', () => {
+  it('Gemini first message carries the model, as Google marks it required', async () => {
+    const { geminiSetupMessage, GEMINI_LIVE_MODEL } = await import('../src/listeningTest/logic');
+    expect(JSON.parse(geminiSetupMessage())).toEqual({ setup: { model: GEMINI_LIVE_MODEL } });
+    expect(GEMINI_LIVE_MODEL.startsWith('models/')).toBe(true);
+  });
+  it('a not-yet-wired contender gets a neutral message that names no model', async () => {
+    const { notWiredMessage } = await import('../src/listeningTest/logic');
+    expect(notWiredMessage('B')).toBe('B needs a server change before it can connect.');
+    expect(notWiredMessage('B')).not.toMatch(/gpt|openai|live|gemini/i);
+  });
+  it('Gemini uses the constrained ephemeral-token socket with access_token', async () => {
+    const src = await import('node:fs').then(fs => fs.readFileSync('src/listeningTest/transports.ts', 'utf8'));
+    expect(src).toContain('GenerativeService.BidiGenerateContentConstrained');
+    expect(src).toContain('?access_token=');
+    expect(src).not.toContain('/v1/live/calls');
+  });
+});

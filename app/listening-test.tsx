@@ -6,7 +6,7 @@ import { probeListeningTest, requestCompareSession } from '../src/voice/voiceCom
 import type { CompareLetter } from '../src/voice/voiceCompareClient';
 import { connectGemini, connectWebrtc, type TransportHandle } from '../src/listeningTest/transports';
 import {
-  LETTERS, TEST_LINES, failureMessage, loadScores, revealEnabled, saveScores,
+  LETTERS, TEST_LINES, failureMessage, loadScores, notWiredMessage, revealEnabled, saveScores,
   type Letter, type LetterState, type Score, type Scores,
 } from '../src/listeningTest/logic';
 
@@ -69,6 +69,13 @@ export default function ListeningTest() {
     if (attempt !== attemptRef.current) return;
     if (!result.ok) { activeRef.current = null; fail(letter, result.status); return; }
     const grant = result.grant;
+    if (grant.provider === 'openai_realtime' && grant.connectHint !== 'realtime') {
+      // GPT-Live has no browser keys; it needs the server to relay the connection first (see transports.ts).
+      activeRef.current = null;
+      setStates(s => ({ ...s, [letter]: 'failed' }));
+      setMessages(m => ({ ...m, [letter]: notWiredMessage(letter) }));
+      return;
+    }
     const hooks = { onClosed: () => { if (attempt === attemptRef.current) { handleRef.current = null; activeRef.current = null; setStates(s => ({ ...s, [letter]: 'idle' })); setMessages(m => ({ ...m, [letter]: 'Connection ended.' })); } } };
     try {
       const handle = grant.provider === 'gemini_live'

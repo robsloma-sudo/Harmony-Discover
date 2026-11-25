@@ -2,12 +2,26 @@
  * Browser transports for the listening test (web only). Self-contained: no app imports except pure logic.
  * Each connect() returns a handle; stop() turns the microphone off first, then closes everything.
  */
-import { base64ToBytes, floatToPcm16, functionCallAnswerEvents, geminiAudioMessage, geminiToolResponse, parseGeminiMessage, pcm16ToFloat, resample, type ConnectHint } from './logic';
+import { base64ToBytes, floatToPcm16, functionCallAnswerEvents, geminiAudioMessage, geminiSetupMessage, geminiToolResponse, parseGeminiMessage, pcm16ToFloat, resample, type ConnectHint } from './logic';
 
 export const REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
-/** UNCONFIRMED: the live-calls docs could not be read. Change here only. */
-export const GPT_LIVE_CALLS_URL = 'https://api.openai.com/v1/live/calls';
-/** UNCONFIRMED: Gemini constrained-token WebSocket endpoint. Change here only. */
+/*
+ * GPT-Live (checked Nov 25 against OpenAI's WebRTC guide, Microsoft's GPT-Live WebRTC guide and a GPT-Live tutorial):
+ * GPT-Live issues NO ephemeral client keys, so a browser cannot connect to OpenAI by itself. The browser must send its
+ * SDP offer to our own server, which calls POST https://api.openai.com/v1/live/sessions with
+ * { session: { model, instructions, ... }, transport: { type: 'webrtc', sdp } } and returns transport.sdp as the answer.
+ * Data channel 'oai-events'; do not send session.start; wait for session.started. Until the server relays the offer,
+ * connectWebrtc refuses hint 'live' before touching the microphone.
+ */
+export class LiveNotWiredError extends Error {
+  constructor() { super('GPT-Live needs the server to relay the connection.'); this.name = 'LiveNotWiredError'; }
+}
+/*
+ * Gemini Live with an ephemeral token (checked Nov 25 against Google's Live API reference): token in the access_token
+ * query parameter; method BidiGenerateContentConstrained. Google's reference shows v1beta only for the plain
+ * BidiGenerateContent method and names no version for the constrained one; v1alpha is what Google's issue tracker
+ * and forum report as working with ephemeral tokens, matching the v1alpha token mint. Still UNCONFIRMED by an official page.
+ */
 export const GEMINI_LIVE_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained';
 
 const ICE_GRACE_MS = 1500;
@@ -26,6 +40,7 @@ function stopStream(stream: MediaStream | null) {
 
 export async function connectWebrtc(opts: { token: string; hint: ConnectHint; hooks: TransportHooks }): Promise<TransportHandle> {
   const { token, hint, hooks } = opts;
+  if (hint !== 'realtime') throw new LiveNotWiredError();
   const stream = await getMic();
   const pc = new RTCPeerConnection();
   const audio = new Audio(); audio.autoplay = true;
@@ -64,7 +79,7 @@ export async function connectWebrtc(opts: { token: string; hint: ConnectHint; ho
       };
       pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') finish(); };
     });
-    const response = await fetch(hint === 'live' ? GPT_LIVE_CALLS_URL : REALTIME_CALLS_URL, {
+    const response = await fetch(REALTIME_CALLS_URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/sdp' },
       body: pc.localDescription?.sdp,
@@ -122,7 +137,7 @@ export async function connectGemini(opts: { token: string; hooks: TransportHooks
     ws = socket;
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error('Connection timed out.')), STEP_TIMEOUT_MS);
-      socket.onopen = () => socket.send(JSON.stringify({ setup: {} }));
+      socket.onopen = () => socket.send(geminiSetupMessage());
       socket.onerror = () => { window.clearTimeout(timeout); reject(new Error('Connection failed.')); };
       socket.onclose = () => { window.clearTimeout(timeout); if (!closed) reject(new Error('Connection closed.')); };
       socket.onmessage = async ev => {
