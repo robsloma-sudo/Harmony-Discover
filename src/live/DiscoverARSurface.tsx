@@ -37,6 +37,7 @@ import { getObjectFitCoverCrop } from './cameraCoverCrop';
 import { decodeEanFromCanvas } from './browserBarcodeDecoder';
 import { assessLiquidInterface, type LiquidLineObservation } from '../services/liquidInterface';
 import { LiquidAnalysisQueue } from '../services/liquidAnalysisQueue';
+import { carryLiquidState, screenLiquidObservation, statusFromConsensus, type LiquidReadStatus } from '../services/liquidReadStatus';
 import { LiquidTrackGuard } from './liquidTrackGuard';
 import { estimateCalibratedBottleVolume } from '../services/bottleVolumeCalibration';
 import { getBottleCalibrationKey, getCachedBottleVolumeProfile, loadBottleVolumeProfiles } from '../services/bottleVolumeProfileStore';
@@ -81,7 +82,7 @@ type NativeProps = ViewProps & {
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
-  onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
+  onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } }; liquidStatus?: LiquidReadStatus }> } }) => void;
   onDepthEstimate?: (event: { nativeEvent: ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
@@ -589,7 +590,7 @@ function WebLiveCamera(props: NativeProps) {
     // attached between recognition passes instead of resetting by array index.
     type WebTrack = { id: number; x: number; y: number; width: number; height: number; confidence: number; lastSeenAt: number; timestamp: number; misses: number; hits: number; contour?: Array<{ x: number; y: number }>; bottle: BottleRead };
     let webTracks: WebTrack[] = [];
-    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; source: 'local'; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> = [];
+    let latestLocalCandidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; source: 'local'; contour?: Array<{ x: number; y: number }>; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } }; liquidStatus?: LiquidReadStatus }> = [];
     // Positions of every device-followed track (cloud ids > 0, local ids < 0),
     // used to move late cloud results into the current view.
     const trackPositionsNow = (): TrackPosition[] => [
@@ -732,7 +733,8 @@ function WebLiveCamera(props: NativeProps) {
           x: local.bounds.x, y: local.bounds.y,
           width: local.bounds.width, height: local.bounds.height,
           confidence: local.confidence, timestamp, source: 'local' as const, contour: local.contour,
-          liquidLevel: previous.get(trackId)?.liquidLevel,
+          // A reading is carried only while fresh and while the box is not cut off at the frame edge.
+          ...carryLiquidState(previous.get(trackId), { x: local.bounds.x, y: local.bounds.y, width: local.bounds.width, height: local.bounds.height }, timestamp),
         };
       });
     };
@@ -892,6 +894,7 @@ function WebLiveCamera(props: NativeProps) {
           Math.round(candidate.width * 2000), Math.round(candidate.height * 2000),
           bottle ? (bottle.match?.id || bottle.brand + '|' + bottle.product + '|' + bottle.state) : '',
           liquid ? liquid.heightPercent : '',
+          (candidate as { liquidStatus?: LiquidReadStatus }).liquidStatus && (candidate as { liquidStatus?: LiquidReadStatus }).liquidStatus!.state === 'unreadable' ? ((candidate as { liquidStatus?: { reason?: string } }).liquidStatus!.reason ?? '') : '',
         ].join(',');
       }).join(';');
       if (signature === lastPublishedSignature) return;
@@ -1015,14 +1018,23 @@ function WebLiveCamera(props: NativeProps) {
         const current = latestLocalCandidates.find(candidate => candidate.trackId === item.trackId);
         if (!current) continue; // Track disappeared while the worker was busy.
         if (!liquidGuard.accepts(timestamp, item.trackId)) continue; // Track changed while the worker was busy.
-        if (item.optical.status !== 'observable' || item.optical.score < 0.55) {
-          liquidHistoryByTrack.delete(item.trackId);
-          continue;
-        }
-        if (item.result.status !== 'candidate' || item.result.confidence < 0.7 || item.result.boundaryShape === 'irregular') continue;
         const labelRead = labelReadsByTrack.get(item.trackId);
         const readKey = labelRead ? identityKey(labelRead) : null;
         const calibrationKey = getBottleCalibrationKey(labelRead?.match, labelRead?.state ?? 'unsure', labelRead?.size, readKey ? resolvedByKey.get(readKey) : undefined);
+        const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? bottleVolumeProfiles[calibrationKey]) : undefined;
+        const rejected = screenLiquidObservation({
+          box: current, optical: item.optical, result: item.result,
+          hadOcclusion: item.occlusionBands.length > 0, hasMeasuredRecord: !!profile, at: timestamp,
+        });
+        if (rejected) {
+          // Unreadable now: forget the history AND clear the old reading so no stale % stays on screen.
+          liquidHistoryByTrack.delete(item.trackId);
+          changed = true; // publishVisibleCandidates skips identical updates.
+          current.liquidLevel = undefined;
+          current.liquidStatus = rejected;
+          continue;
+        }
+        if (item.result.status !== 'candidate') continue;
         const previous = liquidHistoryByTrack.get(item.trackId);
         // A new or changed identity starts a fresh fill reading: never mix bottles.
         const history = previous && timestamp - previous.updatedAt <= 2200 && previous.calibrationKey === calibrationKey ? previous.observations : [];
@@ -1034,8 +1046,13 @@ function WebLiveCamera(props: NativeProps) {
         }].slice(-5);
         liquidHistoryByTrack.set(item.trackId, { observations, updatedAt: timestamp, calibrationKey });
         const consensus = assessLiquidInterface(observations);
+        current.liquidStatus = statusFromConsensus(consensus, timestamp);
+        if (consensus.status !== 'visible') {
+          // Not a steady, clear line yet: drop any old reading instead of leaving it up.
+          if (current.liquidLevel) current.liquidLevel = undefined;
+          changed = true;
+        }
         if (consensus.status === 'visible') {
-          const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? bottleVolumeProfiles[calibrationKey]) : undefined;
           const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
           current.liquidLevel = {
             heightPercent: Math.round(consensus.normalizedHeight * 100),
@@ -1467,7 +1484,7 @@ function WebLiveCamera(props: NativeProps) {
           liquidGuard.bump(id);
           liquidHistoryByTrack.delete(id);
           const shown = latestLocalCandidates.find(candidate => candidate.trackId === id);
-          if (shown) shown.liquidLevel = undefined;
+          if (shown) { shown.liquidLevel = undefined; shown.liquidStatus = undefined; }
         }
         for (const local of localTracks) {
           if ((lastHitsByLocalTrack.get(local.trackId) ?? 0) < local.hits) evidence.observeDetection(-Math.abs(local.trackId), local.confidence);
@@ -1978,6 +1995,7 @@ type NativeCandidate = {
   trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
   source?: 'cloud' | 'local';
   liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
+  liquidStatus?: LiquidReadStatus;
 };
 
 export function DiscoverARSurface(props: NativeProps) {
@@ -2115,8 +2133,23 @@ export function DiscoverARSurface(props: NativeProps) {
             let changed = false;
             for (const item of analyses) {
               const current = candidates.find(candidate => candidate.trackId === item.trackId);
-              if (!current || item.opticalScore < 0.55 || item.confidence < 0.7 || item.boundaryShape === 'irregular') {
+              if (!current) { nativeLiquidHistory.current.delete(item.trackId); continue; }
+              const calibrationKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size, current.bottle.resolved);
+              const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? nativeVolumeProfiles.current[calibrationKey]) : undefined;
+              const rejected = screenLiquidObservation({
+                box: current,
+                optical: { score: item.opticalScore },
+                result: item.confidence >= 0 && Number.isFinite(item.normalizedHeight)
+                  ? { status: 'candidate', normalizedHeight: item.normalizedHeight, confidence: item.confidence, boundaryShape: item.boundaryShape }
+                  : { status: 'insufficient_evidence' },
+                hasMeasuredRecord: !!profile, at: Date.now(),
+              });
+              if (rejected) {
+                // Unreadable now: forget the history and clear any old reading on this bottle.
                 nativeLiquidHistory.current.delete(item.trackId);
+                current.liquidLevel = undefined;
+                current.liquidStatus = rejected;
+                changed = true;
                 continue;
               }
               const previous = nativeLiquidHistory.current.get(item.trackId);
@@ -2128,9 +2161,9 @@ export function DiscoverARSurface(props: NativeProps) {
               }].slice(-5);
               nativeLiquidHistory.current.set(item.trackId, { observations, updatedAt: frame.timestamp });
               const consensus = assessLiquidInterface(observations);
+              current.liquidStatus = statusFromConsensus(consensus, Date.now());
+              if (consensus.status !== 'visible') { current.liquidLevel = undefined; changed = true; }
               if (consensus.status === 'visible') {
-                const calibrationKey = getBottleCalibrationKey(current.bottle.match, current.bottle.state, current.bottle.size, current.bottle.resolved);
-                const profile = calibrationKey ? (getCachedBottleVolumeProfile(calibrationKey) ?? nativeVolumeProfiles.current[calibrationKey]) : undefined;
                 const calibrated = estimateCalibratedBottleVolume(consensus.normalizedHeight, profile);
                 current.liquidLevel = {
                   heightPercent: Math.round(consensus.normalizedHeight * 100),
@@ -2142,6 +2175,16 @@ export function DiscoverARSurface(props: NativeProps) {
                 };
                 changed = true;
               }
+            }
+            // A bottle we asked about that came back with nothing (box too small, bad crop) is unreadable, not blank.
+            for (const sent of tracked.slice(0, 4)) {
+              if (analyses.some(item => item.trackId === sent.trackId)) continue;
+              const current = candidates.find(candidate => candidate.trackId === sent.trackId);
+              if (!current) continue;
+              nativeLiquidHistory.current.delete(sent.trackId);
+              current.liquidLevel = undefined;
+              current.liquidStatus = screenLiquidObservation({ box: current, optical: { status: 'observable', score: 1 }, result: { status: 'insufficient_evidence' }, hasMeasuredRecord: false, at: Date.now() }) ?? undefined;
+              changed = true;
             }
             for (const [trackId, history] of nativeLiquidHistory.current) {
               if (frame.timestamp - history.updatedAt > 7) nativeLiquidHistory.current.delete(trackId);
