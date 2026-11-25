@@ -33,7 +33,18 @@ type Track = {
   leftView: boolean;
   /** When a remembered bottle came back into view; cleared when it leaves again. */
   returnedAt?: number;
+  /**
+   * Lost in view (Rob, 17 Nov 2026): the detector stopped seeing a bottle it had followed a while (a hand, glare,
+   * a missed pass). It is not drawn, but it keeps its ID so the next detection there re-finds it with its name,
+   * instead of becoming a new bottle that is read and saved again.
+   */
+  lost?: boolean;
 };
+
+/** A bottle followed for this many detector passes is parked when lost, not forgotten. */
+const PARK_AFTER_HITS = 3;
+/** Colour fingerprint this close means "the same bottle" even when it turns up further from where it was expected. */
+const STRONG_LOOK = 0.85;
 
 /** How long a bottle that left the view is remembered. */
 export const REMEMBERED_BOTTLE_RETENTION_MS = 10 * 60_000;
@@ -144,6 +155,7 @@ export class LocalBottleTracker {
   private nextId = 1_000_000;
   private merged: Array<{ from: number; to: number }> = [];
   private reacquired: number[] = [];
+  private confidentReacquired: number[] = [];
 
   update(proposals: LocalBottleProposal[], now = Date.now(), options: { countMisses?: boolean } = {}): LocalBottleCandidate[] {
     const countMisses = options.countMisses ?? true;
@@ -166,6 +178,7 @@ export class LocalBottleTracker {
       track.misses = 0;
       track.lastSeenAt = now;
       track.leftView = false;
+      track.lost = false;
       track.returnedAt = undefined;
       track.appearance = blendAppearance(track.appearance, detection.appearance);
       touched.add(track);
@@ -242,6 +255,8 @@ export class LocalBottleTracker {
     const seenNow = this.tracks.filter(track => touched.has(track));
     this.tracks = this.tracks.filter(track => {
       const age = now - track.lastSeenAt;
+      // A parked bottle whose spot a different bottle now holds (it was not re-found there) has gone.
+      if (track.lost && seenNow.some(other => isSameBottle(other.bounds, track.bounds))) return false;
       if (track.leftView) {
         // A different bottle now stands where this remembered one was.
         if (track.returnedAt !== undefined && seenNow.some(other => isSameBottle(other.bounds, track.bounds))) return false;
@@ -252,7 +267,14 @@ export class LocalBottleTracker {
       }
       const weak = track.hits === 1 && track.confidence < 0.72;
       if (weak && track.misses >= 1 && age > 1_500) return false;
-      return !(track.misses >= 2 && age > 4_000) && age <= 20_000;
+      const gone = (track.misses >= 2 && age > 4_000) || age > 20_000;
+      if (gone && track.hits >= PARK_AFTER_HITS) {
+        track.leftView = true;
+        track.lost = true;
+        track.returnedAt = undefined;
+        return true;
+      }
+      return !gone;
     });
     this.mergeDuplicateTracks();
     if (this.tracks.length > MAX_TRACKS) {
@@ -327,13 +349,19 @@ export class LocalBottleTracker {
       const offset = Math.hypot(single.dx, single.dy);
       const strongLook = single.similarity !== null && single.similarity >= 0.7;
       // One bottle alone: accept only when it is where we expected it, or
-      // clearly looks like the remembered bottle.
-      if (!(offset <= 0.08 || (strongLook && offset <= 0.2) || (single.similarity === null && offset <= 0.12))) return;
+      // clearly looks like the remembered bottle (a near-identical look may be further off: the
+      // camera's path drifts while it is turned away).
+      const sameLook = single.similarity !== null && single.similarity >= STRONG_LOOK;
+      if (!(offset <= 0.08 || (strongLook && offset <= 0.2) || sameLook || (single.similarity === null && offset <= 0.12))) return;
     }
     for (const pair of best.chosen) {
       usedDetections.add(pair.index);
+      // Found right where it was and looking the same (or several bottles moving as one shelf): its remembered
+      // name stands, with no fresh read. Anything looser gets one check of its label.
+      const offset = Math.hypot(pair.dx, pair.dy);
+      const sure = pair.similarity !== null && pair.similarity >= 0.8 && (offset <= 0.06 || best.chosen.length >= 3);
       observe(pair.track, detections[pair.index]!, 1);
-      this.reacquired.push(pair.track.trackId);
+      (sure ? this.confidentReacquired : this.reacquired).push(pair.track.trackId);
     }
     if (best.chosen.length >= 2) {
       // The same drift applies to the rest of the remembered shelf.
@@ -411,8 +439,9 @@ export class LocalBottleTracker {
       const fraction = visibleFraction(track.bounds);
       if (fraction < 0.3) {
         track.leftView = true;
+        track.lost = false;   // off screen now: on return it is shown from memory like any remembered bottle
         track.returnedAt = undefined;
-      } else if (track.leftView && fraction >= 0.5 && track.returnedAt === undefined) {
+      } else if (track.leftView && !track.lost && fraction >= 0.5 && track.returnedAt === undefined) {
         track.returnedAt = now;
         track.misses = 0;
       }
@@ -457,10 +486,18 @@ export class LocalBottleTracker {
     return reacquired;
   }
 
+  /** IDs re-attached from memory where they were and looking the same: their names need no fresh check. */
+  takeConfidentReacquiredTrackIds(): number[] {
+    const confident = this.confidentReacquired;
+    this.confidentReacquired = [];
+    return confident;
+  }
+
   reset(): void {
     this.tracks = [];
     this.nextId = 1_000_000;
     this.merged = [];
     this.reacquired = [];
+    this.confidentReacquired = [];
   }
 }
