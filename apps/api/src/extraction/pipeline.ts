@@ -8,13 +8,17 @@ export async function extractObservation(observationId: string) {
   if (error) throw error;
   if (!assets?.length) throw new Error('No validated assets available for extraction');
 
+  // Throws 'OCR provider is not configured' if the settings are missing; the worker retries/fails the job.
   const provider = configuredOcrProvider();
   const pages = [];
   for (let index = 0; index < assets.length; index++) {
     const asset = assets[index];
-    const { data: blob, error: downloadError } = await db.storage.from('observation-assets').download(
-      (await db.from('observation_extractions').select('normalized_object_path').eq('asset_id',asset.id).single()).data?.normalized_object_path
-    );
+    const { data: extraction, error: lookupError } = await db.from('observation_extractions')
+      .select('normalized_object_path').eq('asset_id', asset.id).maybeSingle();
+    if (lookupError) throw lookupError;
+    const normalizedPath = extraction?.normalized_object_path;
+    if (!normalizedPath) throw new Error(`Normalized image path missing for asset ${asset.id}`);
+    const { data: blob, error: downloadError } = await db.storage.from('observation-assets').download(normalizedPath);
     if (downloadError || !blob) throw downloadError || new Error('Normalized image unavailable');
     const page = await provider.recognize({
       imageBytes:Buffer.from(await blob.arrayBuffer()),
@@ -36,9 +40,10 @@ export async function extractObservation(observationId: string) {
       .eq('asset_id',pages[i].assetId);
     if (updateError) throw updateError;
   }
-  await db.from('observation_processing_events').insert({
+  const { error: eventError } = await db.from('observation_processing_events').insert({
     observation_id:observationId, event_type:'literal_menu_extraction_complete',
     detail:{ itemCount:result.items.length, pagesProcessed:result.pagesProcessed, extractor:'literal-lines-0.1' }
   });
+  if (eventError) throw eventError;
   return result;
 }

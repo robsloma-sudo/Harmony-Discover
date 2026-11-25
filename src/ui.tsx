@@ -1,4 +1,4 @@
-import { View, ScrollView, StyleSheet, Text, Pressable } from 'react-native';
+import { View, ScrollView, StyleSheet, Text, Pressable, type ScrollViewProps } from 'react-native';
 import type { ReactNode } from 'react';
 import { router, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,12 +12,12 @@ const tabs = [
   { path:'/taste', label:'My taste', icon:'wine-outline' as const, activeIcon:'wine' as const },
   { path:'/settings', label:'Settings', icon:'settings-outline' as const, activeIcon:'settings' as const },
 ];
-export function Screen({ children, hideTabs = false }: { children: ReactNode; hideTabs?: boolean }) {
+export function Screen({ children, hideTabs = false, onScroll, onLayout }: { children: ReactNode; hideTabs?: boolean; onScroll?: ScrollViewProps['onScroll']; onLayout?: ScrollViewProps['onLayout'] }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   return (
     <View style={styles.screen}>
-      <ScrollView style={styles.pageScroll} contentContainerStyle={[styles.content, { paddingBottom: 112 + Math.max(insets.bottom, 8) }]} keyboardShouldPersistTaps="handled">
+      <ScrollView style={styles.pageScroll} contentContainerStyle={[styles.content, { paddingBottom: 112 + Math.max(insets.bottom, 8) }]} keyboardShouldPersistTaps="handled" onScroll={onScroll} onLayout={onLayout} scrollEventThrottle={onScroll ? 100 : undefined}>
         {children}
       </ScrollView>
       {!hideTabs && <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) + 5 }]}>

@@ -1,3 +1,4 @@
+import { devOnlyScreen } from '../src/dev/devOnlyScreen';
 import { useMemo, useState } from 'react';
 import { ScrollView, View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
@@ -16,7 +17,7 @@ const rubric = [
 type ScoreKey = typeof rubric[number]['key'];
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
 
-export default function ComedyLabScreen() {
+function ComedyLabScreen() {
   const { session } = useAuth();
   const [index, setIndex] = useState(0);
   const [response, setResponse] = useState('');
@@ -114,3 +115,6 @@ const s = StyleSheet.create({
   scoreText: { color: C.muted, fontWeight: '700' }, scoreTextSelected: { color: '#111' }, average: { color: C.gold, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
   primary: { backgroundColor: C.gold, padding: 14, borderRadius: 9, alignItems: 'center' }, primaryText: { color: '#111', fontWeight: '900', fontSize: 11, letterSpacing: 1 }, status: { color: C.gold, fontSize: 11, lineHeight: 16 }, footer: { color: '#707985', fontSize: 8, textAlign: 'center', letterSpacing: 1.1 },
 });
+
+// FIX-026: developer-only screen; production visitors are sent home.
+export default devOnlyScreen(ComedyLabScreen);

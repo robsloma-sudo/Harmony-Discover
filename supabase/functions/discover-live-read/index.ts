@@ -1,10 +1,10 @@
-// Harmony Discover DEV — discover-live-read v0.5.4 (14 Nov 2026).
+// Harmony Discover DEV — discover-live-read v0.5.5 (21 Nov 2026).
 // One live scanner for everything: one camera frame in; every bottle label on it and, if a menu is in view, its items out.
 // - frame: Claude reads ONLY what is printed on each label, returns a box per bottle; each read is then
 //          matched to public.product_index by text (discover_match_products). No image is stored.
 // - save:  the bottles the person kept become rows in public.bottle_sightings (the shared sightings ledger).
 // Guards: signed-in Discover user (anonymous users included), exact-origin allow-list, DEV project only,
-// 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
+// 30 frames/minute and 20 label batches/minute per user, plus a per-user and a whole-project daily image cap (FIX-007) with token logging.
 // v0.4.1: label and frame reads use Claude Sonnet 5.5 (Rob, 14 Nov 2026). Sonnet 5.5 does not accept a
 // forced tool choice, so it gets tool_choice auto with low effort (fast); save-time research stays on Haiku.
 // v0.5.0: two-step reading to keep cost down (Rob, 14 Nov 2026). Haiku does every first read (whole picture
@@ -20,10 +20,14 @@
 // (pixel counts only) to find why reads fail on a real phone.
 // v0.5.4: the live whole-frame read asks only for boxes and names (no edge tracing, no long fact list):
 // far fewer tokens, so the first names arrive seconds sooner.
+// v0.5.5 (FIX-011): time limits on every AI call (frame 25 s, label batch 30 s, save research 45 s).
+// v0.5.6 (FIX-007): the daily cap now counts images sent to the AI (a whole frame = 1, each label crop = 1),
+// not requests, so an 8-crop label batch uses 8 of the day's allowance. Label batches have their own
+// per-minute bucket (bottle_label_batch) so a busy shelf no longer starves live frames with 429s.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.4";
+const VERSION = "0.5.7";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -36,8 +40,53 @@ const ADAPTIVE_MODEL = (model: string) => /sonnet-5|opus-5|fable|mythos/.test(mo
 const toolChoice = (model: string, name: string) => ADAPTIVE_MODEL(model)
   ? { tool_choice: { type: "auto" }, output_config: { effort: "low" } }
   : { tool_choice: { type: "tool", name } };
-const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
+// FIX-007: daily caps are in images (frames + label crops). Defaults keep the old numbers; override with
+// DISCOVER_USER_IMAGES_PER_DAY / DISCOVER_PROJECT_IMAGES_PER_DAY without a code change.
+const capFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const USER_FRAMES_PER_DAY = capFromEnv("DISCOVER_USER_IMAGES_PER_DAY", 400), PROJECT_FRAMES_PER_DAY = capFromEnv("DISCOVER_PROJECT_IMAGES_PER_DAY", 5000);
+const LABEL_BATCHES_PER_MINUTE = 20;
 const USER_SAVES_PER_DAY = 20, PROJECT_SAVES_PER_DAY = 500;
+// P-20261121-2146: extra daily limits for GUEST (anonymous) accounts only, on top of the normal caps.
+// Signed-in members are never affected. Three checks in one database step: per guest account, per network
+// (a daily-rotating keyed hash of the caller's address; the address itself is never stored), and all guests
+// together. Every number can be changed with a setting, no code change: DISCOVER_GUEST_<KIND>_PER_ACCOUNT,
+// DISCOVER_GUEST_<KIND>_PER_NETWORK, DISCOVER_GUEST_<KIND>_ALL_GUESTS (KIND = IMAGES, MENU_PAGES, AUTOSAVE, BOTTLE_SAVE).
+const guestCapFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const GUEST_CAPS: Record<string, [number, number, number]> = {
+  images: [guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_ACCOUNT", 150), guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_NETWORK", 300), guestCapFromEnv("DISCOVER_GUEST_IMAGES_ALL_GUESTS", 2000)],
+  menu_pages: [guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_ACCOUNT", 15), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_NETWORK", 30), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_ALL_GUESTS", 300)],
+  autosave: [guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_ACCOUNT", 100), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_NETWORK", 200), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_ALL_GUESTS", 1500)],
+  bottle_save: [guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_ACCOUNT", 10), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_NETWORK", 20), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_ALL_GUESTS", 200)],
+};
+const GUEST_LIMIT_MESSAGE = "You've reached today's free guest limit. Sign in (it's free) to keep going, or try again tomorrow.";
+async function guestNetworkKey(req: Request, secret: string): Promise<string | null> {
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || (req.headers.get("x-real-ip") || "").trim();
+  if (!ip || !secret) return null;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const b = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode("discover-guest-net:" + new Date().toISOString().slice(0, 10) + ":" + ip))).slice(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+// Returns null when the call may go ahead, otherwise the refusal to send. Members always get null.
+// useNetwork=false when the caller is another server program (its address is not the person's).
+async function guestRefusal(
+  // deno-lint-ignore no-explicit-any
+  db: any, user: { id: string; is_anonymous?: boolean }, req: Request, secret: string,
+  kind: "images" | "menu_pages" | "autosave" | "bottle_save", units: number, useNetwork = true,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (user.is_anonymous !== true) return null;
+  const [perAccount, perNetwork, allGuests] = GUEST_CAPS[kind];
+  const network = useNetwork ? await guestNetworkKey(req, secret).catch(() => null) : null;
+  const { data, error } = await db.rpc("discover_guest_allow", {
+    p_account: user.id, p_network: network, p_kind: kind, p_units: units,
+    p_account_max: perAccount, p_network_max: perNetwork, p_all_guests_max: allGuests,
+  });
+  if (error) return { status: 503, body: { error: "daily_limit_unavailable" } };
+  if (data !== true) return { status: 429, body: { error: "daily_limit_reached", limit: "guest", message: GUEST_LIMIT_MESSAGE } };
+  return null;
+}
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
 const MIN_LABEL_CONFIDENCE = 0.65;
 const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "pisco", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "non_alcoholic_beer", "other"];
@@ -260,6 +309,29 @@ const LABEL_BATCH_TOOL = {
 // long list of label facts were dropped here; label crops and save-time research fill in facts.
 const SYSTEM = "You read one photo taken in a bar, shop or restaurant. Detect every visible beverage bottle (beer, wine, spirits, anything), even when its label is turned away, blurred or too small to read. For each bottle return a tight box around the whole bottle and a tight label_box around its main label when visible, as fractions of the image. detection_confidence is only about whether it is a bottle and the box fits. Read only what is printed: brand is the main identifying name (for wine the biggest name on the label), product what the label adds to it (expression, cuvee, appellation, style). Never identify a bottle from shape, colour or cap; if the name is not legible leave brand and product empty and set confidence below 0.4. confidence is how sure you are the brand was read, not guessed. Give field_confidence for each filled field. If a printed menu is in view, set menu.visible true and copy each legible item name and price exactly; otherwise menu.visible false. Skip glasses, taps, people and shelves. Always call the bottles tool.";
 
+// FIX-011: every call to the AI provider has a time limit. A hung call used to hold the scanner (and the
+// user's phone) until the platform killed the whole request. Now it ends with a clean "provider timeout"
+// (status 504), which the callers already treat like any other provider error.
+const FRAME_TIMEOUT_MS = 25_000;     // live camera frame / single label crop
+const BATCH_TIMEOUT_MS = 30_000;     // up to 8 label crops in one call
+const RESEARCH_TIMEOUT_MS = 45_000;  // save-time web research (up to 4 web searches)
+async function anthropicPost(key: string, payload: unknown, timeoutMs: number) {
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, j };
+  } catch (e) {
+    const timedOut = (e as Error)?.name === "TimeoutError" || (e as Error)?.name === "AbortError";
+    console.log(JSON.stringify({ evt: timedOut ? "provider_timeout" : "provider_network_error", timeout_ms: timeoutMs }));
+    return { ok: false, status: timedOut ? 504 : 503, j: { error: { message: timedOut ? "provider_timeout" : "provider_network_error" } } as Record<string, any> };
+  }
+}
+
 async function readFrame(key: string, model: string, b64: string, focus: string = "standard") {
   const finePrint = focus === "fine_print";
   const instruction = finePrint
@@ -267,17 +339,12 @@ async function readFrame(key: string, model: string, b64: string, focus: string 
     : "Read the bottle labels and any menu.";
   const selectedTool = finePrint ? LABEL_TOOL : TOOL;
   const selectedToolName = finePrint ? "label_read" : "bottles";
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: finePrint ? 2600 : 4000, system: finePrint
+  return await anthropicPost(key, { model, max_tokens: finePrint ? 2600 : 4000, system: finePrint
       ? "You are a careful beverage-label transcription engine. This is a close crop, so prioritize exact OCR rather than bottle detection, geometry, visual description, or product guessing. Never invent or complete obscured text. Always answer by calling the label_read tool exactly once and return only directly observed text."
       : SYSTEM,
       tools: [selectedTool], ...toolChoice(model, selectedToolName),
-      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] }),
-  });
-  const j = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, j };
+      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: instruction }] }] },
+    FRAME_TIMEOUT_MS);
 }
 
 
@@ -291,18 +358,12 @@ async function readLabelBatch(key: string, model: string, crops: Array<{track_id
     content.push({ type: "text", text: "NEXT LABEL TRACK_ID: " + crop.track_id });
     content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: crop.image } });
   }
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
+  return await anthropicPost(key, {
       model, max_tokens: 4000,
       system: "You are a precise beverage-label OCR engine. Each image is a separate crop and is associated with the immediately preceding track ID. Do not mix facts between crops. Read exact brand, product expression, category, ABV/proof, volume, origin and any legible technical details. Do not guess. Always answer by calling the label_reads tool exactly once.",
       tools: [LABEL_BATCH_TOOL], ...toolChoice(model, "label_reads"),
       messages: [{ role: "user", content }]
-    })
-  });
-  const j = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, j };
+    }, BATCH_TIMEOUT_MS);
 }
 
 const ENRICHMENT_TOOL = {
@@ -329,18 +390,14 @@ async function researchBottle(key: string, model: string, bottle: Record<string,
   const missing = DETAIL_KEYS.filter(k => !clean(details[k], 80));
   if (!clean(bottle.brand,80) || !missing.length) return { details: {}, fieldConfidence: {}, sources: [] };
   const query = [bottle.brand, bottle.product, bottle.category, bottle.proof, bottle.size].filter(Boolean).join(" ");
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
+  const response = await anthropicPost(key, {
       model, max_tokens: 2600,
       system: "You are a product research assistant for a beverage catalog. Use live web search. Find the exact product expression, not merely the brand or a similar SKU. Prefer official producer, distillery, winery, brand-owner, regulator and GS1 sources. Use retailers and reference sources only as secondary corroboration. Never invent facts. Never return a field unless a source explicitly supports it for this exact product. Do not overwrite facts already read from the physical label. If identity is ambiguous, return empty fields. Preserve source URLs and map each field to its supporting sources. Product marketing copy is not technical fact.",
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }, ENRICHMENT_TOOL],
       tool_choice: { type: "tool", name: "bottle_enrichment" },
       messages: [{ role: "user", content: "Research missing product facts for this exact bottle.\nIDENTITY: " + JSON.stringify(known) + "\nMISSING FIELDS: " + missing.join(", ") + "\nSearch query: " + query + "\nReturn only exact-expression facts with source URLs and field confidence. If exact match cannot be proven, leave fields empty." }]
-    })
-  });
-  const j = await response.json().catch(() => ({}));
+    }, RESEARCH_TIMEOUT_MS);
+  const j = response.j;
   if (!response.ok) return { details: {}, fieldConfidence: {}, sources: [] };
   const block = (Array.isArray(j.content) ? j.content : []).find((x: Record<string, unknown>) => x.type === "tool_use" && x.name === "bottle_enrichment");
   const input = (block?.input && typeof block.input === "object" ? block.input : {}) as Record<string, unknown>;
@@ -487,9 +544,12 @@ Deno.serve(async (req: Request) => {
     }
     if (totalImageChars > 360000) return reply({ error: "label_batch_too_large" }, 413, origin);
     if (new Set(crops.map(c => c.track_id)).size !== crops.length) return reply({ error: "duplicate_track_id" }, 400, origin);
-    const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_frame", p_max: 30, p_window_seconds: 60 });
+    // FIX-007: own per-minute bucket, and the daily cap is charged one unit per crop (each crop is one AI image).
+    const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_label_batch", p_max: LABEL_BATCHES_PER_MINUTE, p_window_seconds: 60 });
     if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
-    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
+    const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "images", crops.length);
+    if (guestStop) return reply(guestStop.body, guestStop.status, origin);
+    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow_units", { p_subject: subject, p_units: crops.length, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
     const providerStartedAt = Date.now();
     let model = escalate ? ESCALATION_MODEL : MODEL, r = await readLabelBatch(anthropicKey, model, crops);
@@ -571,7 +631,9 @@ Deno.serve(async (req: Request) => {
     if (image.length < 2000 || !/^[A-Za-z0-9+/=]+$/.test(image) || !image.startsWith("/9j/")) return reply({ error: "jpeg_frame_required" }, 400, origin);
     const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_frame", p_max: 30, p_window_seconds: 60 });
     if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
-    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
+    const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "images", 1);
+    if (guestStop) return reply(guestStop.body, guestStop.status, origin);
+    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow_units", { p_subject: subject, p_units: 1, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
 
     const providerStartedAt = Date.now();
@@ -686,6 +748,8 @@ Deno.serve(async (req: Request) => {
         proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {}, research_sources: Array.isArray(b.research_sources) ? b.research_sources : [] }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
+    const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "bottle_save", 1);
+    if (guestStop) return reply(guestStop.body, guestStop.status, origin);
     const { data: dailySaveOk, error: dailySaveError } = await db.rpc("discover_bottle_save_allow", {
       p_subject: subject,
       p_user_max: USER_SAVES_PER_DAY,

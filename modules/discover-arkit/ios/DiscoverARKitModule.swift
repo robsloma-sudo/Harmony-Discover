@@ -51,7 +51,7 @@ public class DiscoverARKitModule: Module {
     }
 
     View(DiscoverARView.self) {
-      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame")
+      Events("onTrackingUpdate", "onARReady", "onARError", "onVisualCandidates", "onRecognitionUpdate", "onDepthEstimate", "onCameraPose", "onDepthStatus", "onCapturedImage", "onFrame", "onLocalTrack")
       Prop("active") { (view: DiscoverARView, active: Bool) in
         view.setActive(active)
       }
@@ -60,6 +60,9 @@ public class DiscoverARKitModule: Module {
       }
       Prop("captureRequestId") { (view: DiscoverARView, requestId: Int) in
         view.captureFrame(requestId)
+      }
+      Prop("trackingSeeds") { (view: DiscoverARView, seeds: [[String: Any]]) in
+        view.setTrackingSeeds(seeds)
       }
       AsyncFunction("pause") { (view: DiscoverARView) in
         view.setActive(false)
@@ -302,6 +305,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   let onDepthStatus = EventDispatcher()
   let onCapturedImage = EventDispatcher()
   let onFrame = EventDispatcher()
+  let onLocalTrack = EventDispatcher()
   private var lastCaptureRequestId = 0
   private var pendingCaptureRequestId: Int?
   private var lastCloudFrameTime: TimeInterval = 0
@@ -313,6 +317,33 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   private var nextCandidateTrackID = 1
   private var previousCandidates: [(id: Int, rect: CGRect, confidence: CGFloat)] = []
   private let rectangleOverlay = CAShapeLayer()
+
+  // MARK: On-phone box tracker (fix kit S2-B2-004)
+  // Between cloud reads (every 2.5 s) Vision's object tracker follows each cloud box
+  // at up to 10 Hz, so boxes stay on their bottles while the phone moves.
+  // Bumped on main whenever tracking must start over (pause, recognition off, tracking lost).
+  private var localTrackingGeneration = 0
+  private let localTrackingGate = DispatchSemaphore(value: 1)
+  private var lastLocalTrackingTime: TimeInterval = 0
+  private struct RetainedTrackingFrame {
+    let pixelBuffer: SendablePixelBuffer
+    let orientation: CGImagePropertyOrientation
+    let generation: Int
+  }
+  private struct LocalTrack {
+    let request: VNTrackObjectRequest
+    // One sequence per bottle, so a new seed for one bottle never rewinds another.
+    let sequence: VNSequenceRequestHandler
+    let sourceTimestamp: TimeInterval
+    var misses: Int
+  }
+  // The following three are only touched on visionQueue.
+  // Private copies of the frames sent to the cloud, so seeds start on the exact frame the cloud saw
+  // without holding on to ARKit's own camera buffers (which would stall the camera).
+  private var retainedTrackingFrames: [TimeInterval: RetainedTrackingFrame] = [:]
+  private var localTracks: [Int: LocalTrack] = [:]
+  private static let maxLocalTracks = 6
+  private static let maxRetainedTrackingFrames = 3
 
   private lazy var sceneView: ARSCNView = {
     let view = ARSCNView(frame: .zero)
@@ -343,6 +374,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard enabled != isRecognitionEnabled else { return }
     isRecognitionEnabled = enabled
     if !enabled {
+      resetLocalTracking()
       onVisualCandidates(["count": 0, "candidates": []])
     }
   }
@@ -353,6 +385,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     if !active {
       rectangleOverlay.path = nil
       previousCandidates.removeAll()
+      resetLocalTracking()
       sceneView.session.pause()
       lastTrackingState = "paused"
       onTrackingUpdate(["state": "paused", "reason": "view_inactive"])
@@ -425,6 +458,13 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       captureFrame(pendingRequest)
     }
     let now = frame.timestamp
+    if isRecognitionEnabled && now - lastLocalTrackingTime >= 0.10 {
+      lastLocalTrackingTime = now
+      // Skip this frame if the previous tracking step is still running.
+      if localTrackingGate.wait(timeout: .now()) == .success {
+        processLocalTrackingFrame(frame, generation: localTrackingGeneration)
+      }
+    }
     // Camera pose is lightweight and independent of depth sampling / cloud recognition.
     // 30 Hz keeps world-anchored boxes attached during normal hand movement.
     if now - lastCameraPoseTime >= (1.0 / 30.0) {
@@ -443,6 +483,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     if shouldSendCloudFrame { lastCloudFrameTime = now }
     // Pair metric depth with this exact ARFrame; periodic depth events are not precise enough.
     let synchronizedDepth = shouldSendCloudFrame ? emitDepthFrame(frame) : nil
+    let trackingGeneration = localTrackingGeneration
     let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
     let pixelBuffer = pixelBufferBox.value
     guard visionFrameGate.wait(timeout: .now()) == .success else { return }
@@ -468,6 +509,14 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
       let classifyRequest = VNClassifyImageRequest()
       var cloudFrameBase64: String? = nil
       if shouldSendCloudFrame {
+        // Keep a private copy of this exact frame so the tracker can start on it when the cloud answers.
+        if let copy = Self.copyPixelBuffer(pixelBuffer) {
+          self.retainedTrackingFrames[now] = RetainedTrackingFrame(
+            pixelBuffer: SendablePixelBuffer(value: copy), orientation: orientation, generation: trackingGeneration)
+          for key in self.retainedTrackingFrames.keys.sorted().dropLast(Self.maxRetainedTrackingFrames) {
+            self.retainedTrackingFrames.removeValue(forKey: key)
+          }
+        }
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let scale = min(1.0, 960.0 / max(image.extent.width, image.extent.height))
         let resized = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
@@ -675,6 +724,142 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     DispatchQueue.main.async { [weak self] in guard let self, self.isActive else { return }; self.onDepthEstimate(payload); self.onDepthStatus(["status": "live_metric_depth"]) }
     return payload
   }
+  /// Stops all on-phone box tracking and drops the saved cloud frames.
+  private func resetLocalTracking() {
+    let reset = { [weak self] in
+      guard let self else { return }
+      self.localTrackingGeneration += 1
+      self.lastLocalTrackingTime = 0
+      self.visionQueue.async { [weak self] in
+        self?.localTracks.removeAll()
+        self?.retainedTrackingFrames.removeAll()
+      }
+    }
+    if Thread.isMainThread { reset() } else { DispatchQueue.main.async(execute: reset) }
+  }
+
+  /// Starts (or restarts) tracking from the boxes of the latest cloud read. An empty list stops tracking.
+  /// Each seed names the camera frame the cloud read came from, so tracking starts where the cloud saw the bottle.
+  func setTrackingSeeds(_ seeds: [[String: Any]]) {
+    guard isActive, isRecognitionEnabled else { return }
+    let generation = localTrackingGeneration
+    visionQueue.async { [weak self] in
+      guard let self else { return }
+      var next: [Int: LocalTrack] = [:]
+      for seed in seeds.prefix(Self.maxLocalTracks) {
+        guard let rawID = seed["trackId"] as? NSNumber,
+              let timestamp = seed["sourceTimestamp"] as? NSNumber,
+              let x = seed["x"] as? NSNumber, let y = seed["y"] as? NSNumber,
+              let width = seed["width"] as? NSNumber, let height = seed["height"] as? NSNumber else { continue }
+        let trackID = rawID.intValue
+        let sourceTimestamp = timestamp.doubleValue
+        // Cloud boxes are top-left normalized in the upright image; Vision uses a bottom-left origin.
+        let rect = CGRect(x: x.doubleValue, y: y.doubleValue, width: width.doubleValue, height: height.doubleValue)
+        guard trackID > 0, rect.minX >= 0, rect.minY >= 0, rect.width > 0.02, rect.height > 0.02,
+              rect.maxX <= 1.001, rect.maxY <= 1.001 else { continue }
+        guard let frameKey = self.retainedTrackingFrames.keys.min(by: { abs($0 - sourceTimestamp) < abs($1 - sourceTimestamp) }),
+              abs(frameKey - sourceTimestamp) <= 0.025,
+              let source = self.retainedTrackingFrames[frameKey],
+              source.generation == generation else { continue }
+        let visionRect = CGRect(x: rect.minX, y: 1 - rect.maxY, width: rect.width, height: min(rect.height, rect.maxY))
+        let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: visionRect))
+        request.trackingLevel = .accurate
+        let sequence = VNSequenceRequestHandler()
+        do {
+          try sequence.perform([request], on: source.pixelBuffer.value, orientation: source.orientation)
+          guard let seeded = request.results?.first as? VNDetectedObjectObservation else { continue }
+          request.inputObservation = seeded
+          next[trackID] = LocalTrack(request: request, sequence: sequence, sourceTimestamp: frameKey, misses: 0)
+        } catch {
+          continue
+        }
+      }
+      // The new cloud read replaces every older track.
+      self.localTracks = next
+    }
+  }
+
+  /// Follows each tracked box onto the newest camera frame (up to 10 Hz) and reports where it is.
+  private func processLocalTrackingFrame(_ frame: ARFrame, generation: Int) {
+    let pixelBufferBox = SendablePixelBuffer(value: frame.capturedImage)
+    let timestamp = frame.timestamp
+    let orientation = Self.imageOrientation(for: sceneView.window?.windowScene?.interfaceOrientation ?? .portrait)
+    visionQueue.async { [weak self, pixelBufferBox] in
+      defer { self?.localTrackingGate.signal() }
+      guard let self, !self.localTracks.isEmpty else { return }
+      var boxes: [[String: Double]] = []
+      for (trackID, track) in self.localTracks {
+        var updated = track
+        do {
+          try track.sequence.perform([track.request], on: pixelBufferBox.value, orientation: orientation)
+          if let observation = track.request.results?.first as? VNDetectedObjectObservation,
+             observation.confidence >= 0.3 {
+            track.request.inputObservation = observation
+            updated.misses = 0
+            let box = observation.boundingBox
+            boxes.append([
+              "trackId": Double(trackID), "sourceTimestamp": track.sourceTimestamp, "timestamp": timestamp,
+              "x": Double(box.minX), "y": Double(1 - box.maxY),
+              "width": Double(box.width), "height": Double(box.height),
+              "confidence": Double(observation.confidence)
+            ])
+          } else {
+            updated.misses += 1
+          }
+        } catch {
+          updated.misses += 1
+        }
+        // About half a second without a good match: let this bottle go until the next cloud read.
+        if updated.misses >= 5 || track.request.isLastFrame {
+          self.localTracks.removeValue(forKey: trackID)
+        } else {
+          self.localTracks[trackID] = updated
+        }
+      }
+      guard !boxes.isEmpty else { return }
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.isActive, self.isRecognitionEnabled, self.localTrackingGeneration == generation else { return }
+        self.onLocalTrack(["timestamp": timestamp, "boxes": boxes])
+      }
+    }
+  }
+
+  /// Copies a camera pixel buffer so ARKit's own buffer can be returned to the camera straight away.
+  private static func copyPixelBuffer(_ source: CVPixelBuffer) -> CVPixelBuffer? {
+    let width = CVPixelBufferGetWidth(source)
+    let height = CVPixelBufferGetHeight(source)
+    var created: CVPixelBuffer?
+    let attributes = [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()] as CFDictionary
+    guard CVPixelBufferCreate(nil, width, height, CVPixelBufferGetPixelFormatType(source), attributes, &created) == kCVReturnSuccess,
+          let copy = created else { return nil }
+    CVPixelBufferLockBaseAddress(source, .readOnly)
+    CVPixelBufferLockBaseAddress(copy, [])
+    defer {
+      CVPixelBufferUnlockBaseAddress(copy, [])
+      CVPixelBufferUnlockBaseAddress(source, .readOnly)
+    }
+    if CVPixelBufferIsPlanar(source) {
+      let planes = CVPixelBufferGetPlaneCount(source)
+      guard planes == CVPixelBufferGetPlaneCount(copy) else { return nil }
+      for plane in 0..<planes {
+        guard let from = CVPixelBufferGetBaseAddressOfPlane(source, plane),
+              let to = CVPixelBufferGetBaseAddressOfPlane(copy, plane) else { return nil }
+        let fromRow = CVPixelBufferGetBytesPerRowOfPlane(source, plane)
+        let toRow = CVPixelBufferGetBytesPerRowOfPlane(copy, plane)
+        let rows = CVPixelBufferGetHeightOfPlane(source, plane)
+        let bytes = min(fromRow, toRow)
+        for row in 0..<rows { memcpy(to.advanced(by: row * toRow), from.advanced(by: row * fromRow), bytes) }
+      }
+    } else {
+      guard let from = CVPixelBufferGetBaseAddress(source), let to = CVPixelBufferGetBaseAddress(copy) else { return nil }
+      let fromRow = CVPixelBufferGetBytesPerRow(source)
+      let toRow = CVPixelBufferGetBytesPerRow(copy)
+      let bytes = min(fromRow, toRow)
+      for row in 0..<height { memcpy(to.advanced(by: row * toRow), from.advanced(by: row * fromRow), bytes) }
+    }
+    return copy
+  }
+
   private func associateCandidates(_ observations: [[String: Double]]) -> [[String: Double]] {
     let incoming: [(rect: CGRect, confidence: CGFloat)] = observations.compactMap { item in
       guard let x = item["x"], let y = item["y"], let w = item["width"],
@@ -781,6 +966,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
     guard signature != lastTrackingState else { return }
     lastTrackingState = signature
     if state != "normal" {
+      resetLocalTracking()
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.rectangleOverlay.path = nil
@@ -816,6 +1002,7 @@ public final class DiscoverARView: ExpoView, ARSessionDelegate {
   }
 
   public func sessionWasInterrupted(_ session: ARSession) {
+    resetLocalTracking()
     onTrackingUpdate(["state": "interrupted", "reason": "system_interruption"])
   }
 

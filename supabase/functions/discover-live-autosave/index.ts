@@ -1,4 +1,4 @@
-// Harmony Discover DEV: discover-live-autosave v0.6.0
+// Harmony Discover DEV: discover-live-autosave v0.6.1
 // Saves bottles the live scanner is SURE of (reads agreed on the name) as sightings, for people
 // who switched on Live Recognition (its consent text says sightings are saved).
 // v0.3.0: every bottle is first resolved to brand + line + release + size (discover_resolve_bottle):
@@ -6,6 +6,9 @@
 // code pick the release. Resolved bottles link to one Discover product per identity; the reply
 // carries the identity and a shape key (brand|line|size) that liquid-level calibration uses.
 // Unresolved bottles use the previous attach path unchanged.
+// v0.6.1 (fix kit FIX-003): a fact is kept only when the answer itself cites a real search-result URL for it and gives
+// it a score. Facts are no longer attached to the first two search pages when uncited, and a missing score is no longer
+// treated as 0.75 (it is dropped as "no_score").
 // v0.6.0: known facts first. Every saved bottle and every opened card is linked to Harmony's catalogue (barcode, then
 // name) and to the US label approvals (discover_prefill_known); what they already know (ABV, origin, bottler/importer,
 // class, Harmony category, approved brand history, label package) fills empty card fields before any web research,
@@ -35,7 +38,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.2";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const ORIGINS = [
   /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/,
@@ -50,6 +53,49 @@ const RESEARCH_SEARCHES = 6;   // doubled with Rob's OK (15 Nov 2026)
 // (one lookup = one bottle researched once; up to 10 searches each, so at most 3,000 searches a day).
 const CARD_RESEARCH_EVERY_S = 900;
 const DAILY_LOOKUPS = 300, DAILY_SEARCHES = 3000;
+// P-20261121-2146: extra daily limits for GUEST (anonymous) accounts only, on top of the normal caps.
+// Signed-in members are never affected. Three checks in one database step: per guest account, per network
+// (a daily-rotating keyed hash of the caller's address; the address itself is never stored), and all guests
+// together. Every number can be changed with a setting, no code change: DISCOVER_GUEST_<KIND>_PER_ACCOUNT,
+// DISCOVER_GUEST_<KIND>_PER_NETWORK, DISCOVER_GUEST_<KIND>_ALL_GUESTS (KIND = IMAGES, MENU_PAGES, AUTOSAVE, BOTTLE_SAVE).
+const guestCapFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const GUEST_CAPS: Record<string, [number, number, number]> = {
+  images: [guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_ACCOUNT", 150), guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_NETWORK", 300), guestCapFromEnv("DISCOVER_GUEST_IMAGES_ALL_GUESTS", 2000)],
+  menu_pages: [guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_ACCOUNT", 15), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_NETWORK", 30), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_ALL_GUESTS", 300)],
+  autosave: [guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_ACCOUNT", 100), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_NETWORK", 200), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_ALL_GUESTS", 1500)],
+  bottle_save: [guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_ACCOUNT", 10), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_NETWORK", 20), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_ALL_GUESTS", 200)],
+};
+const GUEST_LIMIT_MESSAGE = "You've reached today's free guest limit. Sign in (it's free) to keep going, or try again tomorrow.";
+async function guestNetworkKey(req: Request, secret: string): Promise<string | null> {
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || (req.headers.get("x-real-ip") || "").trim();
+  if (!ip || !secret) return null;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const b = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode("discover-guest-net:" + new Date().toISOString().slice(0, 10) + ":" + ip))).slice(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+// Returns null when the call may go ahead, otherwise the refusal to send. Members always get null.
+// useNetwork=false when the caller is another server program (its address is not the person's).
+async function guestRefusal(
+  // deno-lint-ignore no-explicit-any
+  db: any, user: { id: string; is_anonymous?: boolean }, req: Request, secret: string,
+  kind: "images" | "menu_pages" | "autosave" | "bottle_save", units: number, useNetwork = true,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (user.is_anonymous !== true) return null;
+  const [perAccount, perNetwork, allGuests] = GUEST_CAPS[kind];
+  const network = useNetwork ? await guestNetworkKey(req, secret).catch(() => null) : null;
+  const { data, error } = await db.rpc("discover_guest_allow", {
+    p_account: user.id, p_network: network, p_kind: kind, p_units: units,
+    p_account_max: perAccount, p_network_max: perNetwork, p_all_guests_max: allGuests,
+  });
+  if (error) return { status: 503, body: { error: "daily_limit_unavailable" } };
+  if (data !== true) return { status: 429, body: { error: "daily_limit_reached", limit: "guest", message: GUEST_LIMIT_MESSAGE } };
+  return null;
+}
+// Guests get a smaller share of the daily research (web lookup) budget; members keep DAILY_LOOKUPS / DAILY_SEARCHES.
+const GUEST_DAILY_LOOKUPS = guestCapFromEnv("DISCOVER_GUEST_LOOKUPS_PER_ACCOUNT", 30), GUEST_DAILY_SEARCHES = guestCapFromEnv("DISCOVER_GUEST_SEARCHES_PER_ACCOUNT", 300);
 const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "pisco", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "non_alcoholic_beer", "other"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -80,7 +126,7 @@ const FIELDS_BY_CATEGORY: Record<string, string[]> = {
 
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const unit = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
-const norm = (v: unknown) => clean(v, 160).toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (v: unknown) => clean(v, 160).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 function originOk(origin: string | null) { return !!origin && ORIGINS.some((re) => re.test(origin)); }
 function headers(origin: string | null) {
@@ -256,15 +302,6 @@ async function research(apiKey: string, model: string, identity: Record<string, 
     supports.forEach((f) => supported.add(f));
     sources.push({ url: u, title: found.get(u) || clean(s.title, 180), supports, kind: String(s.source_type || "reference") });
   }
-  // No usable citation: fall back to returned search pages that are about this brand (title or address names it).
-  if (!sources.length) {
-    const brandWords = norm(identity.brand).split(" ").filter((w) => w.length >= 4);
-    for (const [u, title] of found) {
-      const text = norm(title + " " + u);
-      if (brandWords.length && brandWords.every((w) => text.includes(w))) sources.push({ url: u, title, supports: [], kind: "reference" });
-      if (sources.length >= 2) break;
-    }
-  }
   // Facts normally sit under "fields"; some answers put them at the top level instead.
   const topLevel = Object.fromEntries(Object.entries(input).filter(([k, v]) => allowed.has(k) && typeof v === "string"));
   const nested = input.fields && typeof input.fields === "object" && !Array.isArray(input.fields) ? input.fields as Record<string, unknown> : {};
@@ -272,17 +309,17 @@ async function research(apiKey: string, model: string, identity: Record<string, 
   const rawScores = (input.field_confidence && typeof input.field_confidence === "object" ? input.field_confidence : {}) as Record<string, unknown>;
   const facts: Record<string, { value: string; confidence: number }> = {};
   const dropped: Record<string, string> = {};
-  // A fact needs a real search-result URL behind it: its own, or (when the model did not map
-  // sources to fields) the product page sources it returned for this search. Tasting summaries are
-  // judgement by nature, so they need 0.5 (still source-backed); hard facts need 0.7.
+  // A fact needs a real search-result URL that the answer itself cites for that fact, and a score the
+  // answer gave (FIX-003: no borrowed sources, no default score). Tasting summaries are judgement by
+  // nature, so they need 0.5 (still source-backed); hard facts need 0.7.
   for (const [field, value] of Object.entries(rawFields)) {
-    const v = clean(value, LIST_FIELDS.has(field) ? 700 : 240), c = unit(rawScores[field] ?? 0.75);
+    const scored = rawScores[field] !== undefined && rawScores[field] !== null && rawScores[field] !== "" && Number.isFinite(Number(rawScores[field]));
+    const v = clean(value, LIST_FIELDS.has(field) ? 700 : 240), c = scored ? unit(rawScores[field]) : 0;
     const floor = TASTING.has(field) ? 0.5 : LIST_FIELDS.has(field) ? 0.6 : 0.7;
-    const why = !allowed.has(field) ? "not_wanted" : !v ? "empty" : c < floor ? "low_" + c.toFixed(2) : !(supported.has(field) || sources.length > 0) ? "no_source" : "";
+    const why = !allowed.has(field) ? "not_wanted" : !v ? "empty" : !scored ? "no_score" : c < floor ? "low_" + c.toFixed(2) : !supported.has(field) ? "no_source" : "";
     if (why) { dropped[clean(field, 40)] = why; continue; }
     facts[field] = { value: v, confidence: c };
   }
-  for (const f of Object.keys(facts)) if (!supported.has(f)) for (const s of sources.slice(0, 2)) s.supports.push(f);
   return { facts, dropped, sources: sources.filter((s) => s.supports.some((f) => facts[f])), searchResults: found.size, rawFields: Object.keys(rawFields).length, validSources: sources.length, note, searchesUsed, inputKeys: Object.keys(input).slice(0, 8).map((k) => clean(k, 30)) };
 }
 
@@ -323,7 +360,7 @@ const evidenceSourceType = (kind: string, url: string) => {
   return "web_search";
 };
 
-async function researchProduct(db: SupabaseClient, apiKey: string, subject: string, productId: string, sightingId: string, b: { brand: string; product: string; category: string; proof: string; size: string; details: Record<string, unknown> }) {
+async function researchProduct(db: SupabaseClient, apiKey: string, subject: string, productId: string, sightingId: string, b: { brand: string; product: string; category: string; proof: string; size: string; details: Record<string, unknown> }, guest = false) {
   const started = Date.now();
   // Claim the queued research job so the minute worker does not repeat it.
   const { data: claimed } = await db.from("discover_enrichment_jobs").update({ status: "processing", locked_at: new Date().toISOString(), locked_by: "live-autosave", attempts: 1, updated_at: new Date().toISOString() })
@@ -341,7 +378,7 @@ async function researchProduct(db: SupabaseClient, apiKey: string, subject: stri
     if (!wanted.length) return await finish({ result: "no_missing_research_fields", by: "live-autosave" });
     const { data: budgetOk, error: budgetError } = await db.rpc("discover_reserve_bottle_research_budget", {
       p_consumer: subject, p_jobs: 1, p_search_units: RESEARCH_SEARCHES,
-      p_user_jobs_max: DAILY_LOOKUPS, p_project_jobs_max: DAILY_LOOKUPS, p_user_search_max: DAILY_SEARCHES, p_project_search_max: DAILY_SEARCHES,
+      p_user_jobs_max: guest ? GUEST_DAILY_LOOKUPS : DAILY_LOOKUPS, p_project_jobs_max: DAILY_LOOKUPS, p_user_search_max: guest ? GUEST_DAILY_SEARCHES : DAILY_SEARCHES, p_project_search_max: DAILY_SEARCHES,
     });
     if (budgetError || budgetOk !== true) return await finish({ result: "research_budget_exhausted", by: "live-autosave" }, "retry");
     const model = Deno.env.get("DISCOVER_RESEARCH_MODEL") || Deno.env.get("DISCOVER_BOTTLE_MODEL") || "claude-haiku-5-5";
@@ -442,7 +479,7 @@ async function findProduct(db: SupabaseClient, brand: string, product: string): 
   return row ?? null;
 }
 
-async function productCard(db: SupabaseClient, apiKey: string, subject: string, body: Record<string, unknown>, origin: string | null) {
+async function productCard(db: SupabaseClient, apiKey: string, subject: string, body: Record<string, unknown>, origin: string | null, guest = false) {
   const brand = clean(body.brand, 80), product = clean(body.product, 80);
   const category = CATEGORIES.includes(String(body.category)) ? String(body.category) : "other";
   if (!brand) return reply({ error: "brand_required" }, 400, origin);
@@ -513,7 +550,7 @@ async function productCard(db: SupabaseClient, apiKey: string, subject: string, 
   if (tryResearch) {
     const { data: budgetOk } = await db.rpc("discover_reserve_bottle_research_budget", {
       p_consumer: subject, p_jobs: 1, p_search_units: CARD_SEARCHES,
-      p_user_jobs_max: DAILY_LOOKUPS, p_project_jobs_max: DAILY_LOOKUPS, p_user_search_max: DAILY_SEARCHES, p_project_search_max: DAILY_SEARCHES,
+      p_user_jobs_max: guest ? GUEST_DAILY_LOOKUPS : DAILY_LOOKUPS, p_project_jobs_max: DAILY_LOOKUPS, p_user_search_max: guest ? GUEST_DAILY_SEARCHES : DAILY_SEARCHES, p_project_search_max: DAILY_SEARCHES,
     });
     if (budgetOk === true) {
       researching = true;
@@ -581,7 +618,7 @@ Deno.serve(async (req: Request) => {
   try { body = JSON.parse(raw); if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(); }
   catch { return reply({ error: "invalid_json" }, 400, origin); }
   if (body.action === "health") return reply({ ok: true, version: VERSION }, 200, origin);
-  if (body.action === "card") return await productCard(db, apiKey, subject, body, origin);
+  if (body.action === "card") return await productCard(db, apiKey, subject, body, origin, auth.user.is_anonymous === true);
 
   const session = String(body.scan_session_id || "");
   if (!UUID.test(session)) return reply({ error: "scan_session_id_required" }, 400, origin);
@@ -599,6 +636,8 @@ Deno.serve(async (req: Request) => {
   if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
   const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_save_allow", { p_subject: subject, p_user_max: USER_CALLS_PER_DAY, p_global_max: PROJECT_CALLS_PER_DAY });
   if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
+  const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "autosave", 1);
+  if (guestStop) return reply(guestStop.body, guestStop.status, origin);
 
   const { data: existing, error: existingErr } = await db.from("bottle_sightings")
     .select("read_brand,read_product,label_details").eq("consumer_id", subject).eq("scan_session_id", session).limit(500);
@@ -671,7 +710,7 @@ Deno.serve(async (req: Request) => {
     // Known facts first (Harmony catalogue + US label approval), then web research only for what is still missing.
     if (productId) researchTasks.push((async () => {
       await prefillKnown(db, productId!);
-      if (canResearch) await researchProduct(db, apiKey, subject, productId!, String(inserted.id), researchBottle);
+      if (canResearch) await researchProduct(db, apiKey, subject, productId!, String(inserted.id), researchBottle, auth.user.is_anonymous === true);
     })());
     results.push({ brand: b.brand, product: b.product, status: "saved", sighting_id: inserted.id, product_id: productId, new_product: created, researching: canResearch, identity });
   }
