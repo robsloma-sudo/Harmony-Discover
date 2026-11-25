@@ -206,3 +206,67 @@ describe('two hesitant reads are not enough (Very Old Barton, 17 Nov 2026)', () 
     expect(clear.identity(-1)!.reliable).toBe(true);
   });
 });
+
+describe('the scanner can change its mind about a name (FIX-015, 21 Nov 2026)', () => {
+  const clock = () => { let t = 0; return { now: () => t, tick: (ms: number) => { t += ms; } }; };
+  const wrong = (confidence = 0.9) => ({ brand: 'Weller', product: 'Special Reserve', confidence, state: 'reported', match: null });
+  const right = (confidence = 0.75) => ({ brand: 'Blanton\'s', product: 'Original Single Barrel', confidence, state: 'reported', match: null });
+
+  it('an early wrong name is replaced after a few clear different reads', () => {
+    const time = clock();
+    const evidence = new TrackEvidence({ now: time.now });
+    evidence.observeIdentity(1, wrong(), 'label:0');
+    expect(evidence.identity(1)!.reliable).toBe(true);
+    expect(evidence.identity(1)!.read.brand).toBe('Weller');
+    for (let i = 1; i <= 3; i++) {
+      time.tick(1000);
+      evidence.observeIdentity(1, right(), 'label:' + i);
+    }
+    const identity = evidence.identity(1)!;
+    expect(identity.read.brand).toBe('Blanton\'s');
+    expect(identity.reliable).toBe(true);
+    // Before this fix it took about 8 such reads.
+  });
+
+  it('one or two different reads do not unseat a confirmed name', () => {
+    const time = clock();
+    const evidence = new TrackEvidence({ now: time.now });
+    evidence.observeIdentity(1, right(0.85), 'label:0');
+    time.tick(500);
+    evidence.observeIdentity(1, right(0.8), 'label:1');
+    for (let i = 2; i <= 3; i++) { time.tick(1000); evidence.observeIdentity(1, wrong(0.75), 'label:' + i); }
+    expect(evidence.identity(1)!.read.brand).toBe('Blanton\'s');
+  });
+
+  it('near-identical camera frames count once', () => {
+    const time = clock();
+    const evidence = new TrackEvidence({ now: time.now });
+    for (let i = 0; i < 10; i++) { evidence.observeIdentity(2, right(0.77 + (i % 2) * 0.01), 'frame:' + i); time.tick(100); }
+    expect(evidence.identity(2)!.agreeingReads).toBe(1);
+    // The same view a moment later, or a clearly different read, does count.
+    time.tick(1500);
+    evidence.observeIdentity(2, right(0.77), 'frame:later');
+    expect(evidence.identity(2)!.agreeingReads).toBe(2);
+  });
+
+  it('identical frames cannot replace a name on their own', () => {
+    const time = clock();
+    const evidence = new TrackEvidence({ now: time.now });
+    evidence.observeIdentity(3, right(0.85), 'label:0');
+    time.tick(2000);
+    for (let i = 0; i < 12; i++) { evidence.observeIdentity(3, wrong(0.8), 'frame:' + i); time.tick(80); }
+    expect(evidence.identity(3)!.read.brand).toBe('Blanton\'s');
+  });
+
+  it('a name the person picked by hand never changes', () => {
+    const time = clock();
+    const evidence = new TrackEvidence({ now: time.now });
+    evidence.observeIdentity(4, wrong(), 'label:0');
+    evidence.confirm(4, right(1));
+    for (let i = 1; i <= 20; i++) { time.tick(1000); evidence.observeIdentity(4, wrong(0.95), 'label:' + i); }
+    const identity = evidence.identity(4)!;
+    expect(identity.read.brand).toBe('Blanton\'s');
+    expect(identity.confirmed).toBe(true);
+    expect(identity.reliable).toBe(true);
+  });
+});
