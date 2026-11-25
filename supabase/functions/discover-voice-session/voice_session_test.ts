@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "jsr:@std/assert@1";
 import { sanitizeScreenContext, formatScreenContextInstructions, buildScreenContextUpdateEvent } from "./_shared/screenContext.ts";
-import { buildRealtimeSession } from "./_shared/realtimeSession.ts";
+import { buildRealtimeSession, handsFreeAllowed } from "./_shared/realtimeSession.ts";
 import { MARTY_MOODS, MARTY_OPENER_STYLES } from "./_shared/martyDelivery.ts";
 import { parseVoiceRequest, MAX_REQUEST_BYTES } from "./_shared/voiceRequest.ts";
 import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
@@ -68,18 +68,45 @@ Deno.test("voice: cedar default, bogus falls back, allow-list honored", () => {
   assertEquals(b.session.model, "gpt-realtime-2.1");
 });
 
-Deno.test("mode: hands_free only with flag on", () => {
-  assertEquals(buildRealtimeSession({ mode: "hands_free" }).mode, "push_to_talk");
-  assertEquals(buildRealtimeSession({ mode: "hands_free", handsFreeEnv: "ON" }).mode, "push_to_talk");
-  const off = buildRealtimeSession({ mode: "hands_free", handsFreeEnv: "off" });
-  assertEquals(off.session.audio.input.turn_detection, null);
-  const on = buildRealtimeSession({ mode: "hands_free", handsFreeEnv: "on" });
-  assertEquals(on.mode, "hands_free");
-  assertEquals(on.session.audio.input.turn_detection, { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true });
-  const ptt = buildRealtimeSession({ mode: "push_to_talk", handsFreeEnv: "on" });
-  assertEquals(ptt.session.audio.input.turn_detection, null);
-  assertEquals(ptt.session.audio.input.noise_reduction, { type: "near_field" });
-  assertEquals(ptt.session.max_output_tokens, 500);
+const HANDS_FREE_TD = { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true };
+
+Deno.test("mode: app asks for hands_free -> continuous listening with interruption", () => {
+  for (const env of [undefined, null, "", "on", "ON", " yes "]) {
+    const hf = buildRealtimeSession({ mode: "hands_free", handsFreeEnv: env });
+    assertEquals(hf.mode, "hands_free");
+    assertEquals(hf.session.audio.input.turn_detection, HANDS_FREE_TD);
+  }
+});
+
+Deno.test("mode: no hands_free request -> hold-to-talk, whatever the server switch", () => {
+  for (const env of [undefined, "on", "off"]) {
+    const ptt = buildRealtimeSession({ mode: "push_to_talk", handsFreeEnv: env });
+    assertEquals(ptt.mode, "push_to_talk");
+    assertEquals(ptt.session.audio.input.turn_detection, null);
+    assertEquals(ptt.session.audio.input.noise_reduction, { type: "near_field" });
+    assertEquals(ptt.session.max_output_tokens, 500);
+  }
+});
+
+Deno.test("mode: server stop switch MARTY_HANDS_FREE=off forces hold-to-talk", () => {
+  for (const env of ["off", "OFF", " Off "]) {
+    const s = buildRealtimeSession({ mode: "hands_free", handsFreeEnv: env });
+    assertEquals(s.mode, "push_to_talk");
+    assertEquals(s.session.audio.input.turn_detection, null);
+  }
+  assert(handsFreeAllowed(undefined));
+  assertFalse(handsFreeAllowed("off"));
+});
+
+Deno.test("mode: hands_free keeps the same instructions, tools, voice and limits", () => {
+  const pick = () => 0;
+  const hf = buildRealtimeSession({ mode: "hands_free", pick });
+  const ptt = buildRealtimeSession({ mode: "push_to_talk", pick });
+  assertEquals(hf.session.instructions, ptt.session.instructions);
+  assertEquals(hf.session.tools, ptt.session.tools);
+  assertEquals(hf.session.audio.output, ptt.session.audio.output);
+  assertEquals(hf.session.max_output_tokens, ptt.session.max_output_tokens);
+  assertStringIncludes(hf.session.instructions, "Never invent recipe origins");
 });
 
 Deno.test("flavor: injectable picks differ and instructions order/content", () => {

@@ -33,8 +33,13 @@ export function resolveVoice(voiceEnv: string | undefined | null): string {
   return (ALLOWED_VOICES as readonly string[]).includes(v) ? v : DEFAULT_VOICE;
 }
 
+// The app chooses per session. MARTY_HANDS_FREE=off is a server-wide stop switch that turns every session back to push-to-talk.
+export function handsFreeAllowed(handsFreeEnv: string | undefined | null): boolean {
+  return (handsFreeEnv ?? "").trim().toLowerCase() !== "off";
+}
+
 export function resolveMode(requested: VoiceMode, handsFreeEnv: string | undefined | null): VoiceMode {
-  return requested === "hands_free" && handsFreeEnv === "on" ? "hands_free" : "push_to_talk";
+  return requested === "hands_free" && handsFreeAllowed(handsFreeEnv) ? "hands_free" : "push_to_talk";
 }
 
 export interface BuildRealtimeSessionArgs {
