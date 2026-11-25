@@ -46,7 +46,8 @@ describe('Marty without sign-in', () => {
     expect(isGuestSession({ user: { is_anonymous: true } } as never)).toBe(true);
     expect(isGuestSession({ user: { is_anonymous: false } } as never)).toBe(false);
     expect(isGuestSession(null)).toBe(false);
-    expect(martyAccountNote({ user: { is_anonymous: true } } as never)).toMatch(/this device’s private guest account until you sign in/);
+    expect(martyAccountNote({ user: { is_anonymous: true } } as never)).toMatch(/this device’s private guest account/);
+    expect(martyAccountNote({ user: { is_anonymous: true } } as never)).not.toMatch(/signing in later keeps/);
     expect(martyAccountNote({ user: { is_anonymous: false } } as never)).toMatch(/private to your Discover account/);
   });
 });

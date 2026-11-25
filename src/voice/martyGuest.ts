@@ -3,8 +3,8 @@
  *
  * Marty runs on the same private guest account Discover already uses for scanning
  * (ensureDiscoverSession → Supabase anonymous user). Consent and saved memories belong
- * to that guest account. If the person signs in later, account linking keeps the same
- * account, so nothing is lost.
+ * to that guest account. Signing in with email today makes a different account and nothing
+ * links the guest to it, so the wording only promises this device's guest account.
  */
 import type { Session } from '@supabase/supabase-js';
 
@@ -41,6 +41,6 @@ export async function grantMartyVoiceConsent(userId: string): Promise<void> {
 /** Honest one-line note on where consent and memories live. */
 export function martyAccountNote(session: Pick<Session, 'user'> | null | undefined): string {
   return isGuestSession(session)
-    ? 'No sign-in needed. Your choices and any memories you save are kept on this device’s private guest account until you sign in; signing in later keeps them.'
+    ? 'No sign-in needed. Your choices and any memories you save are kept on this device’s private guest account. They stay with this guest account and do not move to an account you sign in to later.'
     : 'Your choices and any memories you save are private to your Discover account.';
 }
