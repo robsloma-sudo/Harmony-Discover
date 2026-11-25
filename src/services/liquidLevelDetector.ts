@@ -29,7 +29,7 @@ export type OcclusionBand = { top: number; bottom: number };
 export type LiquidBoundaryCandidate =
   | {
       status: 'candidate';
-      /** Liquid height measured from the bottom of the supplied bottle bounds. */
+      /** Fill height: fraction of the supplied bottle box height, from its bottom edge (FillHeightFraction). */
       normalizedHeight: number;
       /** Heuristic score in [0, 1], not a calibrated probability. */
       confidence: number;

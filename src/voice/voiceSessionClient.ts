@@ -56,7 +56,7 @@ export async function requestVoiceSession(
 
     if (!response.ok) {
       const messages: Record<number, string> = {
-        401: 'Your session expired. Please sign in again.',
+        401: 'Your session expired. Please try again.',
         403: 'Voice access or consent was not approved.',
         429: 'Too many voice sessions. Please wait a moment.',
         503: 'The bartender is temporarily unavailable.',
