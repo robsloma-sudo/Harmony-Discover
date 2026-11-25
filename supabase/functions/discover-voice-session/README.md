@@ -95,7 +95,7 @@ then stops local playback, and on release sends `{ "type": "input_audio_buffer.c
 
 ## Variety
 
-Instructions are built in this order: Boston script, comedy craft, an optional "MARTY CHARACTER BOOK" from the Cocktails team (only when non-empty), delivery and variety rules (`_shared/martyDelivery.ts`), a random per-session "SESSION FLAVOR" (one mood, one opener style, picked with `crypto.getRandomValues`), navigation, look-up rules, screen context, memory context.
+Instructions are built in this order: Boston script, comedy craft, the "MARTY CHARACTER BOOK" (`_shared/martyCharacterBook.ts`, passed in by `index.ts`: his fixed fictional backstory, regulars, slang and conversation craft; capped at 16,000 characters; the only personal history he may use; an empty book is skipped), delivery and variety rules (`_shared/martyDelivery.ts`), a random per-session "SESSION FLAVOR" (one mood, one opener style, picked with `crypto.getRandomValues`), navigation, look-up rules, screen context, memory context.
 
 ## Tests
 

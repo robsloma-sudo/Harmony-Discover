@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
+import { martyCharacterBook } from "./_shared/martyCharacterBook.ts";
 import { buildRealtimeSession, lookupsAllowed, MODEL } from "./_shared/realtimeSession.ts";
 import { MAX_REQUEST_BYTES, parseLookupRequest, parseVoiceRequest } from "./_shared/voiceRequest.ts";
 import { loadPhgConfig, parseLookupArgs, runLookup } from "./_shared/lookups.ts";
@@ -155,7 +156,7 @@ Deno.serve(async (request: Request) => {
       voiceEnv: Deno.env.get("MARTY_VOICE"),
       handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE"),
       lookupsEnabled: lookupsAllowed(Deno.env),
-      characterBook: "", // Cocktails team's character book: import it here once their PR names the file
+      characterBook: martyCharacterBook,
       mode: parsed.mode,
       screenContext: parsed.screenContext,
       memoryContext,
