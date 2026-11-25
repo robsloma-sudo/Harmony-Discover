@@ -3,9 +3,15 @@
  * The app must never receive a Supabase service-role key or a permanent provider key.
  * This file defines/validates the response only; it does not call a backend.
  */
+import type { ScreenContext } from './screenContext';
+
+export type VoiceMode = 'push_to_talk' | 'hands_free';
+
+/** Request body for discover-voice-session (backend README, PR #131): exactly these keys. */
 export interface VoiceSessionRequest {
   consentVersion: string;
-  mode: 'push_to_talk' | 'hands_free';
+  mode: VoiceMode;
+  screenContext?: ScreenContext;
 }
 
 export interface VoiceSessionGrant {
@@ -16,6 +22,8 @@ export interface VoiceSessionGrant {
   transport: 'webrtc' | 'websocket';
   model: string;
   voice: string;
+  /** The mode the server actually granted. The app only runs push-to-talk. */
+  mode: VoiceMode;
 }
 
 export type VoiceSessionValidation =
@@ -31,9 +39,12 @@ export function validateVoiceSessionGrant(value: unknown, now = Date.now()): Voi
   }
   if (v.provider !== 'openai_realtime' && v.provider !== 'other') return { ok: false, reason: 'Unsupported voice provider.' };
   if (v.transport !== 'webrtc' && v.transport !== 'websocket') return { ok: false, reason: 'Unsupported voice transport.' };
+  // Older servers sent no mode; that was always push-to-talk.
+  const mode = v.mode === undefined ? 'push_to_talk' : v.mode;
+  if (mode !== 'push_to_talk' && mode !== 'hands_free') return { ok: false, reason: 'Unsupported voice mode.' };
   const expiry = Date.parse(v.expiresAt as string);
   if (!Number.isFinite(expiry) || expiry <= now) return { ok: false, reason: 'Voice session has expired.' };
   // Realtime client secrets are reusable until expiry; keep the accepted lifetime tightly bounded.
   if (expiry - now > 2 * 60 * 1000) return { ok: false, reason: 'Voice session lifetime exceeds the allowed limit.' };
-  return { ok: true, grant: v as unknown as VoiceSessionGrant };
+  return { ok: true, grant: { ...(v as unknown as VoiceSessionGrant), mode } };
 }

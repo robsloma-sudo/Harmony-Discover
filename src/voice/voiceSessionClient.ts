@@ -3,11 +3,14 @@ import {
   type VoiceSessionGrant,
   type VoiceSessionRequest,
 } from './sessionContract';
+import { normalizeScreenContext, type ScreenContext } from './screenContext';
 
 export interface VoiceSessionClientConfig {
   supabaseUrl: string;
   accessToken: string;
   consentVersion: string;
+  /** What is on screen when the session starts; goes into Marty's instructions. */
+  screenContext?: ScreenContext | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -35,6 +38,8 @@ export async function requestVoiceSession(
     consentVersion: config.consentVersion,
     mode: 'push_to_talk',
   };
+  const screenContext = normalizeScreenContext(config.screenContext);
+  if (screenContext) request.screenContext = screenContext;
 
   try {
     const response = await (config.fetchImpl ?? fetch)(
@@ -66,6 +71,8 @@ export async function requestVoiceSession(
     const payload: unknown = await response.json();
     const validation = validateVoiceSessionGrant(payload);
     if (!validation.ok) return { ok: false, message: validation.reason };
+    // The app's turn-taking is push-to-talk only; never run a hands-free grant.
+    if (validation.grant.mode !== 'push_to_talk') return { ok: false, message: 'Voice mode not supported in this app.' };
     return { ok: true, grant: validation.grant };
   } catch {
     // Never include auth tokens, request bodies, or raw provider errors in UI/log output.

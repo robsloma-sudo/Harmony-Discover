@@ -6,6 +6,21 @@ import { supabase } from '../services/supabase';
 import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voiceSessionCoordinator';
 import type { VoiceSessionGrant } from '../voice/sessionContract';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
+import { TurnController, isFatalRealtimeError, type TurnPhase, type TurnTiming } from '../voice/turnController';
+import { buildScreenContextUpdateEvent, getScreenContext, screenContextKey, subscribeScreenContext, withCapturedAt } from '../voice/screenContext';
+
+/** Keep the mic open this long after release so the last word is not clipped. */
+const TALK_TAIL_MS = 250;
+/** Wait for the screen to settle before telling Marty what changed. */
+const CONTEXT_DEBOUNCE_MS = 500;
+/** Stop waiting for more network routes this long after the first one is found. */
+const ICE_GRACE_MS = 1500;
+const PHASE_STATUS: Record<TurnPhase, string> = {
+  idle: 'CONNECTED · HOLD TO TALK',
+  talking: 'LISTENING · RELEASE TO SEND',
+  thinking: 'MARTY IS THINKING',
+  speaking: 'MARTY IS SPEAKING · HOLD TO CUT IN',
+};
 
 type Line = { id: string; who: 'you' | 'marty' | 'system'; text: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
@@ -20,6 +35,12 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
   const [draft, setDraft] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState('');
+  const [lastTiming, setLastTiming] = useState('');
+  const turnRef = useRef<TurnController | null>(null);
+  const tailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastContextKeyRef = useRef<string>('');
+  const requestContextKeyRef = useRef<string>('');
   const coordinatorRef = useRef<VoiceSessionCoordinator | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -71,6 +92,10 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
     sessionStartedRef.current = false;
+    if (tailTimerRef.current) { clearTimeout(tailTimerRef.current); tailTimerRef.current = null; }
+    if (contextTimerRef.current) { clearTimeout(contextTimerRef.current); contextTimerRef.current = null; }
+    turnRef.current = null;
+    lastContextKeyRef.current = '';
     sessionStartedRejectRef.current?.(new Error('Voice session closed before it was ready.'));
     sessionStartedRejectRef.current = null;
     sessionStartedResolveRef.current = null;
@@ -101,9 +126,18 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     pc.ontrack = event => { audio.srcObject = event.streams[0]; void audio.play().catch(() => undefined); };
     stream.getTracks().forEach(track => { track.enabled = false; pc.addTrack(track, stream); });
     const dc = pc.createDataChannel('oai-events'); dcRef.current = dc;
+    const turn = new TurnController({
+      send: evt => { if (dc.readyState === 'open') dc.send(JSON.stringify(evt)); },
+      onPhase: phase => { if (turnRef.current === turn) setStatus(PHASE_STATUS[phase]); },
+      onTiming: timing => { if (turnRef.current === turn) reportTiming(timing); },
+    });
+    turnRef.current = turn;
     dc.onmessage = event => {
       try {
         const data = JSON.parse(event.data);
+        turn.handleServerEvent(data);
+        // Unmute as soon as a new reply starts playing (it is muted on barge-in/interrupt).
+        if (data.type === 'output_audio_buffer.started' && audioRef.current) audioRef.current.muted = false;
         if (data.type === 'session.created') {
           sessionStartedRef.current = true;
           sessionStartedRejectRef.current = null;
@@ -114,18 +148,17 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
         if (data.type === 'response.function_call_arguments.done' && typeof data.name === 'string' && typeof data.call_id === 'string') {
           void (async () => {
             const result = await runMartyNavigationTool(data.name, data.arguments || "{}");
-            if (dc.readyState !== 'open') return;
+            if (dc.readyState !== 'open' || turnRef.current !== turn) return;
             addLine('system', result);
-            dc.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: data.call_id, output: result } }));
-            dc.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
+            // Queued behind the current reply, so the follow-up never overlaps it.
+            turn.sendToolResult(data.call_id, result);
           })();
         }
-        if (data.type === 'response.output_audio_transcript.done' && data.transcript) addLine('marty', data.transcript);
-        if (data.type === 'response.output_audio_transcript.delta' && data.delta) setStatus('MARTY IS SPEAKING');
-        if (data.type === 'response.done') {
-          setStatus('CONNECTED · HOLD TO TALK');
+        if (data.type === 'response.output_audio_transcript.done' && data.transcript) {
+          addLine('marty', turn.wasInterrupted(data.item_id) ? `${data.transcript} (cut off)` : data.transcript);
         }
-        if (data.type === 'error') {
+        // Races such as cancelling a reply that already finished are harmless; only real failures end the session.
+        if (data.type === 'error' && isFatalRealtimeError(data)) {
           sessionStartedRejectRef.current?.(new Error('Realtime session reported an error.'));
           sessionStartedRejectRef.current = null;
           failTransport(dc, pc, 'Marty’s voice connection encountered an error. Start a new session.');
@@ -136,10 +169,19 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     await pc.setLocalDescription(offer);
     await new Promise<void>((resolve, reject) => {
       if (pc.iceGatheringState === 'complete') return resolve();
-      const timeout = window.setTimeout(() => reject(new Error('Network setup timed out.')), 12000);
-      pc.onicegatheringstatechange = () => {
-        if (pc.iceGatheringState === 'complete') { window.clearTimeout(timeout); resolve(); }
+      // Full ICE gathering can take seconds on some networks. Once we have a usable route,
+      // stop waiting after a short grace period so Marty connects quickly.
+      let candidates = 0;
+      let done = false;
+      const finish = () => { if (done) return; done = true; window.clearTimeout(timeout); window.clearTimeout(grace); resolve(); };
+      const timeout = window.setTimeout(() => { if (done) return; done = true; window.clearTimeout(grace); if (candidates > 0) resolve(); else reject(new Error('Network setup timed out.')); }, 12000);
+      const grace = window.setTimeout(() => { if (candidates > 0) finish(); }, ICE_GRACE_MS);
+      pc.onicecandidate = event => {
+        if (!event.candidate) return;
+        candidates += 1;
+        if (/ typ (srflx|relay) /.test(` ${event.candidate.candidate} `)) finish();
       };
+      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') finish(); };
     });
     const response = await fetch('https://api.openai.com/v1/realtime/calls', {
       method: 'POST',
@@ -191,7 +233,34 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
       }
     };
     addLine('system', 'Marty is at the bar. Hold the button when you want to speak.');
+    // The screen at start went in the session request; send only later changes.
+    lastContextKeyRef.current = requestContextKeyRef.current;
+    sendScreenContextNow();
   }
+
+  function reportTiming(timing: TurnTiming) {
+    // Logged so a test session can check the timing between turns.
+    console.info('[marty-timing]', JSON.stringify(timing));
+    if (timing.releaseToFirstAudioMs != null) setLastTiming(`Last reply started ${(timing.releaseToFirstAudioMs / 1000).toFixed(1)} s after you let go.`);
+    else if (timing.interruptToSilenceMs != null) setLastTiming('Marty stopped.');
+  }
+
+  function sendScreenContextNow() {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== 'open' || !turnRef.current) return;
+    const ctx = getScreenContext();
+    const key = screenContextKey(ctx);
+    if (!ctx || key === lastContextKeyRef.current) return;
+    const event = buildScreenContextUpdateEvent(withCapturedAt(ctx));
+    if (!event) return;
+    lastContextKeyRef.current = key;
+    dc.send(JSON.stringify(event));
+  }
+
+  useEffect(() => subscribeScreenContext(() => {
+    if (contextTimerRef.current) clearTimeout(contextTimerRef.current);
+    contextTimerRef.current = setTimeout(() => { contextTimerRef.current = null; sendScreenContextNow(); }, CONTEXT_DEBOUNCE_MS);
+  }), []);
 
   async function startSession() {
     if (!session?.access_token || busy || !consent) return;
@@ -201,7 +270,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     adapter = {
       requestMicrophonePermission: async () => {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
           stream.getTracks().forEach(track => { track.enabled = false; });
           streamRef.current = stream;
           return 'granted';
@@ -210,8 +279,11 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
       connect: connectTransport,
       close: closeTransport,
     };
+    const startContext = getScreenContext();
+    requestContextKeyRef.current = screenContextKey(startContext);
     const coordinator = new VoiceSessionCoordinator({
       supabaseUrl, accessToken: session.access_token, consentVersion: MARTY_BOSTON_CONSENT_VERSION,
+      screenContext: startContext ? withCapturedAt(startContext) : null,
       platform: adapter, consentConfirmed: true,
     });
     coordinatorRef.current = coordinator;
@@ -233,30 +305,46 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     finally { setBusy(false); }
   }
 
+  function muteMartyNow() {
+    // Local mute makes the cut-off instant; the server-side clear stops the rest of the reply.
+    const turn = turnRef.current;
+    if (audioRef.current && turn && (turn.isAudioPlaying || turn.isResponseActive)) audioRef.current.muted = true;
+  }
+
   function beginTalk() {
     const track = streamRef.current?.getAudioTracks()[0];
-    if (!track || dcRef.current?.readyState !== 'open' || isTalkingRef.current) return;
+    const turn = turnRef.current;
+    if (!track || !turn || dcRef.current?.readyState !== 'open') return;
+    // Pressed again during the release tail: keep the same turn going.
+    if (tailTimerRef.current) { clearTimeout(tailTimerRef.current); tailTimerRef.current = null; return; }
+    if (isTalkingRef.current) return;
     isTalkingRef.current = true;
-    track.enabled = true; setStatus('LISTENING · RELEASE TO SEND');
+    // Open the mic first so the first word is never lost, then cut Marty off if he is talking.
+    track.enabled = true;
+    muteMartyNow();
+    turn.pressTalk();
   }
 
   function endTalk() {
-    if (!isTalkingRef.current) return;
-    isTalkingRef.current = false;
-    const track = streamRef.current?.getAudioTracks()[0];
-    if (track) track.enabled = false;
-    if (!track || dcRef.current?.readyState !== 'open') return;
-    dcRef.current.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-    dcRef.current.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
-    setStatus('MARTY IS THINKING');
+    if (!isTalkingRef.current || tailTimerRef.current) return;
+    tailTimerRef.current = setTimeout(() => {
+      tailTimerRef.current = null;
+      isTalkingRef.current = false;
+      const track = streamRef.current?.getAudioTracks()[0];
+      if (track) track.enabled = false;
+      if (!track || dcRef.current?.readyState !== 'open') return;
+      const result = turnRef.current?.releaseTalk();
+      if (result === 'too_short') setLastTiming('That was a quick tap. Hold the button while you speak.');
+    }, TALK_TAIL_MS);
   }
 
   function sendText() {
     const text = draft.trim();
-    if (!text || dcRef.current?.readyState !== 'open') return;
-    dcRef.current.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }));
-    dcRef.current.send(JSON.stringify({ type: 'response.create', response: { output_modalities: ['audio'] } }));
-    addLine('you', text); setDraft(''); setStatus('MARTY IS THINKING');
+    const turn = turnRef.current;
+    if (!text || !turn || dcRef.current?.readyState !== 'open') return;
+    muteMartyNow();
+    turn.sendText(text);
+    addLine('you', text); setDraft('');
   }
 
   async function stop() {
@@ -266,15 +354,12 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     setStatus('OFFLINE');
   }
 
-  async function interrupt() {
-    isTalkingRef.current = false;
-    if (dcRef.current?.readyState === 'open') {
-      dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
-      dcRef.current.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
-    }
-    await coordinatorRef.current?.interrupt();
-    coordinatorRef.current = null;
-    setStatus('INTERRUPTED');
+  function interrupt() {
+    // Stops Marty mid-sentence but keeps the session open, so you can talk straight away.
+    const turn = turnRef.current;
+    if (!turn || dcRef.current?.readyState !== 'open') return;
+    muteMartyNow();
+    turn.interrupt();
   }
 
   useFocusEffect(useCallback(() => {
@@ -319,12 +404,13 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
       {Platform.OS !== 'web' ? <Text style={s.notice}>Native iOS voice transport is not validated yet. Use the secure web preview for this audition.</Text> : null}
       <View style={s.card}>
         <Text style={s.status}>{status}</Text>
-        <Text style={s.body}>Push-to-talk only. The microphone is disabled between turns. Release the button to commit your speech and ask Marty to respond.</Text>
+        <Text style={s.body}>Push-to-talk only. The microphone is off between turns. Hold to talk (this also cuts Marty off), release to send. Marty can see what is on screen: the scanned menu, bottle or Journey.</Text>
         {!coordinatorRef.current ? <Pressable disabled={!consent || busy || Platform.OS !== 'web'} style={[s.primary, (!consent || busy || Platform.OS !== 'web') && s.disabled]} onPress={() => void startSession()}><Text style={s.primaryText}>{busy ? 'CONNECTING…' : 'START VOICE SESSION'}</Text></Pressable> : <>
           <Pressable style={s.talk} onPressIn={beginTalk} onPressOut={endTalk}><Text style={s.talkText}>HOLD TO TALK</Text></Pressable>
-          <Pressable style={s.secondary} onPress={() => void interrupt()}><Text style={s.secondaryText}>INTERRUPT MARTY</Text></Pressable>
+          <Pressable style={s.secondary} onPress={interrupt}><Text style={s.secondaryText}>INTERRUPT MARTY</Text></Pressable>
           <Pressable style={s.secondary} onPress={() => void stop()}><Text style={s.secondaryText}>END SESSION</Text></Pressable>
         </>}
+        {!!lastTiming && <Text style={s.notice}>{lastTiming}</Text>}
         {!!error && <Text style={s.error}>{error}</Text>}
       </View>
       <View style={s.card}>
