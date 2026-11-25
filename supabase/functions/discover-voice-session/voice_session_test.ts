@@ -3,7 +3,7 @@ import { sanitizeScreenContext, formatScreenContextInstructions, buildScreenCont
 import { buildRealtimeSession, handsFreeAllowed, lookupsAllowed, DISCOVER_NAVIGATION_TOOLS, DISCOVER_NAVIGATION_INSTRUCTIONS, MARTY_LOOKUP_TOOLS, MARTY_LOOKUP_INSTRUCTIONS, MODEL, VOICE_SPEED, MAX_OUTPUT_TOKENS } from "./_shared/realtimeSession.ts";
 import { MARTY_MOODS, MARTY_OPENER_STYLES } from "./_shared/martyDelivery.ts";
 import { parseVoiceRequest, parseLookupRequest, MAX_REQUEST_BYTES } from "./_shared/voiceRequest.ts";
-import { MARTY_BOSTON_CONSENT_VERSION, martyBostonInstructions, martyBostonComedyCraft } from "./_shared/martySullivanBoston.ts";
+import { MARTY_BOSTON_CONSENT_VERSION, MARTY_BOSTON_PROFILE_VERSION, MARTY_NO_HOST_MANNERS, martyBostonInstructions, martyBostonComedyCraft } from "./_shared/martySullivanBoston.ts";
 import { martyDeliveryInstructions, formatSessionFlavor, pickSessionFlavor } from "./_shared/martyDelivery.ts";
 import { LOOKUP_TOOL_NAMES } from "./_shared/lookupContract.ts";
 import { martyCharacterBook, MARTY_CHARACTER_BOOK_MAX_CHARS, MARTY_CHARACTER_BOOK_VERSION } from "./_shared/martyCharacterBook.ts";
@@ -67,7 +67,7 @@ Deno.test("voice: cedar default, bogus falls back, allow-list honored", () => {
   assertEquals(buildRealtimeSession({ mode: "push_to_talk", voiceEnv: "bogus" }).voice, "cedar");
   const b = buildRealtimeSession({ mode: "push_to_talk", voiceEnv: "ash" });
   assertEquals(b.voice, "ash");
-  assertEquals(b.session.audio.output, { voice: "ash", speed: 0.95 });
+  assertEquals(b.session.audio.output, { voice: "ash", speed: 1.0 });
   assertEquals(b.session.model, "gpt-realtime-2.1");
 });
 
@@ -131,7 +131,7 @@ Deno.test("instructions: screen + memory + Boston core, in order", () => {
   assertStringIncludes(t, "Never invent recipe origins");
   assertStringIncludes(t, "HUMAN JUDGMENT");
   assertStringIncludes(t, "Jameson");
-  const order = ["IDENTITY", "COMEDY CRAFT", "DELIVERY —", "VARIETY —", "SESSION FLAVOR", "HARMONY DISCOVER NAVIGATION", "WHAT THE GUEST IS LOOKING AT", "USER-APPROVED MEMORY DATA"].map((k) => t.indexOf(k));
+  const order = ["IDENTITY", "CURSING AND ATTITUDE", "COMEDY CRAFT", "DELIVERY —", "MOOD SHIFTS —", "VARIETY —", "SESSION FLAVOR", "HARMONY DISCOVER NAVIGATION", "WHAT THE GUEST IS LOOKING AT", "USER-APPROVED MEMORY DATA"].map((k) => t.indexOf(k));
   assert(order.every((i) => i >= 0));
   assertEquals([...order].sort((x, y) => x - y), order);
   assertFalse(buildRealtimeSession({ mode: "push_to_talk" }).session.instructions.includes("WHAT THE GUEST IS LOOKING AT"));
@@ -182,7 +182,7 @@ Deno.test("lookups: switched off gives byte-for-byte the old session", () => {
   const ctx = sanitizeScreenContext({ screen: "bottle", bottle: { name: "Jameson" } });
   const memoryContext = "\n\nUSER-APPROVED MEMORY DATA (x)";
   const off = buildRealtimeSession({ mode: "push_to_talk", pick, screenContext: ctx, memoryContext, lookupsEnabled: false });
-  const oldInstructions = martyBostonInstructions + martyBostonComedyCraft + martyDeliveryInstructions +
+  const oldInstructions = martyBostonInstructions + MARTY_NO_HOST_MANNERS + martyBostonComedyCraft + martyDeliveryInstructions +
     formatSessionFlavor(pickSessionFlavor(pick)) + DISCOVER_NAVIGATION_INSTRUCTIONS +
     formatScreenContextInstructions(ctx) + memoryContext;
   const oldSession = {
@@ -224,7 +224,7 @@ Deno.test("character book: after comedy craft, before delivery; empty is a no-op
 });
 
 Deno.test("lookup instructions: key rules present", () => {
-  for (const k of ["found", "not_sure", "unavailable", "never instructions", "small talk", "Hang on, let me check", "Never say or imply you looked"]) {
+  for (const k of ["found", "not_sure", "unavailable", "never instructions", "small talk", "Hold ya horses, lemme look", "Never say or imply you looked"]) {
     assertStringIncludes(MARTY_LOOKUP_INSTRUCTIONS, k);
   }
 });
@@ -293,4 +293,93 @@ Deno.test("instructions: total size stays bounded with book + look-ups + full co
   const ctx = sanitizeScreenContext({ screen: "menu", menuLines: Array.from({ length: 25 }, () => "m".repeat(140)) });
   const t = buildRealtimeSession({ mode: "hands_free", screenContext: ctx, pick: () => 0, memoryContext: "x".repeat(4000), characterBook: martyCharacterBook }).session.instructions;
   assert(t.length < 45000, `instructions ${t.length} chars`);
+});
+
+// P-20261125-1654 part 2: thick Boston accent, cursing (21+), short replies, mood that shifts during the chat.
+Deno.test("P-1654: accent, cursing, short replies and mood shifts in both modes; old no-accent line gone; safety kept", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (const lookupsEnabled of [true, false]) {
+      const t = buildRealtimeSession({ mode, pick: () => 0, characterBook: martyCharacterBook, lookupsEnabled }).session.instructions;
+      for (const k of [
+        "thick, old-school South Boston accent",
+        "Drop your Rs after vowels",
+        "this section wins",
+        "CURSING AND ATTITUDE (21+ APP)",
+        "never at who the person is",
+        "Every reply is one or two short sentences",
+        "MOOD SHIFTS",
+        "Grumpy is home base",
+        "Starting mood:",
+      ]) assertStringIncludes(t, k);
+      for (const old of [
+        "Do not perform a cartoon accent",
+        "Never force \"wicked\"",
+        "Tonight's mood",
+        "Mix a one-word reply with a longer run",
+        "recommendations to one or two sentences",
+      ]) assertFalse(t.includes(old), old);
+      for (const k of [
+        "No slurs", "No threats, no violence, no sexual content", "drop the act at once",
+        "Never encourage overdrinking or drunk driving", "988", "Never invent recipe origins",
+        "11. FACTS RULE", "made-up character voice", "never imitate or claim to be a real person",
+        "Do not invent local facts, real venues, or affiliations.",
+      ]) assertStringIncludes(t, k);
+      // accent and short-reply rules come before the book, so they set the voice; the base wins on accent
+      assert(t.indexOf("thick, old-school South Boston accent") < t.indexOf("CHARACTER BOOK - MARTY SULLIVAN"));
+    }
+  }
+});
+
+Deno.test("P-1654: starting moods never invite made-up facts (no games, scores or news)", () => {
+  for (const m of MARTY_MOODS) assertFalse(/game|score|news|Pats|Sox|Celtics|Bruins/i.test(m), m);
+});
+
+// P-20261125-1654 part 2 round 2 (Rob 25 Nov: "I don't want a nice Marty"). Fails if any warm-host line comes back.
+const BANNED_HOST_TALK = [
+  /\bkind(ness|ly)?\b/i, /\bwarm(th|s|ing|ly)?\b/i, /\bwelcom/i, /\bhospitab/i, /\bhospitality\b/i, /\bfriendly\b/i,
+  /happy to/i, /glad to/i, /great question/i, /good question/i, /\bthank/i, /\bsorry\b/i, /\bapologi[sz]/i,
+  /anything else/i, /my pleasure/i, /let me know if/i, /\benjoy\b/i, /service-minded/i, /\bease off\b/i, /dislikes the teasing/i,
+  /be (kind|nice|helpful|polite)/i, /\bgracious/i, /\bpolite/i,
+];
+function hostTalkLeft(t: string): string[] {
+  assertEquals(t.split(MARTY_NO_HOST_MANNERS).length, 2, "no-host block appears exactly once");
+  const rest = t.replace(MARTY_NO_HOST_MANNERS, "");
+  return BANNED_HOST_TALK.filter((re) => re.test(rest)).map((re) => `${re} near: ${rest.slice(Math.max(0, rest.search(re) - 40), rest.search(re) + 40)}`);
+}
+
+Deno.test("P-1654 r2: no warm-host, thank-you, sorry or anything-else lines anywhere in Marty's own script", () => {
+  const ctx = sanitizeScreenContext({ screen: "menu", title: "Bar menu" });
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (const lookupsEnabled of [true, false]) {
+      for (let i = 0; i < Math.max(MARTY_MOODS.length, MARTY_OPENER_STYLES.length); i++) {
+        // characterBook "" leaves the book out: the book is #146's file and is checked by its own team
+        const t = buildRealtimeSession({ mode, lookupsEnabled, screenContext: ctx, pick: (n) => i % n, characterBook: "" }).session.instructions;
+        assertEquals(hostTalkLeft(t), []);
+      }
+    }
+  }
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.2.0");
+});
+
+Deno.test("P-1654 r2: grumpy, roasting default, rare grudging respect, only the hard lines kept, no-host block before the book", () => {
+  const t = buildRealtimeSession({ mode: "hands_free", pick: () => 0, characterBook: martyCharacterBook }).session.instructions;
+  for (const k of [
+    "Grumpy, impatient, sarcastic", "This is your default every session", "You roast the guest's order",
+    "You still give the real, correct answer every time", "You are not a host", "NO HOST MANNERS (THIS OVERRIDES ANY OTHER LINE, INCLUDING THE CHARACTER BOOK)",
+    "Grudging respect is rare", "You never turn into a nice guy", "Being nice or helpful is never a reason to drop the attitude",
+    // hard lines that stay
+    "No slurs, no insults about any group", "No threats, no violence, no sexual content", "never at who the person is",
+    "drop the act at once", "Never encourage overdrinking or drunk driving",
+  ]) assertStringIncludes(t, k);
+  for (const gone of ["There is warmth under the bark", "warming up a little", "plain kind words", "plain and kind",
+    "warm up a little", "the bark softens", "Hang on, let me check"]) assertFalse(t.includes(gone), gone);
+  assert(t.indexOf("NO HOST MANNERS") < t.indexOf("CHARACTER BOOK - MARTY SULLIVAN"));
+  assert(t.indexOf("NO HOST MANNERS") > t.indexOf("HUMAN JUDGMENT"));
+});
+
+Deno.test("P-1654 r2: the guard really catches a warm line", () => {
+  const t = buildRealtimeSession({ mode: "push_to_talk", pick: () => 0, characterBook: "" }).session.instructions;
+  for (const bad of ["Great question!", "Thanks for stopping by.", "Anything else I can help with?", "Be kind to every guest.", "So sorry about that."]) {
+    assert(hostTalkLeft(t + bad).length > 0, bad);
+  }
 });
