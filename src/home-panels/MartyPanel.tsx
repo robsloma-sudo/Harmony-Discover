@@ -6,6 +6,7 @@ import { supabase } from '../services/supabase';
 import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voiceSessionCoordinator';
 import type { VoiceSessionGrant } from '../voice/sessionContract';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
+import { ensureMartySession, grantMartyVoiceConsent, martyAccountNote } from '../voice/martyGuest';
 import { TurnController, isFatalRealtimeError, type TurnPhase, type TurnTiming } from '../voice/turnController';
 import { buildScreenContextUpdateEvent, getScreenContext, screenContextKey, subscribeScreenContext, withCapturedAt } from '../voice/screenContext';
 
@@ -262,8 +263,28 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     contextTimerRef.current = setTimeout(() => { contextTimerRef.current = null; sendScreenContextNow(); }, CONTEXT_DEBOUNCE_MS);
   }), []);
 
-  async function startSession() {
-    if (!session?.access_token || busy || !consent) return;
+  // One tap: start the guest session if nobody is signed in (no sign-in screen), record the
+  // voice consent this tap gives, then go straight on to the microphone and Marty.
+  async function enableVoice() {
+    if (busy) return;
+    setBusy(true); setError(''); setStatus('GETTING MARTY READY');
+    let token = '';
+    try {
+      const active = await ensureMartySession();
+      await grantMartyVoiceConsent(active.user.id);
+      token = active.access_token;
+      setConsent(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not get Marty ready. Please try again.');
+      setStatus('OFFLINE');
+      return;
+    } finally { setBusy(false); }
+    await startSession({ accessToken: token, consentGiven: true });
+  }
+
+  async function startSession(override?: { accessToken: string; consentGiven: true }) {
+    const accessToken = override?.accessToken ?? session?.access_token;
+    if (!accessToken || busy || !(consent || override?.consentGiven)) return;
     if (Platform.OS !== 'web') { setError('The native iOS audio adapter still needs device validation. Use the secure web preview for this voice test.'); return; }
     setBusy(true); setError(''); setStatus('REQUESTING MICROPHONE');
     let adapter: VoicePlatformAdapter;
@@ -282,7 +303,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     const startContext = getScreenContext();
     requestContextKeyRef.current = screenContextKey(startContext);
     const coordinator = new VoiceSessionCoordinator({
-      supabaseUrl, accessToken: session.access_token, consentVersion: MARTY_BOSTON_CONSENT_VERSION,
+      supabaseUrl, accessToken, consentVersion: MARTY_BOSTON_CONSENT_VERSION,
       screenContext: startContext ? withCapturedAt(startContext) : null,
       platform: adapter, consentConfirmed: true,
     });
@@ -397,9 +418,11 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
       <Text style={s.title}>Pull up a stool.</Text>
       <Text style={s.body}>Boston / South Boston profile v1.0.0. Older neighborhood bartender. Dry wit. Serious beverage knowledge. No cartoon accent.</Text>
       {loadingConsent ? <Text style={s.status}>Checking your consent…</Text> : !consent ? <View style={s.card}>
-        <Text style={s.heading}>Voice consent is off.</Text>
-        <Text style={s.body}>Marty does not request microphone access until you explicitly enable voice here.</Text>
-        <Pressable style={s.primary} onPress={onOpenSettings}><Text style={s.primaryText}>REVIEW VOICE CONSENT</Text></Pressable>
+        <Text style={s.heading}>Turn on Marty’s voice?</Text>
+        <Text style={s.body}>Tapping Enable voice is your consent to push-to-talk voice with Marty. Your phone then asks for the microphone. The microphone is only on while you hold to talk. No background listening. Saved memory stays off unless you turn it on separately.</Text>
+        <Text style={s.notice}>{martyAccountNote(session)}</Text>
+        <Pressable style={[s.primary, busy && s.disabled]} disabled={busy} onPress={() => void enableVoice()}><Text style={s.primaryText}>{busy ? 'GETTING READY…' : 'ENABLE VOICE'}</Text></Pressable>
+        <Pressable style={s.secondary} onPress={onOpenSettings}><Text style={s.secondaryText}>VOICE & MEMORY SETTINGS</Text></Pressable>
       </View> : null}
       {Platform.OS !== 'web' ? <Text style={s.notice}>Native iOS voice transport is not validated yet. Use the secure web preview for this audition.</Text> : null}
       <View style={s.card}>
