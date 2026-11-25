@@ -324,7 +324,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     setHandsFree(alwaysOn);
     setConnected(true);
     if (alwaysOn) {
-      // Always-on: the microphone stays on for the whole session (the listening sign shows it).
+      // Always-on: the microphone stays on for the whole session (the listening ring on his face shows it).
       stream.getAudioTracks().forEach(track => { track.enabled = true; });
       setNotice('');
       addLine('system', 'Marty is listening. Just talk. Turn him off any time with the switch.');

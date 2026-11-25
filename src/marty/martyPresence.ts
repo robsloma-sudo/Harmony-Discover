@@ -5,7 +5,7 @@
  *   it hides the button and the face, and every listener (the voice hook) must stop the
  *   microphone and his voice at once. The same switch is on the face and in Settings.
  * - open: the face sheet is up. Closing the sheet does not end the voice session; the
- *   button keeps a clear "listening" sign while the microphone is on.
+ *   button shows his face with its listening ring while the microphone is on.
  *
  * Pure module (no React, no React Native) so it can be unit tested. Remembered on this device.
  */
@@ -53,7 +53,7 @@ export function openMarty(): void {
   set({ enabled: true, open: true });
 }
 
-/** Slide the face down. Voice keeps running if it is on; the button shows that it is listening. */
+/** Slide the face down. Voice keeps running if it is on; his face ring shows that he is listening. */
 export function closeMartyFace(): void { set({ ...state, open: false }); }
 
 /** The one off switch (face and Settings). Off = no button, no face, no microphone, no voice. */
