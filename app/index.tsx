@@ -23,11 +23,12 @@ import { useVenueCheckin } from '../src/services/useVenueCheckin';
 import { fetchVenueFeed } from '../src/services/discoverVenueApi';
 import { sceneFromVenueFeed, type PriorName } from '../src/live/partialEvidence';
 import JourneyPlayerOverlay, { type JourneyScanItem } from '../src/home-panels/JourneyPlayerOverlay';
-import { MartyPanel } from '../src/home-panels/MartyPanel';
 import { MartyConsentPanel } from '../src/home-panels/MartyConsentPanel';
 import LidarScannerPanel from '../src/home-panels/LidarScannerPanel';
 import { LiveInventoryPanel } from './live-inventory';
 import { PreviewPanel } from './preview';
+import { MartyOverlay, useMartyPresence } from '../src/marty/MartyOverlay';
+import { openMarty, setMartyEnabled } from '../src/marty/martyPresence';
 import { FoundTray, FoundFlightLabel, type FoundFlight } from '../src/live/FoundTray';
 import { publishScreenContext } from '../src/voice/screenContext';
 import { displayName, mergeFound, type FoundItem } from '../src/live/foundTray';
@@ -279,7 +280,9 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [journeyItems, setJourneyItems] = useState<JourneyScanItem[]>([]);
   const [activeJourney, setActiveJourney] = useState<JourneyScanItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
-  const [martyConsentOpen, setMartyConsentOpen] = useState(false);
+  const martyPresence = useMartyPresence();
+  // The /bartender route opens Marty's face on the scanner (camera keeps running).
+  useEffect(() => { if (initialPanel === 'marty') openMarty(); }, [initialPanel]);
   // Tell Marty what is on screen (menu lines, bottle in view, the open Journey or recipe) whenever it changes.
   useEffect(() => {
     publishScreenContext({
@@ -288,7 +291,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
       journey: activeJourney ? { kind: activeJourney.kind, name: activeJourney.name } : null,
     });
   }, [liveMenu, liveBottles, activeJourney]);
-  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
+  const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' && initialPanel !== 'marty' ? initialPanel : null);
   const [nearbyCommand,setNearbyCommand] = useState<{id:number;action:'set_radius'|'set_category'|'search'|'recenter'|'configure';radius_miles?:number;category?:string;search?:string}|null>(null);
   const nearbyCommandId = useRef(0);
   const nearbyCommandResolvers = useRef(new Map<number,(result:string)=>void>());
@@ -614,7 +617,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
 
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Settings" style={s.utilityControl} onPress={() => setSettingsOpen(v => !v)}><Ionicons name="settings-outline" size={compactDock ? 14 : 16} color={C.ivory} /><Text style={s.utilityLabel}>SETTINGS</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => setActivePanel('marty')}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Marty" style={s.utilityControl} onPress={() => { setActivePanel(null); setSettingsOpen(false); openMarty(); }}><Ionicons name="chatbubble-ellipses-outline" size={compactDock ? 15 : 17} color={C.brass} /><Text style={[s.utilityLabel, { color: C.brass }]}>MARTY</Text></Pressable>
         </View>
       </View>
       {venueCheckin.active && !venueCheckin.prompt && <View style={{position:'absolute',zIndex:30,top:insets.top+8,alignSelf:'center',flexDirection:'row',alignItems:'center',paddingHorizontal:11,paddingVertical:6,borderRadius:14,backgroundColor:'rgba(6,14,30,0.88)',borderWidth:1,borderColor:'rgba(255,209,102,0.7)'}}>
@@ -632,15 +635,8 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
             <Text style={{color:C.ivory,fontSize:activePanel==='nearby'?10:12,fontWeight:'900',letterSpacing:1.5}}>{({favorites:'FAVORITES',nearby:'NEARBY ATLAS',marty:'MARTY SULLIVAN',privacy:'PRIVACY & CONTRIBUTIONS',inventory:'LIVE INVENTORY SCANNER',lidar:'LIVE 3D / LIDAR SCANNER',collection:'MY COLLECTION',taste:'MY TASTE'} as const)[activePanel]}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Close panel" onPress={()=>setActivePanel(null)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable>
           </View>
-          {activePanel!=='lidar' && activePanel!=='nearby' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='marty'?'Your beverage guide, on this camera screen':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
-          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney} checkedInVenueRef={venueCheckin.active?.venueRef ?? null}/> : activePanel==='marty' ? <MartyPanel onOpenSettings={()=>setMartyConsentOpen(true)} onNavigateCommand={handleMartyAppCommand}/> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
-          {activePanel==='marty' && martyConsentOpen && <>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close Marty consent settings" onPress={()=>setMartyConsentOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:80,backgroundColor:'rgba(0,0,0,0.48)'}} />
-            <View style={{position:'absolute',zIndex:81,left:0,right:0,bottom:0,maxHeight:'88%',padding:12,borderTopLeftRadius:18,borderTopRightRadius:18,backgroundColor:'rgba(10,13,18,0.995)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)'}}>
-              <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:8}}><Text style={{color:C.ivory,fontSize:11,fontWeight:'900',letterSpacing:1.3}}>MARTY · VOICE & MEMORY CONSENT</Text><Pressable onPress={()=>setMartyConsentOpen(false)}><Ionicons name="close-circle-outline" size={22} color={C.muted}/></Pressable></View>
-              <MartyConsentPanel />
-            </View>
-          </>}
+          {activePanel!=='lidar' && activePanel!=='nearby' && <Text style={{color:C.ivory,fontSize:14,fontWeight:'800',marginBottom:6}}>{activePanel==='favorites'?'Your saved discoveries':activePanel==='marty'?'Voice & memory choices':activePanel==='privacy'?'Your data and contribution choices':activePanel==='collection'?'Your saved beverage discoveries':'Your personal flavor profile'}</Text>}
+          {activePanel==='lidar' ? <LidarScannerPanel onClose={()=>setActivePanel(null)} tracking={liveTracking} depthStatus={liveDepthStatus} depthFrame={liveDepthFrame} candidates={liveCandidates} bottles={liveBottles} /> : activePanel==='privacy' ? <PrivacyPanel/> : activePanel==='nearby' ? <NearbyPanel command={nearbyCommand} onCommandResult={handleNearbyCommandResult} journeyItems={journeyItems} onOpenJourney={setActiveJourney} checkedInVenueRef={venueCheckin.active?.venueRef ?? null}/> : activePanel==='marty' ? <MartyConsentPanel /> : <Text style={{color:C.muted,fontSize:11,lineHeight:17}}>{activePanel==='favorites'?'Your saved items will appear here. No saved discoveries are currently loaded.':activePanel==='collection'?'Your saved drinks, bottles, wines and Journeys will appear here. Collection sync is not enabled yet.':activePanel==='taste'?'Your optional flavor profile will develop from discoveries you choose to save. Taste profiling is not active yet.':'3D depth scanning depends on supported native device capabilities and is not available as a web-page route.'}</Text>}
         </View>
       </>}
       {selectedBottle && (() => {
@@ -685,6 +681,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
         </View>
         );
       })()}
+      <MartyOverlay bottomOffset={Math.max(insets.bottom,Platform.OS==='ios'?8:6)+76} hidden={settingsOpen || !!activePanel || !!scanPhotos || !!selectedBottle || !!activeJourney || !!askingTrack} onNavigateCommand={handleMartyAppCommand} onOpenConsent={()=>{setActivePanel('marty');}} />
       {activeJourney && <JourneyPlayerOverlay item={activeJourney} onClose={()=>setActiveJourney(null)}/>}
       {settingsOpen && <>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss settings menu" onPress={()=>setSettingsOpen(false)} style={{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:60,backgroundColor:'transparent'}} />
@@ -705,6 +702,7 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
           <Pressable style={s.menuRow} onPress={()=>{setSettingsOpen(false);setActivePanel('inventory');}}><Ionicons name="scan-outline" size={18} color="#7DFFB5"/><View style={{flex:1}}><Text style={s.menuTitle}>Live Inventory Scanner</Text><Text style={s.menuDesc}>Live camera · OCR and barcode signals · product match pending</Text></View><Ionicons name="chevron-forward" size={15} color={C.muted}/></Pressable>
           <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={liveReadConsent ? 'Pause live recognition' : 'Enable live recognition'} onPress={()=>setLiveReadConsent(value=>!value)}><Ionicons name="scan-outline" size={18} color={liveReadConsent?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Live Recognition</Text><Text style={s.menuDesc}>Send cropped live frames to Discover and Anthropic for bottle and menu reading. Images are not saved. Bottles the scanner is sure of are saved as sightings to build the shared catalogue, and their missing facts are looked up on the web.</Text></View><Text style={[s.menuValue,{color:liveReadConsent?'#77E5B5':C.muted}]}>{liveReadConsent?'ON':'OFF'}</Text></Pressable>
           {!onPhone && <Pressable style={s.menuRow} accessibilityRole="button" accessibilityLabel={quickGuess ? 'Turn off quick guess' : 'Turn on quick guess'} onPress={()=>setQuickGuess(value=>!value)}><Ionicons name="flash-outline" size={18} color={quickGuess?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Quick Guess</Text><Text style={s.menuDesc}>{QUICK_GUESS_DESCRIPTION}</Text><Text style={s.menuDesc}>{QUICK_GUESS_DATA_NOTICE}</Text></View><Text style={[s.menuValue,{color:quickGuess?'#77E5B5':C.muted}]}>{quickGuess?'ON':'OFF'}</Text></Pressable>}
+          <Pressable style={s.menuRow} accessibilityRole="switch" accessibilityLabel={martyPresence.enabled ? 'Turn Marty off' : 'Turn Marty on'} onPress={()=>setMartyEnabled(!martyPresence.enabled)}><Ionicons name="chatbubble-ellipses-outline" size={18} color={martyPresence.enabled?'#77E5B5':C.brass}/><View style={{flex:1}}><Text style={s.menuTitle}>Marty</Text><Text style={s.menuDesc}>Marty's button on the scanner. Off stops his listening and talking at once and hides him.</Text></View><Text style={[s.menuValue,{color:martyPresence.enabled?'#77E5B5':C.muted}]}>{martyPresence.enabled?'ON':'OFF'}</Text></Pressable>
           </ScrollView>
         </View>
       </>}
