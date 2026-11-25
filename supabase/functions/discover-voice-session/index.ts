@@ -1,30 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { martyBostonInstructions, martyBostonComedyCraft, MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
+import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
+import { buildRealtimeSession, MODEL } from "./_shared/realtimeSession.ts";
+import { MAX_REQUEST_BYTES, parseVoiceRequest } from "./_shared/voiceRequest.ts";
 
 const DEV_REF = "lqqmwqrffelgnbngrkep";
-const MODEL = "gpt-realtime-2.1";
-const VOICE = "ash"; // audition baseline only; not a confirmed Boston voice selection.
-const MAX_REQUEST_BYTES = 2048;
-
-const DISCOVER_NAVIGATION_TOOLS = [
-  { type: "function", name: "navigate_discover", description: "Navigate the Harmony Discover app to one of its existing screens. Use when the user asks to go to, open, show, or take them to a screen.", parameters: { type: "object", additionalProperties: false, properties: { screen: { type: "string", enum: ["discover", "nearby", "library", "taste", "settings"] }, radius_miles: { type: "integer", enum: [1, 5, 10, 15, 20] }, category: { type: "string", enum: ["all", "bar", "cocktail_bar", "restaurant", "brewery", "winery", "distillery"] }, search: { type: "string" } }, required: ["screen"] } },
-  { type: "function", name: "control_nearby_atlas", description: "Change the Nearby Atlas view. Use only for a clear request to change radius, venue category, search phrase, or recenter the user's location.", parameters: { type: "object", additionalProperties: false, properties: { action: { type: "string", enum: ["set_radius", "set_category", "search", "recenter"] }, radius_miles: { type: "integer", enum: [1, 5, 10, 15, 20] }, category: { type: "string", enum: ["all", "bar", "cocktail_bar", "restaurant", "brewery", "winery", "distillery"] }, search: { type: "string" } }, required: ["action"] } }
-] as const;
-
-const DISCOVER_NAVIGATION_INSTRUCTIONS = `
-HARMONY DISCOVER NAVIGATION — DERIVED FROM HARMONY'S SEMANTIC INTERPRETER AND ATLAS INTENT PLANNER
-You are Marty inside Harmony Discover. Understand natural spoken language, not just exact button labels.
-When the user clearly asks to navigate or change the Nearby Atlas, call the matching function. Do not merely describe the action.
-Supported screens: Discover camera/home, Nearby world Atlas, Library/collection/favorites, My taste, Settings.
-Examples: "take me nearby", "open the atlas", "show bars around me" -> navigate_discover screen nearby; "go to my saved drinks" -> library; "back to the camera" -> discover.
-Nearby radius is exactly one of 1, 5, 10, 15, 20 miles. "Expand the search to ten miles" -> set_radius 10. "Show breweries" -> set_category brewery. "Only cocktail bars" -> set_category cocktail_bar. "Show restaurants" -> restaurant. "Search for [phrase]" -> search. "Find me again", "recenter", "use my location" -> recenter.
-A combined request such as "take me nearby and show breweries within ten miles" should use navigate_discover with screen nearby, radius_miles 10, category brewery.
-Preserve the current conversational context for follow-ups such as "make it five", "only wineries", "search for that place", "go back", and "recenter me".
-Never invent a screen, venue, result, map control, or capability. Only call these two functions for the actions they explicitly support. If the user asks for something not supported, explain the limitation and do not fake an action.
-Ask one short clarifying question if the requested screen or filter is genuinely ambiguous.
-Do not change account data, submit venue edits, or make purchases through navigation tools. A tool call is an instruction to the app, not permission for unrelated actions.
-`;
-
 
 const ALLOWED_HEADERS = "authorization, apikey, content-type, x-client-info";
 const ALLOWED_METHODS = "POST, OPTIONS";
@@ -88,9 +67,8 @@ Deno.serve(async (request: Request) => {
     if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) return json({ error: "Request body is too large." }, 413, origin);
     let input: unknown;
     try { input = JSON.parse(rawBody); } catch { return json({ error: "Request body must be valid JSON." }, 400, origin); }
-    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 2 ||
-        !("consentVersion" in input) || !("mode" in input) ||
-        input.consentVersion !== MARTY_BOSTON_CONSENT_VERSION || input.mode !== "push_to_talk") {
+    const parsed = parseVoiceRequest(input);
+    if (!parsed.ok) {
       return json({ error: "A current, explicit push-to-talk consent is required." }, 400, origin);
     }
 
@@ -136,22 +114,19 @@ Deno.serve(async (request: Request) => {
       }
     }
 
+    const built = buildRealtimeSession({
+      voiceEnv: Deno.env.get("MARTY_VOICE"),
+      handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE"),
+      mode: parsed.mode,
+      screenContext: parsed.screenContext,
+      memoryContext,
+    });
     const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: { Authorization: `Bearer ${openAiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         expires_after: { anchor: "created_at", seconds: 60 },
-        session: {
-          type: "realtime",
-          model: MODEL,
-          instructions: martyBostonInstructions + martyBostonComedyCraft + DISCOVER_NAVIGATION_INSTRUCTIONS + memoryContext,
-          tools: DISCOVER_NAVIGATION_TOOLS,
-          output_modalities: ["audio"],
-          audio: {
-            input: { transcription: { model: "gpt-live-transcribe" }, turn_detection: null },
-            output: { voice: VOICE, speed: 0.92 },
-          },
-        },
+        session: built.session,
       }),
     });
     if (!response.ok) {
@@ -171,7 +146,8 @@ Deno.serve(async (request: Request) => {
       expiresAt: new Date(Number(payload.expires_at) * 1000).toISOString(),
       transport: "webrtc",
       model: MODEL,
-      voice: VOICE,
+      voice: built.voice,
+      mode: built.mode,
     }, 200, origin);
   } catch {
     return json({ error: "Could not start the bartender voice session." }, 500, origin);
