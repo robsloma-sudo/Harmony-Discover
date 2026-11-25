@@ -4,6 +4,7 @@ import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useAuth } from '../src/auth/AuthContext';
 import { probeListeningTest, requestCompareSession } from '../src/voice/voiceCompareClient';
 import type { CompareLetter } from '../src/voice/voiceCompareClient';
+import { getMartyAgeAnswer, subscribeMartyAge, type MartyAgeAnswer } from '../src/marty/martyAge';
 import { connectGemini, connectWebrtc, type TransportHandle } from '../src/listeningTest/transports';
 import {
   LETTERS, TEST_LINES, failureMessage, loadScores, notWiredMessage, revealEnabled, saveScores,
@@ -28,6 +29,10 @@ export default function ListeningTest() {
   const activeRef = useRef<Letter | null>(null);
   const attemptRef = useRef(0);
   const isWeb = Platform.OS === 'web';
+  // Same 21+ answer as Marty: without a Yes on this device the listening test stays off.
+  const [ageAnswer, setAgeAnswer] = useState<MartyAgeAnswer>(getMartyAgeAnswer());
+  useEffect(() => { setAgeAnswer(getMartyAgeAnswer()); return subscribeMartyAge(setAgeAnswer); }, []);
+  const ageConfirmed = ageAnswer === 'yes';
 
   useEffect(() => { setScores(loadScores()); }, []);
 
@@ -65,7 +70,7 @@ export default function ListeningTest() {
     activeRef.current = letter;
     setMessages(m => ({ ...m, [letter]: '' }));
     setStates(s => ({ ...s, [letter]: 'connecting' }));
-    const result = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter as CompareLetter, mode: 'hands_free' });
+    const result = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter as CompareLetter, mode: 'hands_free', ageConfirmed });
     if (attempt !== attemptRef.current) return;
     if (!result.ok) { activeRef.current = null; fail(letter, result.status); return; }
     const grant = result.grant;
@@ -103,7 +108,7 @@ export default function ListeningTest() {
     setRevealing(true); setRevealMsg('');
     const found: Partial<Record<Letter, string>> = {};
     for (const letter of LETTERS) {
-      const r = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter, mode: 'hands_free', reveal: true });
+      const r = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter, mode: 'hands_free', reveal: true, ageConfirmed });
       found[letter] = r.ok ? (r.grant.model ?? 'not given') : 'could not be revealed';
     }
     setModels(found); setRevealing(false);
@@ -113,6 +118,7 @@ export default function ListeningTest() {
   if (!isWeb) return <View style={{ flex: 1, backgroundColor: BG, padding: 24, justifyContent: 'center' }}><Text style={{ color: IVORY, fontSize: 16 }}>The listening test runs in the web preview.</Text></View>;
   if (loading || probe === 'pending') return <View style={{ flex: 1, backgroundColor: BG }} />;
   if (probe === 'no') return <View style={{ flex: 1, backgroundColor: BG, padding: 24 }}><Text style={{ color: IVORY }}>Not found.</Text></View>;
+  if (!ageConfirmed) return <View testID="listening-test-age-off" style={{ flex: 1, backgroundColor: BG, padding: 24 }}><Text style={{ color: IVORY }}>The listening test stays off until this device answers Yes to Marty's "Are you 21 or older?" question.</Text></View>;
 
   const canReveal = revealEnabled(scores) && !revealing;
   const btn = (on: boolean) => ({ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1, borderColor: GOLD, backgroundColor: on ? GOLD : 'transparent' }) as const;

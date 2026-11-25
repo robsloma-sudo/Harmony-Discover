@@ -12,7 +12,7 @@ const openai = {
 const gemini = { contender: 'C', provider: 'gemini_live', ephemeralToken: 't', transport: 'websocket' };
 const req = (f: unknown, over: Record<string, unknown> = {}) =>
   requestCompareSession({
-    supabaseUrl: url, accessToken: 'tok', contender: 'A', mode: 'hands_free',
+    supabaseUrl: url, accessToken: 'tok', contender: 'A', mode: 'hands_free', ageConfirmed: true,
     fetchImpl: f as typeof fetch, ...over,
   });
 
@@ -37,12 +37,13 @@ describe('probeListeningTest', () => {
 });
 
 describe('requestCompareSession', () => {
-  it('sends exactly consentVersion/contender/mode', async () => {
+  it('sends exactly consentVersion/contender/mode/age_confirmed', async () => {
     const f = vi.fn().mockResolvedValue(res(200, openai));
     const r = await req(f);
     expect(r.ok).toBe(true);
     const body = JSON.parse(f.mock.calls[0][1].body);
-    expect(Object.keys(body).sort()).toEqual(['consentVersion', 'contender', 'mode']);
+    expect(Object.keys(body).sort()).toEqual(['age_confirmed', 'consentVersion', 'contender', 'mode']);
+    expect(body.age_confirmed).toBe(true);
     expect(body.consentVersion).toBe(MARTY_BOSTON_CONSENT_VERSION);
     expect(f.mock.calls[0][1].headers.Authorization).toBe('Bearer tok');
   });
@@ -90,5 +91,19 @@ describe('requestCompareSession', () => {
     const f = vi.fn();
     expect((await req(f, { supabaseUrl: 'https://evil.example' })).ok).toBe(false);
     expect(f).not.toHaveBeenCalled();
+  });
+  it('stays off without a Yes to the 21+ question: no network call, no age_confirmed', async () => {
+    for (const ageConfirmed of [false, undefined]) {
+      const f = vi.fn().mockResolvedValue(res(200, openai));
+      const r = await req(f, { ageConfirmed });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.message).toBe('Marty is only for guests 21 or older.');
+      expect(f).not.toHaveBeenCalled();
+    }
+  });
+  it('reveal also carries age_confirmed', async () => {
+    const f = vi.fn().mockResolvedValue(res(200, { ...openai, model: 'm' }));
+    await req(f, { reveal: true });
+    expect(JSON.parse(f.mock.calls[0][1].body).age_confirmed).toBe(true);
   });
 });

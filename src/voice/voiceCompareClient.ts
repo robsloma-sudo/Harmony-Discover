@@ -100,8 +100,12 @@ export async function requestCompareSession(input: {
   contender: CompareLetter;
   mode: 'push_to_talk' | 'hands_free';
   reveal?: boolean;
+  /** True only after this device answered Yes to Marty's 21+ question (P-20261125-2244). */
+  ageConfirmed?: boolean;
   fetchImpl?: typeof fetch;
 }): Promise<CompareResult> {
+  // Same rule as the normal Marty start: no Yes on this device, no network call at all.
+  if (input.ageConfirmed !== true) return { ok: false, message: 'Marty is only for guests 21 or older.' };
   if (!input.accessToken || !input.accessToken.trim()) {
     return { ok: false, message: 'Sign in first.' };
   }
@@ -112,6 +116,7 @@ export async function requestCompareSession(input: {
     consentVersion: MARTY_BOSTON_CONSENT_VERSION,
     contender: input.contender,
     mode: input.mode,
+    age_confirmed: true,
   };
   if (input.reveal === true) body.reveal = true;
 
