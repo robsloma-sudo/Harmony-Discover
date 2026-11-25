@@ -23,8 +23,9 @@ export const SCREEN_CONTEXT_LIMITS = {
   recipeName: 120, ingredients: 15, ingredient: 80,
 } as const;
 
-// deno-lint-ignore no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+// Control and invisible characters (same ranges as the PR), built from char codes so the deploy tool cannot garble escapes.
+const CONTROL_RANGES: Array<[number, number]> = [[0x00, 0x1F], [0x7F, 0x9F], [0x2028, 0x2029], [0x200B, 0x200F], [0x202A, 0x202E], [0x2066, 0x2069], [0xFEFF, 0xFEFF]];
+const CONTROL_CHARS = new RegExp("[" + CONTROL_RANGES.map(([a, b]) => String.fromCharCode(a) + "-" + String.fromCharCode(b)).join("") + "]", "g");
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
