@@ -1,5 +1,6 @@
 import {
   validateVoiceSessionGrant,
+  type VoiceMode,
   type VoiceSessionGrant,
   type VoiceSessionRequest,
 } from './sessionContract';
@@ -11,6 +12,12 @@ export interface VoiceSessionClientConfig {
   consentVersion: string;
   /** What is on screen when the session starts; goes into Marty's instructions. */
   screenContext?: ScreenContext | null;
+  /**
+   * Which listening style to ask for. 'hands_free' = Marty listens all the time and can be
+   * interrupted by talking; the server may still answer 'push_to_talk' (its stop switch).
+   * Defaults to push_to_talk.
+   */
+  mode?: VoiceMode;
   fetchImpl?: typeof fetch;
 }
 
@@ -34,9 +41,10 @@ export async function requestVoiceSession(
     return { ok: false, message: 'Discover backend URL is invalid.' };
   }
 
+  const requestedMode: VoiceMode = config.mode === 'hands_free' ? 'hands_free' : 'push_to_talk';
   const request: VoiceSessionRequest = {
     consentVersion: config.consentVersion,
-    mode: 'push_to_talk',
+    mode: requestedMode,
   };
   const screenContext = normalizeScreenContext(config.screenContext);
   if (screenContext) request.screenContext = screenContext;
@@ -56,7 +64,7 @@ export async function requestVoiceSession(
 
     if (!response.ok) {
       const messages: Record<number, string> = {
-        401: 'Your session expired. Please sign in again.',
+        401: 'Your session expired. Please try again.',
         403: 'Voice access or consent was not approved.',
         429: 'Too many voice sessions. Please wait a moment.',
         503: 'The bartender is temporarily unavailable.',
@@ -71,8 +79,11 @@ export async function requestVoiceSession(
     const payload: unknown = await response.json();
     const validation = validateVoiceSessionGrant(payload);
     if (!validation.ok) return { ok: false, message: validation.reason };
-    // The app's turn-taking is push-to-talk only; never run a hands-free grant.
-    if (validation.grant.mode !== 'push_to_talk') return { ok: false, message: 'Voice mode not supported in this app.' };
+    // Never run always-on listening unless the app asked for it. Asking for hands_free and getting
+    // push_to_talk back is fine: the server's stop switch is on and Marty falls back to hold-to-talk.
+    if (validation.grant.mode === 'hands_free' && requestedMode !== 'hands_free') {
+      return { ok: false, message: 'Voice mode not supported in this app.' };
+    }
     return { ok: true, grant: validation.grant };
   } catch {
     // Never include auth tokens, request bodies, or raw provider errors in UI/log output.

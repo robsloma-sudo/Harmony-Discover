@@ -7,7 +7,7 @@
  */
 export type LiquidLineObservation = {
   frameId: string;
-  /** Vertical liquid boundary in normalized bottle-body coordinates, 0..1. */
+  /** Fill height: fraction of the detected bottle box height, from its bottom edge, 0..1 (FillHeightFraction in bottleVolumeCalibration). */
   normalizedHeight: number;
   /** Detector confidence, not bottle/product identity confidence. */
   confidence: number;

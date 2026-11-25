@@ -5,13 +5,27 @@ import { router } from 'expo-router';
 import { useAuth } from '../src/auth/AuthContext';
 import { supabase } from '../src/services/supabase';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../src/voice/martySullivanBoston';
+import { ensureMartySession, isGuestSession, martyAccountNote } from '../src/voice/martyGuest';
 
 type Memory = { id: string; category: 'taste_preference' | 'drink_history' | 'interaction_style'; label: string; value: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
 
 function BartenderSettingsScreen() {
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const userId = session?.user?.id;
+  const [guestError, setGuestError] = useState('');
+
+  // No sign-in step: if nobody is signed in, quietly start the same private guest
+  // session Discover uses for scanning. AuthContext picks it up through onAuthStateChange.
+  useEffect(() => {
+    let alive = true;
+    if (userId || authLoading) return;
+    setGuestError('');
+    void ensureMartySession().catch((e: unknown) => {
+      if (alive) setGuestError(e instanceof Error ? e.message : 'Could not get Marty ready. Please try again.');
+    });
+    return () => { alive = false; };
+  }, [userId, authLoading]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -23,7 +37,7 @@ function BartenderSettingsScreen() {
 
   useEffect(() => {
     let alive = true;
-    if (!userId) { setStatus('Sign in to manage private voice and memory settings.'); return; }
+    if (!userId) { setStatus('Getting Marty ready…'); return; }
     void (async () => {
       const { data, error } = await supabase.from('bartender_voice_consents').select('*').eq('user_id', userId).maybeSingle();
       if (!alive) return;
@@ -98,7 +112,7 @@ function BartenderSettingsScreen() {
     else { setMemories(old => old.filter(m => m.id !== id)); setStatus('Memory deleted.'); }
   }
 
-  if (!userId) return <View style={s.root}><Text style={s.title}>Sign in first.</Text><Text style={s.body}>Saved memories belong to your account.</Text></View>;
+  if (!userId) return <View style={s.root}><Text style={s.title}>Getting Marty ready…</Text><Text style={s.body}>{guestError || 'No sign-in needed. Setting up a private guest account on this device.'}</Text></View>;
 
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content}>
@@ -106,8 +120,9 @@ function BartenderSettingsScreen() {
       <Text style={s.kicker}>MARTY SULLIVAN · PRIVACY CONTROLS</Text>
       <Text style={s.title}>Your choices. Your call.</Text>
       <Text style={s.body}>Voice and cross-session memory are separate opt-ins. Neither is enabled by default. Marty uses only the permissions you actively grant.</Text>
+      <Text style={s.bodySmall}>{martyAccountNote(session)}</Text>
       <View style={s.card}>
-        <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Live voice</Text><Text style={s.bodySmall}>Allow push-to-talk Realtime conversations after microphone permission. No background listening.</Text></View><Switch value={voiceEnabled} onValueChange={setVoiceEnabled} trackColor={{ true: C.gold }} /></View>
+        <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Live voice</Text><Text style={s.bodySmall}>Allow live voice with Marty after microphone permission. While Marty is on he listens all the time and answers what he hears. Turning Marty off (on his face or in Settings) turns the microphone off at once. Nothing is heard while he is off or the page is in the background.</Text></View><Switch value={voiceEnabled} onValueChange={setVoiceEnabled} trackColor={{ true: C.gold }} /></View>
         <View style={s.rule} />
         <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Saved bartender memory</Text><Text style={s.bodySmall}>Allow only facts or preferences you manually save. This is not automatic profiling.</Text></View><Switch value={memoryEnabled} onValueChange={setMemoryEnabled} trackColor={{ true: C.gold }} /></View>
         <Pressable style={s.primary} disabled={busy} onPress={() => void saveConsent()}><Text style={s.primaryText}>{busy ? 'SAVING…' : 'SAVE CONSENT CHOICES'}</Text></Pressable>
@@ -126,7 +141,7 @@ function BartenderSettingsScreen() {
         </>}
       </View>
       {!!status && <Text style={s.status}>{status}</Text>}
-      <Text style={s.footer}>CONSENT POLICY {MARTY_BOSTON_CONSENT_VERSION} · PRIVATE TO YOUR DISCOVER ACCOUNT</Text>
+      <Text style={s.footer}>CONSENT POLICY {MARTY_BOSTON_CONSENT_VERSION} · {isGuestSession(session) ? 'PRIVATE TO THIS DEVICE’S GUEST ACCOUNT' : 'PRIVATE TO YOUR DISCOVER ACCOUNT'}</Text>
     </ScrollView>
   );
 }

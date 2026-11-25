@@ -15,7 +15,7 @@
     "build:dev:ios": "eas build --profile development --platform ios",
     "doctor": "expo-doctor",
     "build:web": "expo export --platform web",
-    "test:marty": "vitest run tests/marty-profile.test.ts",
+    "test:marty": "vitest run tests/marty-profile.test.ts tests/marty-scanner-face.test.ts",
     "test:all": "vitest run",
     "build:edge": "node scripts/build-edge.mjs",
     "prebuild:web": "node scripts/copy-ort-wasm.mjs"
