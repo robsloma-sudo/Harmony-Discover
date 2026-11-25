@@ -9,7 +9,6 @@ export type VoiceRequestResult =
   | { ok: true; mode: VoiceMode; screenContext: ScreenContext | null }
   | { ok: false };
 
-/** Top-level body check. Unknown keys, wrong consent version or bad mode => not ok. Bad screenContext is ignored. */
 export function parseVoiceRequest(input: unknown): VoiceRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
   const body = input as Record<string, unknown>;

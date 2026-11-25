@@ -4,6 +4,8 @@ import { buildRealtimeSession, MODEL } from "./_shared/realtimeSession.ts";
 import { MAX_REQUEST_BYTES, parseVoiceRequest } from "./_shared/voiceRequest.ts";
 
 const DEV_REF = "lqqmwqrffelgnbngrkep";
+// The Discover website and its preview builds (same rule as discover-explore), plus any extra origins in DISCOVER_ALLOWED_ORIGINS.
+const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
 
 const ALLOWED_HEADERS = "authorization, apikey, content-type, x-client-info";
 const ALLOWED_METHODS = "POST, OPTIONS";
@@ -15,7 +17,8 @@ function configuredOrigins(): Set<string> {
   }).filter(Boolean));
 }
 function originAllowed(origin: string | null): boolean {
-  if (!origin) return true; // Native clients do not send Origin.
+  if (!origin) return true;
+  if (SITE_ORIGIN.test(origin)) return true;
   return configuredOrigins().has(origin);
 }
 function responseHeaders(origin: string | null): Headers {
@@ -130,7 +133,6 @@ Deno.serve(async (request: Request) => {
       }),
     });
     if (!response.ok) {
-      // Never return provider response bodies or credentials to the client.
       console.error("Marty Realtime credential request failed:", response.status);
       return json({ error: "The bartender is temporarily unavailable." }, 503, origin);
     }
