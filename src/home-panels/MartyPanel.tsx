@@ -7,7 +7,7 @@ import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voi
 import type { VoiceSessionGrant } from '../voice/sessionContract';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
 import { TurnController, isFatalRealtimeError, type TurnPhase, type TurnTiming } from '../voice/turnController';
-import { buildScreenContextEvent, getScreenContext, isScreenContextEmpty, screenContextKey, subscribeScreenContext } from '../voice/screenContext';
+import { buildScreenContextUpdateEvent, getScreenContext, screenContextKey, subscribeScreenContext, withCapturedAt } from '../voice/screenContext';
 
 /** Keep the mic open this long after release so the last word is not clipped. */
 const TALK_TAIL_MS = 250;
@@ -40,6 +40,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
   const tailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastContextKeyRef = useRef<string>('');
+  const requestContextKeyRef = useRef<string>('');
   const coordinatorRef = useRef<VoiceSessionCoordinator | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -232,7 +233,8 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
       }
     };
     addLine('system', 'Marty is at the bar. Hold the button when you want to speak.');
-    // Tell Marty what is on screen right away, then on every change.
+    // The screen at start went in the session request; send only later changes.
+    lastContextKeyRef.current = requestContextKeyRef.current;
     sendScreenContextNow();
   }
 
@@ -248,10 +250,11 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     if (!dc || dc.readyState !== 'open' || !turnRef.current) return;
     const ctx = getScreenContext();
     const key = screenContextKey(ctx);
-    if (key === lastContextKeyRef.current) return;
-    if (isScreenContextEmpty(ctx) && !lastContextKeyRef.current) return;
+    if (!ctx || key === lastContextKeyRef.current) return;
+    const event = buildScreenContextUpdateEvent(withCapturedAt(ctx));
+    if (!event) return;
     lastContextKeyRef.current = key;
-    dc.send(JSON.stringify(buildScreenContextEvent(ctx)));
+    dc.send(JSON.stringify(event));
   }
 
   useEffect(() => subscribeScreenContext(() => {
@@ -276,8 +279,11 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
       connect: connectTransport,
       close: closeTransport,
     };
+    const startContext = getScreenContext();
+    requestContextKeyRef.current = screenContextKey(startContext);
     const coordinator = new VoiceSessionCoordinator({
       supabaseUrl, accessToken: session.access_token, consentVersion: MARTY_BOSTON_CONSENT_VERSION,
+      screenContext: startContext ? withCapturedAt(startContext) : null,
       platform: adapter, consentConfirmed: true,
     });
     coordinatorRef.current = coordinator;

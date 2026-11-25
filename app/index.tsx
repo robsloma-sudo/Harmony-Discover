@@ -238,12 +238,12 @@ export default function Home({ initialPanel }: { initialPanel?: 'favorites'|'nea
   const [activeJourney, setActiveJourney] = useState<JourneyScanItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialPanel === 'settings');
   const [martyConsentOpen, setMartyConsentOpen] = useState(false);
-  // Tell Marty what is on screen (menu lines, bottles in view, the open Journey) whenever it changes.
+  // Tell Marty what is on screen (menu lines, bottle in view, the open Journey or recipe) whenever it changes.
   useEffect(() => {
     publishScreenContext({
       menu: liveMenu?.visible && liveMenu.items.length ? { title: liveMenu.title, lines: liveMenu.items } : null,
       bottles: liveBottles.filter(b => b.state !== 'unsure').map(b => ({ brand: b.resolved?.brand ?? b.brand, product: b.product, category: b.category })),
-      journey: activeJourney ? { kind: activeJourney.kind, name: activeJourney.name, subtitle: activeJourney.subtitle } : null,
+      journey: activeJourney ? { kind: activeJourney.kind, name: activeJourney.name } : null,
     });
   }, [liveMenu, liveBottles, activeJourney]);
   const [activePanel, setActivePanel] = useState<'favorites'|'nearby'|'marty'|'privacy'|'inventory'|'lidar'|'menu'|'collection'|'taste'|null>(initialPanel && initialPanel !== 'settings' ? initialPanel : null);
