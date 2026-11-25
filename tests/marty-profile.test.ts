@@ -4,11 +4,11 @@ import { comedyScenarios } from '../src/voice/comedyScenarios';
 
 describe('Marty Sullivan Boston profile', () => {
   it('uses a separately versioned Boston identity', () => {
-    expect(MARTY_BOSTON_PROFILE_VERSION).toBe('marty-boston-v1.0.0');
+    expect(MARTY_BOSTON_PROFILE_VERSION).toBe('marty-boston-v1.2.0');
     expect(MARTY_BOSTON_CONSENT_VERSION).toBeTruthy();
     expect(martyBostonInstructions).toContain('South Boston');
     expect(martyBostonInstructions).toContain('New York source remains preserved separately');
-    expect(martyBostonInstructions).toContain('Do not perform a cartoon accent');
+    expect(martyBostonInstructions).toContain('thick, old-school South Boston accent');
   });
 
   it('contains 33 human-audition scenarios including three Boston-local prompts', () => {
