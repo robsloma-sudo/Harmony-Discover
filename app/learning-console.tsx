@@ -1,3 +1,4 @@
+import { devOnlyScreen } from '../src/dev/devOnlyScreen';
 import { useMemo, useState } from 'react';
 import { Pressable, Text, View, StyleSheet } from 'react-native';
 import { Screen, colors } from '../src/ui';
@@ -26,7 +27,7 @@ const SAMPLE: Candidate[] = [
     action:'Continue observing; do not create a trend claim or prioritize a content rewrite.' },
 ];
 
-export default function LearningConsoleScreen() {
+function LearningConsoleScreen() {
   const [filter, setFilter] = useState<'All' | Status>('All');
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const items = useMemo(() => SAMPLE.filter(x => filter === 'All' || x.status === filter), [filter]);
@@ -129,3 +130,6 @@ const s = StyleSheet.create({
   decision:{color:'#A8D5B5',fontSize:11,marginTop:10},
   foot:{color:'#7D8995',fontSize:10,lineHeight:16,marginTop:16,marginBottom:20},
 });
+
+// FIX-026: developer-only screen; production visitors are sent home.
+export default devOnlyScreen(LearningConsoleScreen);

@@ -1,5 +1,3 @@
--- Labels: an importer's approval of an American whiskey (class "usb", or Kentucky/Tennessee/bourbon in the
--- name) no longer sets the bottle's country to the country it was shipped from.
 CREATE OR REPLACE FUNCTION public.discover_prefill_from_labels(p_product uuid DEFAULT NULL::uuid)
  RETURNS jsonb
  LANGUAGE plpgsql

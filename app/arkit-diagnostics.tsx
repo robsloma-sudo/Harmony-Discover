@@ -1,3 +1,4 @@
+import { devOnlyScreen } from '../src/dev/devOnlyScreen';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
@@ -15,7 +16,7 @@ function Capability({ label, value }: { label: string; value: boolean }) {
   );
 }
 
-export default function ARKitDiagnostics() {
+function ARKitDiagnostics() {
   const [data, setData] = useState<ARKitCapabilities | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -59,3 +60,6 @@ export default function ARKitDiagnostics() {
     </Screen>
   );
 }
+
+// FIX-026: developer-only screen; production visitors are sent home.
+export default devOnlyScreen(ARKitDiagnostics);

@@ -5,10 +5,8 @@
 -- All other Discover cron jobs (retention, rate-limit sweep, enrichment worker, research hints, merge duplicates,
 -- link-phg-30min, shape profiles) are created by files in supabase/migrations.
 
-select cron.schedule('discover-catalog-sync-daily', '10 6 * * *', $job$
-  select net.http_post(url := 'https://lqqmwqrffelgnbngrkep.supabase.co/functions/v1/discover-catalog-sync',
-    headers := jsonb_build_object('content-type','application/json','x-discover-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='discover_cron_secret')),
-    body := '{"action":"daily"}'::jsonb, timeout_milliseconds := 115000) $job$);
+-- discover-catalog-sync-daily was replaced on FIX-011 by four separate calls (products, brand profiles, link,
+-- facts push) in supabase/migrations/20261121060000_discover_catalog_sync_split_daily.sql. Do not re-create it here.
 
 select cron.schedule('discover-catalog-sync-labels-daily', '40 6 * * *', $job$
   update public.discover_bridge_config set value='0' where key='labels_done';
