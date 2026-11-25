@@ -4,12 +4,12 @@
  * One switch (here and in Settings) turns him fully off: no button, no face, microphone off.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { MartyFace } from './MartyFace';
 import { closeMartyFace, getMartyPresence, martyButtonVisible, openMarty, subscribeMartyPresence, turnMartyOff, type MartyPresence } from './martyPresence';
 import { faceCaption, faceStateFor, microphoneLive } from './faceState';
 import { useMartyVoice } from './useMartyVoice';
-import { NO_SELECT_WEB, SELECT_TEXT_WEB, showHoldToTalk, showStopButton } from './martyControls';
+import { NO_MENU_WEB, NO_SELECT_WEB, SELECT_TEXT_WEB, shouldAutoStart, showHoldToTalk, showStopButton } from './martyControls';
 import { martyAccountNote } from '../voice/martyGuest';
 import { useAuth } from '../auth/AuthContext';
 
@@ -18,6 +18,7 @@ const native = Platform.OS !== 'web';
 // Long press must never select button text (web); typed text stays selectable.
 const noSelect = (native ? {} : NO_SELECT_WEB) as object;
 const textOk = (native ? {} : SELECT_TEXT_WEB) as object;
+const noMenu = (native ? {} : NO_MENU_WEB) as object;
 
 export function useMartyPresence(): MartyPresence {
   const [p, setP] = useState(getMartyPresence());
@@ -39,6 +40,18 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
   const [draft, setDraft] = useState('');
   const slide = useRef(new Animated.Value(0)).current;
   const [sheetMounted, setSheetMounted] = useState(presence.open);
+  const [showTalk, setShowTalk] = useState(false);
+  const autoTriedRef = useRef(false);
+
+  // Opening the face starts Marty by itself when voice consent is already given (once per opening).
+  useEffect(() => {
+    if (!presence.open || !presence.enabled) { autoTriedRef.current = false; return; }
+    if (shouldAutoStart({ open: presence.open, web: !native, loadingConsent: voice.loadingConsent, consent: voice.consent, connected: voice.connected, busy: voice.busy, alreadyTried: autoTriedRef.current })) {
+      autoTriedRef.current = true;
+      void voice.startSession();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presence.open, presence.enabled, voice.loadingConsent, voice.consent, voice.connected, voice.busy]);
 
   useEffect(() => {
     if (presence.open) setSheetMounted(true);
@@ -117,7 +130,7 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
             <Pressable testID="marty-start" style={[s.primary, voice.busy && s.disabled]} disabled={voice.busy} onPress={() => void voice.startSession()}><Text style={s.primaryText}>{voice.busy ? 'CONNECTING…' : 'TALK TO MARTY'}</Text></Pressable>
           ) : (
             <View style={s.block}>
-              {showHoldToTalk(voice) && <Pressable testID="marty-hold-to-talk" style={[s.talk, noSelect]} onPressIn={voice.beginTalk} onPressOut={voice.endTalk}><Text selectable={false} style={s.talkText}>HOLD TO TALK</Text></Pressable>}
+              {showHoldToTalk(voice) && <Pressable testID="marty-hold-to-talk" style={[s.talk, noSelect]} onPressIn={voice.beginTalk} onPressOut={voice.endTalk} {...noMenu}><Text selectable={false} style={s.talkText}>HOLD TO TALK</Text></Pressable>}
               <View style={s.row}>
                 <TextInput value={draft} onChangeText={setDraft} placeholder="Or type to Marty…" placeholderTextColor="#707985" style={[s.input, textOk]} onSubmitEditing={() => { voice.sendText(draft); setDraft(''); }} />
                 <Pressable style={s.secondary} onPress={() => { voice.sendText(draft); setDraft(''); }}><Text style={s.secondaryText}>SEND</Text></Pressable>
@@ -131,9 +144,18 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
               accessibilityLabel="Stop Marty. The microphone goes off and the conversation ends"
               style={[s.stop, noSelect]}
               onPress={() => void voice.stop()}
+              {...noMenu}
             >
               <Text selectable={false} style={s.stopText}>■ STOP · MICROPHONE OFF</Text>
             </Pressable>
+          )}
+          {voice.lines.length > 0 && (
+            <Pressable testID="marty-what-we-said" accessibilityRole="button" onPress={() => setShowTalk(v => !v)}><Text style={s.fold}>{showTalk ? '▾' : '▸'} What we said</Text></Pressable>
+          )}
+          {showTalk && voice.lines.length > 0 && (
+            <ScrollView style={s.talkLog} contentContainerStyle={{ gap: 6 }}>
+              {voice.lines.map(l => <View key={l.id}><Text style={s.lineWho}>{l.who.toUpperCase()}</Text><Text style={[s.lineText, textOk]}>{l.text}</Text></View>)}
+            </ScrollView>
           )}
           {!!voice.notice && <Text style={s.small}>{voice.notice}</Text>}
           {!!voice.error && <Text style={s.error}>{voice.error}</Text>}
@@ -181,5 +203,9 @@ const s = StyleSheet.create({
   secondary: { borderWidth: 1, borderColor: C.gold, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 9, alignItems: 'center' },
   secondaryText: { color: C.gold, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   error: { color: '#E3A29A', fontSize: 11, lineHeight: 16, textAlign: 'center' },
+  fold: { color: C.muted, fontSize: 11, fontWeight: '700' },
+  talkLog: { maxHeight: 140, borderTopWidth: 1, borderTopColor: '#303741', paddingTop: 6 },
+  lineWho: { color: C.gold, fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  lineText: { color: C.text, fontSize: 12, lineHeight: 17 },
   link: { color: C.muted, fontSize: 10, textAlign: 'center', textDecorationLine: 'underline', marginTop: 2 },
 });

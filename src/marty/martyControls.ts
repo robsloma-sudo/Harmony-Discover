@@ -22,3 +22,14 @@ export const NO_SELECT_WEB = {
 } as const;
 
 export const SELECT_TEXT_WEB = { userSelect: 'text', WebkitUserSelect: 'text' } as const;
+
+/**
+ * Opening Marty's face starts the session by itself once voice consent is already given
+ * (carried over from #142): once per opening, never after Stop, never on the phone app.
+ */
+export function shouldAutoStart(v: { open: boolean; web: boolean; loadingConsent: boolean; consent: boolean; connected: boolean; busy: boolean; alreadyTried: boolean }): boolean {
+  return v.open && v.web && !v.loadingConsent && v.consent && !v.connected && !v.busy && !v.alreadyTried;
+}
+
+/** Web-only: a right-click or long press on a Marty button never opens the browser menu. */
+export const NO_MENU_WEB = { onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault() } as const;

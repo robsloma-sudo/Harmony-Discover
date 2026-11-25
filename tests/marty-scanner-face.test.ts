@@ -241,3 +241,25 @@ describe('Marty controls (CEO notes 25 Nov)', () => {
     expect(src).toContain("if (gen !== stopGenRef.current || !getMartyPresence().enabled) { stream.getTracks().forEach(track => track.stop()); return 'denied'; }");
   });
 });
+
+describe('carried over from #142', () => {
+  it('opening the face starts Marty by itself only once consent is given, once per opening', async () => {
+    const { shouldAutoStart } = await import('../src/marty/martyControls');
+    const base = { open: true, web: true, loadingConsent: false, consent: true, connected: false, busy: false, alreadyTried: false };
+    expect(shouldAutoStart(base)).toBe(true);
+    expect(shouldAutoStart({ ...base, consent: false })).toBe(false);
+    expect(shouldAutoStart({ ...base, loadingConsent: true })).toBe(false);
+    expect(shouldAutoStart({ ...base, alreadyTried: true })).toBe(false); // not again after Stop
+    expect(shouldAutoStart({ ...base, open: false })).toBe(false);
+    expect(shouldAutoStart({ ...base, web: false })).toBe(false);
+    expect(shouldAutoStart({ ...base, connected: true })).toBe(false);
+    expect(shouldAutoStart({ ...base, busy: true })).toBe(false);
+  });
+
+  it('a right-click or long press on a Marty button never opens the browser menu', async () => {
+    const { NO_MENU_WEB } = await import('../src/marty/martyControls');
+    let prevented = 0;
+    NO_MENU_WEB.onContextMenu({ preventDefault: () => { prevented += 1; } });
+    expect(prevented).toBe(1);
+  });
+});
