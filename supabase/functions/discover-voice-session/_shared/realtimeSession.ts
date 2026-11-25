@@ -33,7 +33,6 @@ export function resolveVoice(voiceEnv: string | undefined | null): string {
   return (ALLOWED_VOICES as readonly string[]).includes(v) ? v : DEFAULT_VOICE;
 }
 
-/** hands_free only when the server flag is exactly "on"; otherwise silently push_to_talk. */
 export function resolveMode(requested: VoiceMode, handsFreeEnv: string | undefined | null): VoiceMode {
   return requested === "hands_free" && handsFreeEnv === "on" ? "hands_free" : "push_to_talk";
 }
@@ -42,12 +41,11 @@ export interface BuildRealtimeSessionArgs {
   voiceEnv?: string | null;
   handsFreeEnv?: string | null;
   mode: VoiceMode;
-  screenContext?: ScreenContext | null; // already sanitized
+  screenContext?: ScreenContext | null;
   memoryContext?: string;
   pick?: Pick;
 }
 
-/** Pure builder of the Realtime client_secrets session. */
 export function buildRealtimeSession(args: BuildRealtimeSessionArgs) {
   const voice = resolveVoice(args.voiceEnv);
   const mode = resolveMode(args.mode, args.handsFreeEnv);
