@@ -54,19 +54,20 @@ describe('Marty app fields match the backend by name', () => {
       screenContext: screenContextFromSources({ menu: { lines: [{ name: 'Last Word', price: '$16' }] } }), fetchImpl,
     });
     expect(Object.keys(body).sort()).toEqual([...BACKEND.requestKeys].sort());
-    expect(body.mode).toBe('push_to_talk');
+    expect(body.mode).toBe('hands_free');
     expect(body.screenContext).toEqual({ screen: 'menu', menuLines: ['Last Word $16'] });
+    // Server stop switch on: a push-to-talk grant is still run (hidden hold-to-talk fallback).
     expect(result.ok && result.grant.mode).toBe('push_to_talk');
   });
 
-  it('grant carries mode; hands_free is never run by the app', async () => {
+  it('grant carries mode; a hands_free grant is accepted', async () => {
     const grant = { sessionId: 's', provider: 'openai_realtime', ephemeralToken: 't', expiresAt: new Date(Date.now() + 60_000).toISOString(), transport: 'webrtc', model: 'm', voice: 'cedar', mode: 'hands_free' };
     const v = validateVoiceSessionGrant(grant);
     expect(v.ok && Object.keys(v.grant).sort()).toEqual([...BACKEND.grantKeys].sort());
     expect(validateVoiceSessionGrant({ ...grant, mode: 'always_on' }).ok).toBe(false);
     const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => grant })) as unknown as typeof fetch;
     const r = await requestVoiceSession({ supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co', accessToken: 'a', consentVersion: 'v', fetchImpl });
-    expect(r.ok).toBe(false);
+    expect(r.ok && r.grant.mode).toBe('hands_free');
   });
 
   it.runIf(existsSync(backendFile))('backend cleaner keeps the app output unchanged (runs once #131 is on main)', async () => {

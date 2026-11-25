@@ -137,3 +137,59 @@ describe('TurnController (Marty push-to-talk)', () => {
     expect(isFatalRealtimeError({ type: 'response.done' })).toBe(false);
   });
 });
+
+describe('TurnController hands-free (server listens, app never sends replies for speech)', () => {
+  function handsFree() {
+    const sent: RealtimeClientEvent[] = [];
+    const phases: string[] = [];
+    let bargeIns = 0;
+    let t = 1000;
+    const c = new TurnController({
+      send: e => sent.push(e), now: () => t, handsFree: true,
+      onPhase: p => phases.push(p), onBargeIn: () => { bargeIns += 1; },
+    });
+    return { c, sent, phases, tick: (ms: number) => { t += ms; }, bargeIns: () => bargeIns };
+  }
+
+  it('speech start/stop moves talking -> thinking without sending response.create', () => {
+    const h = handsFree();
+    h.c.handleServerEvent({ type: 'input_audio_buffer.speech_started' });
+    expect(h.c.phase).toBe('talking');
+    h.c.handleServerEvent({ type: 'input_audio_buffer.speech_stopped' });
+    expect(h.c.phase).toBe('thinking');
+    h.c.handleServerEvent({ type: 'response.created' });
+    h.c.handleServerEvent({ type: 'output_audio_buffer.started' });
+    expect(h.c.phase).toBe('speaking');
+    h.c.handleServerEvent({ type: 'response.done' });
+    h.c.handleServerEvent({ type: 'output_audio_buffer.stopped' });
+    expect(h.c.phase).toBe('idle');
+    expect(h.sent.filter(e => e.type === 'response.create')).toHaveLength(0);
+    expect(h.bargeIns()).toBe(0);
+  });
+
+  it('speaking over Marty mutes him at once and marks his reply cut off', () => {
+    const h = handsFree();
+    h.c.handleServerEvent({ type: 'response.created' });
+    h.c.handleServerEvent({ type: 'response.output_item.added', item: { type: 'message', id: 'item_1' } });
+    h.c.handleServerEvent({ type: 'output_audio_buffer.started' });
+    h.tick(800);
+    h.c.handleServerEvent({ type: 'input_audio_buffer.speech_started' });
+    expect(h.bargeIns()).toBe(1);
+    expect(h.c.phase).toBe('talking');
+    expect(h.c.isAudioPlaying).toBe(false);
+    expect(h.c.isResponseActive).toBe(false);
+    expect(h.c.wasInterrupted('item_1')).toBe(true);
+    // The server's own cancel of the old reply must not knock us out of talking.
+    h.c.handleServerEvent({ type: 'response.done' });
+    h.c.handleServerEvent({ type: 'output_audio_buffer.cleared' });
+    expect(h.c.phase).toBe('talking');
+  });
+
+  it('push-to-talk controllers ignore server speech events', () => {
+    const sent: RealtimeClientEvent[] = [];
+    const c = new TurnController({ send: e => sent.push(e) });
+    c.handleServerEvent({ type: 'input_audio_buffer.speech_started' });
+    expect(c.phase).toBe('idle');
+    expect(c.isHandsFree).toBe(false);
+  });
+});

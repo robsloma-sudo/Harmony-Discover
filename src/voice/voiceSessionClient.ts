@@ -1,5 +1,6 @@
 import {
   validateVoiceSessionGrant,
+  type VoiceMode,
   type VoiceSessionGrant,
   type VoiceSessionRequest,
 } from './sessionContract';
@@ -11,6 +12,8 @@ export interface VoiceSessionClientConfig {
   consentVersion: string;
   /** What is on screen when the session starts; goes into Marty's instructions. */
   screenContext?: ScreenContext | null;
+  /** Mode to ask for. Defaults to hands-free; the server may still grant push-to-talk. */
+  mode?: VoiceMode;
   fetchImpl?: typeof fetch;
 }
 
@@ -36,7 +39,7 @@ export async function requestVoiceSession(
 
   const request: VoiceSessionRequest = {
     consentVersion: config.consentVersion,
-    mode: 'push_to_talk',
+    mode: config.mode ?? 'hands_free',
   };
   const screenContext = normalizeScreenContext(config.screenContext);
   if (screenContext) request.screenContext = screenContext;
@@ -71,8 +74,7 @@ export async function requestVoiceSession(
     const payload: unknown = await response.json();
     const validation = validateVoiceSessionGrant(payload);
     if (!validation.ok) return { ok: false, message: validation.reason };
-    // The app's turn-taking is push-to-talk only; never run a hands-free grant.
-    if (validation.grant.mode !== 'push_to_talk') return { ok: false, message: 'Voice mode not supported in this app.' };
+    // Both modes are run: hands-free normally, push-to-talk when the server's stop switch is on.
     return { ok: true, grant: validation.grant };
   } catch {
     // Never include auth tokens, request bodies, or raw provider errors in UI/log output.

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../services/supabase';
 import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voiceSessionCoordinator';
-import type { VoiceSessionGrant } from '../voice/sessionContract';
+import type { VoiceMode, VoiceSessionGrant } from '../voice/sessionContract';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
 import { ensureMartySession, grantMartyVoiceConsent, martyAccountNote } from '../voice/martyGuest';
 import { TurnController, isFatalRealtimeError, type TurnPhase, type TurnTiming } from '../voice/turnController';
@@ -17,17 +18,33 @@ const CONTEXT_DEBOUNCE_MS = 500;
 /** Stop waiting for more network routes this long after the first one is found. */
 const ICE_GRACE_MS = 1500;
 const PHASE_STATUS: Record<TurnPhase, string> = {
+  idle: 'LISTENING · JUST TALK',
+  talking: 'HEARING YOU',
+  thinking: 'MARTY IS THINKING',
+  speaking: 'MARTY IS TALKING · JUST SPEAK TO CUT IN',
+};
+// Only used if the server switches Marty back to hold-to-talk.
+const PHASE_STATUS_PTT: Record<TurnPhase, string> = {
   idle: 'CONNECTED · HOLD TO TALK',
   talking: 'LISTENING · RELEASE TO SEND',
   thinking: 'MARTY IS THINKING',
   speaking: 'MARTY IS SPEAKING · HOLD TO CUT IN',
 };
+const NO_SELECT = (Platform.OS === 'web' ? { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' } : {}) as object;
+const NO_MENU = (Platform.OS === 'web' ? { onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault() } : {}) as object;
+
+export type MartyFaceState = 'idle' | 'listening' | 'thinking' | 'speaking';
+/** Plain round stand-in; a later change swaps in the animated face. */
+export function MartyFacePlaceholder({ state }: { state: MartyFaceState }) {
+  const ring = state === 'speaking' ? '#F0F1F2' : state === 'listening' ? '#D9534F' : state === 'thinking' ? '#8DBBFF' : C.gold;
+  return <View accessibilityLabel={`Marty, ${state}`} style={[s.face, { borderColor: ring }]}><Text style={s.faceLetter}>M</Text></View>;
+}
 
 type Line = { id: string; who: 'you' | 'marty' | 'system'; text: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 
-export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettings: () => void; onNavigateCommand: (name: string, args: Record<string, unknown>) => Promise<string> }) {
+export function MartyPanel({ onClose, onOpenSettings, onNavigateCommand }: { onClose?: () => void; onOpenSettings: () => void; onNavigateCommand: (name: string, args: Record<string, unknown>) => Promise<string> }) {
   const { session } = useAuth();
   const [consent, setConsent] = useState(false);
   const [loadingConsent, setLoadingConsent] = useState(true);
@@ -37,6 +54,13 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState('');
   const [lastTiming, setLastTiming] = useState('');
+  const [voiceMode, setVoiceMode] = useState<VoiceMode | null>(null);
+  const [micOpen, setMicOpen] = useState(false);
+  const [phase, setPhase] = useState<TurnPhase>('idle');
+  const [live, setLive] = useState(false);
+  const [showType, setShowType] = useState(false);
+  const [showTalk, setShowTalk] = useState(false);
+  const autoStartedRef = useRef(false);
   const turnRef = useRef<TurnController | null>(null);
   const tailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,7 +83,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     isTalkingRef.current = false;
     streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
-    setStatus('OFFLINE');
+    setStatus('OFFLINE'); setMicOpen(false); setLive(false); setPhase('idle');
     setError(message);
     const coordinator = coordinatorRef.current;
     coordinatorRef.current = null;
@@ -93,6 +117,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null; }
     sessionStartedRef.current = false;
+    setMicOpen(false); setLive(false);
     if (tailTimerRef.current) { clearTimeout(tailTimerRef.current); tailTimerRef.current = null; }
     if (contextTimerRef.current) { clearTimeout(contextTimerRef.current); contextTimerRef.current = null; }
     turnRef.current = null;
@@ -127,9 +152,14 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     pc.ontrack = event => { audio.srcObject = event.streams[0]; void audio.play().catch(() => undefined); };
     stream.getTracks().forEach(track => { track.enabled = false; pc.addTrack(track, stream); });
     const dc = pc.createDataChannel('oai-events'); dcRef.current = dc;
+    const handsFree = grant.mode === 'hands_free';
+    setVoiceMode(grant.mode);
     const turn = new TurnController({
+      handsFree,
+      // You started talking over Marty: silence his audio on this device at once.
+      onBargeIn: () => { if (turnRef.current === turn) muteMartyNow(); },
       send: evt => { if (dc.readyState === 'open') dc.send(JSON.stringify(evt)); },
-      onPhase: phase => { if (turnRef.current === turn) setStatus(PHASE_STATUS[phase]); },
+      onPhase: p => { if (turnRef.current === turn) { setPhase(p); setStatus((handsFree ? PHASE_STATUS : PHASE_STATUS_PTT)[p]); } },
       onTiming: timing => { if (turnRef.current === turn) reportTiming(timing); },
     });
     turnRef.current = turn;
@@ -233,7 +263,13 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
         failTransport(dc, pc, 'Marty’s network connection failed. Start a new session.');
       }
     };
-    addLine('system', 'Marty is at the bar. Hold the button when you want to speak.');
+    addLine('system', handsFree ? 'Marty is at the bar. Just talk.' : 'Marty is at the bar. Hold the button when you want to speak.');
+    setLive(true);
+    if (handsFree) {
+      // Hands-free: the mic stays open for the whole session; Stop or closing Marty turns it off.
+      stream.getAudioTracks().forEach(track => { track.enabled = true; });
+      setMicOpen(true);
+    }
     // The screen at start went in the session request; send only later changes.
     lastContextKeyRef.current = requestContextKeyRef.current;
     sendScreenContextNow();
@@ -310,7 +346,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     coordinatorRef.current = coordinator;
     try {
       const result = await coordinator.start();
-      if (result.voice.state === 'listening') setStatus('CONNECTED · HOLD TO TALK');
+      if (result.voice.state === 'listening') setStatus(prev => (prev === 'REQUESTING MICROPHONE' ? 'CONNECTED' : prev));
       else {
         coordinatorRef.current = null;
         await adapter.close().catch(() => undefined);
@@ -370,8 +406,13 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
 
   async function stop() {
     isTalkingRef.current = false;
-    await coordinatorRef.current?.stop();
+    // Close the mic first, right now, then tear the connection down.
+    streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
+    setMicOpen(false); setLive(false); setPhase('idle'); setStatus('OFFLINE');
+    const coordinator = coordinatorRef.current;
     coordinatorRef.current = null;
+    await coordinator?.stop();
+    await closeTransport();
     setStatus('OFFLINE');
   }
 
@@ -392,7 +433,7 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
         coordinatorRef.current = null;
         await coordinator?.stop();
         if (focused) {
-          setStatus('OFFLINE');
+          setStatus('OFFLINE'); setMicOpen(false); setLive(false);
           setError('Voice session ended because the page was backgrounded. Start a new session when you return.');
         }
       })();
@@ -411,53 +452,74 @@ export function MartyPanel({ onOpenSettings, onNavigateCommand }: { onOpenSettin
     };
   }, [closeTransport]));
 
+  // Hands-free: opening Marty starts the session once consent is known to be given.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || loadingConsent || !consent || autoStartedRef.current) return;
+    if (!session?.access_token || coordinatorRef.current) return;
+    autoStartedRef.current = true;
+    void startSession();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingConsent, consent, session?.access_token]);
+
+  const sessionOn = live || !!coordinatorRef.current;
+  const face: MartyFaceState = !sessionOn ? 'idle' : phase === 'speaking' ? 'speaking' : phase === 'thinking' ? 'thinking' : micOpen ? 'listening' : 'idle';
+  const pushToTalk = live && voiceMode === 'push_to_talk';
+  const needsConsent = !loadingConsent && !consent;
+  const canRetry = !loadingConsent && consent && !sessionOn && !busy && Platform.OS === 'web';
+
   return (
-    <ScrollView style={s.root} contentContainerStyle={s.content}>
-      
-      <Text style={s.kicker}>HARMONY DISCOVER · MARTY SULLIVAN</Text>
-      <Text style={s.title}>Pull up a stool.</Text>
-      <Text style={s.body}>Boston / South Boston profile v1.0.0. Older neighborhood bartender. Dry wit. Serious beverage knowledge. No cartoon accent.</Text>
-      {loadingConsent ? <Text style={s.status}>Checking your consent…</Text> : !consent ? <View style={s.card}>
-        <Text style={s.heading}>Turn on Marty’s voice?</Text>
-        <Text style={s.body}>Tapping Enable voice is your consent to push-to-talk voice with Marty. Your phone then asks for the microphone. The microphone is only on while you hold to talk. No background listening. Saved memory stays off unless you turn it on separately.</Text>
-        <Text style={s.notice}>{martyAccountNote(session)}</Text>
-        <Pressable style={[s.primary, busy && s.disabled]} disabled={busy} onPress={() => void enableVoice()}><Text style={s.primaryText}>{busy ? 'GETTING READY…' : 'ENABLE VOICE'}</Text></Pressable>
-        <Pressable style={s.secondary} onPress={onOpenSettings}><Text style={s.secondaryText}>VOICE & MEMORY SETTINGS</Text></Pressable>
-      </View> : null}
-      {Platform.OS !== 'web' ? <Text style={s.notice}>Native iOS voice transport is not validated yet. Use the secure web preview for this audition.</Text> : null}
-      <View style={s.card}>
-        <Text style={s.status}>{status}</Text>
-        <Text style={s.body}>Push-to-talk only. The microphone is off between turns. Hold to talk (this also cuts Marty off), release to send. Marty can see what is on screen: the scanned menu, bottle or Journey.</Text>
-        {!coordinatorRef.current ? <Pressable disabled={!consent || busy || Platform.OS !== 'web'} style={[s.primary, (!consent || busy || Platform.OS !== 'web') && s.disabled]} onPress={() => void startSession()}><Text style={s.primaryText}>{busy ? 'CONNECTING…' : 'START VOICE SESSION'}</Text></Pressable> : <>
-          <Pressable style={s.talk} onPressIn={beginTalk} onPressOut={endTalk}><Text style={s.talkText}>HOLD TO TALK</Text></Pressable>
-          <Pressable style={s.secondary} onPress={interrupt}><Text style={s.secondaryText}>INTERRUPT MARTY</Text></Pressable>
-          <Pressable style={s.secondary} onPress={() => void stop()}><Text style={s.secondaryText}>END SESSION</Text></Pressable>
-        </>}
-        {!!lastTiming && <Text style={s.notice}>{lastTiming}</Text>}
+    <View style={s.popup}>
+      <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+        <View style={s.head}>
+          <MartyFacePlaceholder state={face} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.name}>MARTY SULLIVAN</Text>
+            <Text style={s.status} numberOfLines={2}>{loadingConsent ? 'CHECKING…' : busy && !sessionOn ? 'GETTING MARTY READY' : status}</Text>
+          </View>
+          {onClose ? <Pressable accessibilityRole="button" accessibilityLabel="Close Marty" hitSlop={8} onPress={onClose}><Ionicons name="close-circle-outline" size={24} color={C.muted} /></Pressable> : null}
+        </View>
+        {needsConsent ? <View style={s.block}>
+          <Text style={s.body}>Tap Enable voice to say yes to talking with Marty. Your phone asks for the microphone, then Marty just talks with you, no buttons. The microphone stays on while Marty is open and turns off when you tap Stop or close him. No listening when Marty is closed. Saved memory stays off unless you turn it on separately.</Text>
+          <Text style={s.notice}>{martyAccountNote(session)}</Text>
+          <Pressable accessibilityRole="button" style={[s.primary, busy && s.disabled]} disabled={busy} onPress={() => void enableVoice()}><Text style={s.primaryText}>{busy ? 'GETTING READY…' : 'ENABLE VOICE'}</Text></Pressable>
+          <Pressable accessibilityRole="link" onPress={onOpenSettings}><Text style={s.link}>Voice & memory settings</Text></Pressable>
+        </View> : null}
+        {Platform.OS !== 'web' ? <Text style={s.notice}>Voice with Marty works in the web version for now.</Text> : null}
+        {live && voiceMode === 'hands_free' && micOpen ? <View style={s.micRow} accessibilityLiveRegion="polite">
+          <View style={s.dot} /><Ionicons name="mic" size={16} color="#D9534F" /><Text style={s.micText}>LISTENING</Text>
+        </View> : null}
+        {live ? <Pressable accessibilityRole="button" accessibilityLabel="Stop Marty and turn the microphone off" style={s.stop} onPress={() => void stop()}><Ionicons name="stop-circle" size={18} color="#fff" /><Text style={s.stopText}>STOP</Text></Pressable> : null}
+        {pushToTalk ? <Pressable accessibilityRole="button" style={[s.talk, NO_SELECT]} onPressIn={beginTalk} onPressOut={endTalk} {...NO_MENU}><Text selectable={false} style={[s.talkText, NO_SELECT]}>HOLD TO TALK</Text></Pressable> : null}
+        {canRetry ? <Pressable accessibilityRole="button" style={s.primary} onPress={() => void startSession()}><Text style={s.primaryText}>TALK TO MARTY</Text></Pressable> : null}
+        {!!lastTiming && !pushToTalk ? null : !!lastTiming ? <Text style={s.notice}>{lastTiming}</Text> : null}
         {!!error && <Text style={s.error}>{error}</Text>}
-      </View>
-      <View style={s.card}>
-        <Text style={s.heading}>Typed fallback</Text>
-        <Text style={s.body}>Text works once the voice session is connected.</Text>
-        <TextInput value={draft} onChangeText={setDraft} placeholder="Say something to Marty…" placeholderTextColor="#707985" style={s.input} />
-        <Pressable style={s.secondary} onPress={sendText}><Text style={s.secondaryText}>SEND TEXT</Text></Pressable>
-      </View>
-      <View style={s.card}>
-        <Text style={s.heading}>Conversation</Text>
-        {lines.length === 0 ? <Text style={s.body}>No conversation yet.</Text> : lines.map(line => <View key={line.id} style={s.line}><Text style={s.lineWho}>{line.who.toUpperCase()}</Text><Text style={s.lineText}>{line.text}</Text></View>)}
-      </View>
-      <Text style={s.footer}>VOICE AND MEMORY ARE SEPARATE CONSENTS · NO BACKGROUND LISTENING · SESSION TRANSCRIPT IS NOT SAVED AS MEMORY</Text>
-    </ScrollView>
+        <Pressable accessibilityRole="button" style={s.fold} onPress={() => setShowType(v => !v)}><Text style={s.foldText}>{showType ? '▾' : '▸'} Type instead</Text></Pressable>
+        {showType ? <View style={s.block}>
+          <TextInput value={draft} onChangeText={setDraft} onSubmitEditing={sendText} placeholder={live ? 'Say something to Marty…' : 'Works once Marty is connected'} placeholderTextColor="#707985" style={s.input} />
+          <Pressable style={s.secondary} onPress={sendText}><Text style={s.secondaryText}>SEND</Text></Pressable>
+        </View> : null}
+        <Pressable accessibilityRole="button" style={s.fold} onPress={() => setShowTalk(v => !v)}><Text style={s.foldText}>{showTalk ? '▾' : '▸'} What we said</Text></Pressable>
+        {showTalk ? <View style={s.block}>
+          {lines.length === 0 ? <Text style={s.body}>Nothing yet.</Text> : lines.map(line => <View key={line.id} style={s.line}><Text style={s.lineWho}>{line.who.toUpperCase()}</Text><Text style={s.lineText}>{line.text}</Text></View>)}
+        </View> : null}
+      </ScrollView>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
-  root:{flex:1,backgroundColor:'transparent'},content:{padding:4,paddingTop:4,paddingBottom:16,gap:12},back:{color:C.gold,fontSize:11,fontWeight:'800',letterSpacing:1.3},
-  kicker:{color:C.gold,fontSize:9,letterSpacing:1.8,fontWeight:'800',marginTop:12},title:{color:C.text,fontSize:34,fontWeight:'800'},body:{color:C.muted,fontSize:12,lineHeight:19},
-  card:{backgroundColor:C.panel,borderWidth:1,borderColor:C.line,borderRadius:16,padding:16,gap:12},heading:{color:C.text,fontSize:16,fontWeight:'800'},status:{color:C.gold,fontSize:10,fontWeight:'900',letterSpacing:1.1},
-  primary:{backgroundColor:C.gold,padding:14,borderRadius:9,alignItems:'center'},primaryText:{color:'#111',fontWeight:'900',fontSize:11,letterSpacing:1},disabled:{opacity:0.4},
-  talk:{backgroundColor:'#D8C39A',padding:22,borderRadius:12,alignItems:'center'},talkText:{color:'#111',fontSize:14,fontWeight:'900',letterSpacing:1.5},
-  secondary:{borderWidth:1,borderColor:C.gold,padding:12,borderRadius:9,alignItems:'center'},secondaryText:{color:C.gold,fontSize:10,fontWeight:'800',letterSpacing:1},
-  input:{backgroundColor:'#0D1117',borderColor:C.line,borderWidth:1,borderRadius:10,padding:12,color:C.text,fontSize:13},error:{color:'#E3A29A',fontSize:11,lineHeight:16},notice:{color:C.muted,fontSize:11,lineHeight:17},
-  line:{borderTopWidth:1,borderTopColor:C.line,paddingTop:10,gap:4},lineWho:{color:C.gold,fontSize:8,fontWeight:'900',letterSpacing:1},lineText:{color:C.text,fontSize:13,lineHeight:19},footer:{color:'#707985',fontSize:8,textAlign:'center',letterSpacing:1.1},
+  popup:{backgroundColor:'rgba(10,13,18,0.97)',borderWidth:1,borderColor:'rgba(198,163,106,0.7)',borderRadius:18,overflow:'hidden',maxHeight:'100%'},
+  content:{padding:12,gap:10},head:{flexDirection:'row',alignItems:'center',gap:10},block:{gap:8},
+  face:{width:52,height:52,borderRadius:26,borderWidth:2,backgroundColor:'#141820',alignItems:'center',justifyContent:'center'},faceLetter:{color:C.gold,fontSize:24,fontWeight:'800'},
+  name:{color:C.text,fontSize:12,fontWeight:'900',letterSpacing:1.3},status:{color:C.gold,fontSize:10,fontWeight:'900',letterSpacing:1.1},
+  body:{color:C.muted,fontSize:12,lineHeight:18},notice:{color:C.muted,fontSize:11,lineHeight:16},error:{color:'#E3A29A',fontSize:11,lineHeight:16},
+  micRow:{flexDirection:'row',alignItems:'center',gap:8,paddingVertical:6,paddingHorizontal:10,borderRadius:10,backgroundColor:'rgba(217,83,79,0.14)',borderWidth:1,borderColor:'rgba(217,83,79,0.6)'},
+  dot:{width:10,height:10,borderRadius:5,backgroundColor:'#D9534F'},micText:{color:'#F0F1F2',fontSize:11,fontWeight:'900',letterSpacing:1.3},
+  stop:{flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,backgroundColor:'#B03A36',padding:14,borderRadius:10},stopText:{color:'#fff',fontSize:13,fontWeight:'900',letterSpacing:1.5},
+  primary:{backgroundColor:C.gold,padding:13,borderRadius:9,alignItems:'center'},primaryText:{color:'#111',fontWeight:'900',fontSize:11,letterSpacing:1},disabled:{opacity:0.4},
+  talk:{backgroundColor:'#D8C39A',padding:20,borderRadius:12,alignItems:'center'},talkText:{color:'#111',fontSize:14,fontWeight:'900',letterSpacing:1.5},
+  secondary:{borderWidth:1,borderColor:C.gold,padding:10,borderRadius:9,alignItems:'center'},secondaryText:{color:C.gold,fontSize:10,fontWeight:'800',letterSpacing:1},
+  link:{color:C.gold,fontSize:11,textDecorationLine:'underline',textAlign:'center'},fold:{paddingVertical:4},foldText:{color:C.muted,fontSize:11,fontWeight:'700'},
+  input:{backgroundColor:'#0D1117',borderColor:C.line,borderWidth:1,borderRadius:10,padding:10,color:C.text,fontSize:13},
+  line:{borderTopWidth:1,borderTopColor:C.line,paddingTop:8,gap:3},lineWho:{color:C.gold,fontSize:8,fontWeight:'900',letterSpacing:1},lineText:{color:C.text,fontSize:12,lineHeight:17},
 });

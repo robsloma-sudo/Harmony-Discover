@@ -22,7 +22,7 @@ export interface VoiceSessionGrant {
   transport: 'webrtc' | 'websocket';
   model: string;
   voice: string;
-  /** The mode the server actually granted. The app only runs push-to-talk. */
+  /** The mode the server actually granted: hands_free normally, push_to_talk as the fallback. */
   mode: VoiceMode;
 }
 

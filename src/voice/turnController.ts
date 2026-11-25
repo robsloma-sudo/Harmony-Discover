@@ -32,6 +32,13 @@ export interface TurnControllerOptions {
   minTalkMs?: number;
   onPhase?: (phase: TurnPhase) => void;
   onTiming?: (timing: TurnTiming) => void;
+  /**
+   * Hands-free: the server listens all the time and decides when you stopped talking
+   * (it creates Marty's reply itself). pressTalk/releaseTalk are only for push-to-talk.
+   */
+  handsFree?: boolean;
+  /** Hands-free: you started speaking while Marty was talking. Mute his audio now. */
+  onBargeIn?: () => void;
 }
 
 /** Realtime error codes that are harmless race results, not a broken session. */
@@ -60,6 +67,8 @@ export class TurnController {
   private readonly minTalkMs: number;
   private readonly onPhase?: (phase: TurnPhase) => void;
   private readonly onTiming?: (timing: TurnTiming) => void;
+  private readonly handsFree: boolean;
+  private readonly onBargeIn?: () => void;
 
   private responseActive = false;
   private responseQueued = false;
@@ -79,7 +88,11 @@ export class TurnController {
     this.minTalkMs = options.minTalkMs ?? 180;
     this.onPhase = options.onPhase;
     this.onTiming = options.onTiming;
+    this.handsFree = options.handsFree ?? false;
+    this.onBargeIn = options.onBargeIn;
   }
+
+  get isHandsFree(): boolean { return this.handsFree; }
 
   get phase(): TurnPhase { return this.phaseNow; }
   get isResponseActive(): boolean { return this.responseActive; }
@@ -180,6 +193,33 @@ export class TurnController {
   /** Feed every server event here. */
   handleServerEvent(event: RealtimeServerEvent): void {
     switch (event.type) {
+      case 'input_audio_buffer.speech_started': {
+        if (!this.handsFree) break;
+        const gap = this.lastAudioEndedAt != null && !this.audioPlaying ? this.now() - this.lastAudioEndedAt : null;
+        if (this.audioPlaying || this.responseActive) {
+          // Barge-in: the server cancels and trims the reply itself (interrupt_response);
+          // mute locally first so Marty goes quiet at once, then forget the old reply.
+          const startedAt = this.now();
+          this.onBargeIn?.();
+          if (this.audioItemId) this.interruptedItems.add(this.audioItemId);
+          this.responseActive = false;
+          this.responseQueued = false;
+          this.audioPlaying = false;
+          this.audioItemId = null;
+          this.audioStartedAt = null;
+          this.lastAudioEndedAt = this.now();
+          this.onTiming?.({ releaseToFirstAudioMs: null, interruptToSilenceMs: this.now() - startedAt, gapBeforeTalkMs: null });
+        } else {
+          this.pendingGapMs = gap;
+        }
+        this.setPhase('talking');
+        break;
+      }
+      case 'input_audio_buffer.speech_stopped':
+        if (!this.handsFree) break;
+        this.releasedAt = this.now();
+        if (this.phaseNow === 'talking') this.setPhase('thinking');
+        break;
       case 'response.created':
         this.responseActive = true;
         break;
