@@ -3,7 +3,11 @@ import {
   buildGeminiTokenBody, buildGptLiveSession, compareAllowed, DEFAULT_ORDER, GEMINI_AUTH_TOKENS_URL,
   MARTY_BOSTON_CONSENT_VERSION, mintContender, parseCompareRequest, parseOrder, resolveContender,
 } from "./_shared/compare.ts";
-import { buildRealtimeSession, DISCOVER_NAVIGATION_TOOLS } from "../discover-voice-session/_shared/realtimeSession.ts";
+import { DEPLOY_FILES } from "./_shared/compare.ts";
+import {
+  buildRealtimeSession, DISCOVER_NAVIGATION_TOOLS, MARTY_LOOKUP_INSTRUCTIONS, MARTY_LOOKUP_TOOLS,
+} from "../discover-voice-session/_shared/realtimeSession.ts";
+import { martyCharacterBook } from "../discover-voice-session/_shared/martyCharacterBook.ts";
 
 const UID = "11111111-2222-3333-4444-555555555555";
 const OK = { consentVersion: MARTY_BOSTON_CONSENT_VERSION, contender: "A", mode: "push_to_talk" };
@@ -55,7 +59,8 @@ Deno.test("current: session equals buildRealtimeSession session; blind unless re
   assertEquals(r.body.provider, "openai_realtime");
   assertFalse("model" in r.body);
   const sent = JSON.parse(calls[0].init.body as string).session;
-  const expected = buildRealtimeSession({ mode: "push_to_talk" }).session;
+  // Same call as discover-voice-session/index.ts (character book in), with look-ups switched off.
+  const expected = buildRealtimeSession({ mode: "push_to_talk", characterBook: martyCharacterBook, lookupsEnabled: false }).session;
   // flavor is random per build, so compare everything but instructions, and the instructions' fixed prefix
   assertEquals({ ...sent, instructions: "" }, { ...JSON.parse(JSON.stringify(expected)), instructions: "" });
   assertEquals(sent.model, "gpt-realtime-2.1");
@@ -116,4 +121,51 @@ Deno.test("custom order moves the models", async () => {
   const r = await mintContender({ contender: "A", mode: "push_to_talk", reveal: true },
     { ...env, orderEnv: "gpt-live-1,gemini,current" }, stub(200, OPENAI_OK));
   assertEquals(r.body.model, "gpt-live-1");
+});
+
+// CEO review of #140: the compared Marty must be the real Marty (character book in) and must never be told
+// about, or handed, a tool this test cannot run (look-ups have no relay here).
+Deno.test("every contender gets the character book and no look-up instructions or tools", async () => {
+  const book = martyCharacterBook.trim();
+  assert(book.length > 1000);
+  const lookupNames = MARTY_LOOKUP_TOOLS.map((t) => t.name);
+  const navNames = DISCOVER_NAVIGATION_TOOLS.map((t) => t.name);
+  for (const letter of ["A", "B", "C"] as const) {
+    for (const mode of ["push_to_talk", "hands_free"] as const) {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const payload = letter === "C" ? { name: "t" } : OPENAI_OK;
+      const r = await mintContender({ contender: letter, mode, reveal: false }, env, stub(200, payload, calls));
+      assertEquals(r.status, 200);
+      const sent = JSON.parse(calls[0].init.body as string);
+      const instructions: string = letter === "C"
+        ? sent.liveConnectConstraints.config.systemInstruction.parts[0].text
+        : sent.session.instructions;
+      assert(instructions.includes("MARTY CHARACTER BOOK"), `${letter} ${mode}: book header`);
+      assert(instructions.includes(book), `${letter} ${mode}: full book text`);
+      assertFalse(instructions.includes(MARTY_LOOKUP_INSTRUCTIONS.trim().split("\n")[0]), `${letter} ${mode}: look-up instructions`);
+      for (const name of lookupNames) assertFalse(instructions.includes(name), `${letter} ${mode}: mentions ${name}`);
+      if (letter !== "C") {
+        const toolNames = sent.session.tools.map((t: { name: string }) => t.name);
+        assertEquals(toolNames, navNames, `${letter} ${mode}: only navigation tools`);
+      } else {
+        assertFalse("tools" in sent.liveConnectConstraints.config, "gemini gets no tools at all");
+      }
+    }
+  }
+});
+
+Deno.test("deploy list covers every file the function imports", async () => {
+  const root = new URL("../", import.meta.url);
+  const seen = new Set<string>();
+  const walk = async (rel: string) => {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    const text = await Deno.readTextFile(new URL(rel, root));
+    for (const m of text.matchAll(/(?:import|export)[^"']*?from\s+["'](\.{1,2}\/[^"']+)["']/g)) {
+      const next = new URL(m[1], new URL(rel, root)).href.slice(root.href.length);
+      await walk(next);
+    }
+  };
+  await walk("discover-voice-compare/index.ts");
+  assertEquals([...seen].sort(), [...DEPLOY_FILES].sort());
 });

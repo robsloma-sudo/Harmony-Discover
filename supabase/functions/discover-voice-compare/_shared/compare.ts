@@ -1,6 +1,7 @@
 // Pure logic for the Marty voice listening test (P-20261125-0219 part 1b). No Deno globals, no database.
 // Read-only imports from discover-voice-session so every contender gets the identical Marty script.
 import { MARTY_BOSTON_CONSENT_VERSION } from "../../discover-voice-session/_shared/martySullivanBoston.ts";
+import { martyCharacterBook } from "../../discover-voice-session/_shared/martyCharacterBook.ts";
 import {
   buildRealtimeSession,
   DISCOVER_NAVIGATION_TOOLS,
@@ -99,9 +100,28 @@ export function buildGeminiTokenBody(instructions: string, now: Date = new Date(
   };
 }
 
+// The compared Marty is the real Marty minus look-ups: same character book, passed the same way as
+// discover-voice-session/index.ts does, and look-ups switched OFF (no look-up instructions, no look-up tools),
+// because this test has no look-up relay. Every contender therefore gets the same script and only the
+// 2 navigation tools, and none is told about a tool it cannot use.
+export const COMPARE_LOOKUPS_ENABLED = false;
 export function buildCurrent(mode: VoiceMode, voiceEnv: string | undefined, handsFreeEnv: string | undefined) {
-  return buildRealtimeSession({ voiceEnv, handsFreeEnv, mode });
+  return buildRealtimeSession({
+    voiceEnv, handsFreeEnv, mode, characterBook: martyCharacterBook, lookupsEnabled: COMPARE_LOOKUPS_ENABLED,
+  });
 }
+
+// Every file the deploy bundle must carry (this folder plus the read-only discover-voice-session/_shared files
+// it imports). compare_test.ts walks the real import graph and fails if this list is missing one.
+export const DEPLOY_FILES = [
+  "discover-voice-compare/index.ts",
+  "discover-voice-compare/_shared/compare.ts",
+  "discover-voice-session/_shared/martyCharacterBook.ts",
+  "discover-voice-session/_shared/martyDelivery.ts",
+  "discover-voice-session/_shared/martySullivanBoston.ts",
+  "discover-voice-session/_shared/realtimeSession.ts",
+  "discover-voice-session/_shared/screenContext.ts",
+] as const;
 
 // ---- minting -----------------------------------------------------------------------------------
 export interface MintEnv {

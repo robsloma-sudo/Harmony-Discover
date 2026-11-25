@@ -2,7 +2,7 @@
 
 A listening test only. It lets Rob hear today's Marty (`gpt-realtime-2.1`) next to OpenAI's newer `gpt-live-1` and, if a key is set, Google's `gemini-3.8-live`, blind, before anything switches. Nothing switches by itself. `discover-voice-session` is not touched. DEV only.
 
-Every contender gets the identical Marty script (built by `buildRealtimeSession` in `discover-voice-session/_shared`, imported read-only) and the same 2 navigation tools only (no look-ups), so the voices compare fairly.
+Every contender gets the identical Marty script, built by `buildRealtimeSession` in `discover-voice-session/_shared` (imported read-only) exactly as `discover-voice-session/index.ts` builds it: the same character book (`martyCharacterBook`, passed as `characterBook`), with look-ups switched off (`lookupsEnabled: false`). So the script carries no look-up instructions and every OpenAI contender gets only the 2 navigation tools (Gemini gets no tools). The compared Marty is the real Marty minus the look-ups this test has no relay for, and is never told about a tool he cannot use. `compare_test.ts` proves this for A, B and C in both modes.
 
 ## Who can use it
 
@@ -34,6 +34,15 @@ A hidden, Rob-only test screen: buttons A / B / C, the same 5 test lines read al
 
 - `gpt-live-1` (OpenAI model page only, guide pages unreadable): id, function calling, default voice `marin` fixed per session, server-driven turns (no client `response.create`/`cancel`), WebRTC recommended, WebSocket `wss://api.openai.com/v1/live/sessions`, about $0.05/min plus backend model. We assume the same `client_secrets` endpoint accepts it and send only `type, model, instructions, tools, audio.output.voice`. Because turns are server-driven, hands-free vs push-to-talk may not behave as today.
 - Gemini (ephemeral-tokens page unreadable): model id `gemini-3.8-live`, `v1alpha/auth_tokens` URL and body shape, token in the `name` field.
+
+## Deploy
+
+This function imports Marty's shared script files read-only, so the deploy must carry these 7 files (paths under `supabase/functions/`), listed in `DEPLOY_FILES` in `_shared/compare.ts`; a test walks the real imports and fails if the list misses one:
+
+- `discover-voice-compare/index.ts` (entry point), `discover-voice-compare/_shared/compare.ts`
+- `discover-voice-session/_shared/realtimeSession.ts`, `martySullivanBoston.ts`, `martyDelivery.ts`, `screenContext.ts`, `martyCharacterBook.ts`
+
+With the Supabase CLI (`supabase functions deploy discover-voice-compare`) the relative imports are bundled automatically. With a file-list deploy tool, send all 7 with these relative paths. It needs the Marty look-up switch and character book code (PRs #139 and #141), so it deploys only after those.
 
 ## Switch off / undo
 
