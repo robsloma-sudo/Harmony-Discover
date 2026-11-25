@@ -4,7 +4,7 @@
 //          matched to public.product_index by text (discover_match_products). No image is stored.
 // - save:  the bottles the person kept become rows in public.bottle_sightings (the shared sightings ledger).
 // Guards: signed-in Discover user (anonymous users included), exact-origin allow-list, DEV project only,
-// 30 frames/minute per user, plus a per-user and a whole-project daily frame cap with token logging.
+// 30 frames/minute and 20 label batches/minute per user, plus a per-user and a whole-project daily image cap (FIX-007) with token logging.
 // v0.4.1: label and frame reads use Claude Sonnet 5.5 (Rob, 14 Nov 2026). Sonnet 5.5 does not accept a
 // forced tool choice, so it gets tool_choice auto with low effort (fast); save-time research stays on Haiku.
 // v0.5.0: two-step reading to keep cost down (Rob, 14 Nov 2026). Haiku does every first read (whole picture
@@ -21,10 +21,13 @@
 // v0.5.4: the live whole-frame read asks only for boxes and names (no edge tracing, no long fact list):
 // far fewer tokens, so the first names arrive seconds sooner.
 // v0.5.5 (FIX-011): time limits on every AI call (frame 25 s, label batch 30 s, save research 45 s).
+// v0.5.6 (FIX-007): the daily cap now counts images sent to the AI (a whole frame = 1, each label crop = 1),
+// not requests, so an 8-crop label batch uses 8 of the day's allowance. Label batches have their own
+// per-minute bucket (bottle_label_batch) so a busy shelf no longer starves live frames with 429s.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "0.5.5";
+const VERSION = "0.5.7";
 const PROJECT = "lqqmwqrffelgnbngrkep";
 const FRAME_MODEL = Deno.env.get("DISCOVER_FRAME_MODEL") || "claude-haiku-5-5";
 const MODEL = Deno.env.get("DISCOVER_LABEL_MODEL") || "claude-haiku-5-5";
@@ -37,8 +40,53 @@ const ADAPTIVE_MODEL = (model: string) => /sonnet-5|opus-5|fable|mythos/.test(mo
 const toolChoice = (model: string, name: string) => ADAPTIVE_MODEL(model)
   ? { tool_choice: { type: "auto" }, output_config: { effort: "low" } }
   : { tool_choice: { type: "tool", name } };
-const USER_FRAMES_PER_DAY = 400, PROJECT_FRAMES_PER_DAY = 5000;
+// FIX-007: daily caps are in images (frames + label crops). Defaults keep the old numbers; override with
+// DISCOVER_USER_IMAGES_PER_DAY / DISCOVER_PROJECT_IMAGES_PER_DAY without a code change.
+const capFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const USER_FRAMES_PER_DAY = capFromEnv("DISCOVER_USER_IMAGES_PER_DAY", 400), PROJECT_FRAMES_PER_DAY = capFromEnv("DISCOVER_PROJECT_IMAGES_PER_DAY", 5000);
+const LABEL_BATCHES_PER_MINUTE = 20;
 const USER_SAVES_PER_DAY = 20, PROJECT_SAVES_PER_DAY = 500;
+// P-20261121-2146: extra daily limits for GUEST (anonymous) accounts only, on top of the normal caps.
+// Signed-in members are never affected. Three checks in one database step: per guest account, per network
+// (a daily-rotating keyed hash of the caller's address; the address itself is never stored), and all guests
+// together. Every number can be changed with a setting, no code change: DISCOVER_GUEST_<KIND>_PER_ACCOUNT,
+// DISCOVER_GUEST_<KIND>_PER_NETWORK, DISCOVER_GUEST_<KIND>_ALL_GUESTS (KIND = IMAGES, MENU_PAGES, AUTOSAVE, BOTTLE_SAVE).
+const guestCapFromEnv = (name: string, fallback: number) => { const n = Number(Deno.env.get(name)); return Number.isInteger(n) && n > 0 ? n : fallback; };
+const GUEST_CAPS: Record<string, [number, number, number]> = {
+  images: [guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_ACCOUNT", 150), guestCapFromEnv("DISCOVER_GUEST_IMAGES_PER_NETWORK", 300), guestCapFromEnv("DISCOVER_GUEST_IMAGES_ALL_GUESTS", 2000)],
+  menu_pages: [guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_ACCOUNT", 15), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_PER_NETWORK", 30), guestCapFromEnv("DISCOVER_GUEST_MENU_PAGES_ALL_GUESTS", 300)],
+  autosave: [guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_ACCOUNT", 100), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_PER_NETWORK", 200), guestCapFromEnv("DISCOVER_GUEST_AUTOSAVE_ALL_GUESTS", 1500)],
+  bottle_save: [guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_ACCOUNT", 10), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_PER_NETWORK", 20), guestCapFromEnv("DISCOVER_GUEST_BOTTLE_SAVE_ALL_GUESTS", 200)],
+};
+const GUEST_LIMIT_MESSAGE = "You've reached today's free guest limit. Sign in (it's free) to keep going, or try again tomorrow.";
+async function guestNetworkKey(req: Request, secret: string): Promise<string | null> {
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || (req.headers.get("x-real-ip") || "").trim();
+  if (!ip || !secret) return null;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const b = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode("discover-guest-net:" + new Date().toISOString().slice(0, 10) + ":" + ip))).slice(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+// Returns null when the call may go ahead, otherwise the refusal to send. Members always get null.
+// useNetwork=false when the caller is another server program (its address is not the person's).
+async function guestRefusal(
+  // deno-lint-ignore no-explicit-any
+  db: any, user: { id: string; is_anonymous?: boolean }, req: Request, secret: string,
+  kind: "images" | "menu_pages" | "autosave" | "bottle_save", units: number, useNetwork = true,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (user.is_anonymous !== true) return null;
+  const [perAccount, perNetwork, allGuests] = GUEST_CAPS[kind];
+  const network = useNetwork ? await guestNetworkKey(req, secret).catch(() => null) : null;
+  const { data, error } = await db.rpc("discover_guest_allow", {
+    p_account: user.id, p_network: network, p_kind: kind, p_units: units,
+    p_account_max: perAccount, p_network_max: perNetwork, p_all_guests_max: allGuests,
+  });
+  if (error) return { status: 503, body: { error: "daily_limit_unavailable" } };
+  if (data !== true) return { status: 429, body: { error: "daily_limit_reached", limit: "guest", message: GUEST_LIMIT_MESSAGE } };
+  return null;
+}
 const MAX_BODY_BYTES = 450_000, MAX_SAVE = 60;
 const MIN_LABEL_CONFIDENCE = 0.65;
 const CATEGORIES = ["tequila", "mezcal", "whiskey", "vodka", "gin", "rum", "brandy", "pisco", "liqueur", "amaro_aperitivo", "vermouth", "wine", "sparkling", "beer", "cider", "non_alcoholic", "non_alcoholic_beer", "other"];
@@ -496,9 +544,12 @@ Deno.serve(async (req: Request) => {
     }
     if (totalImageChars > 360000) return reply({ error: "label_batch_too_large" }, 413, origin);
     if (new Set(crops.map(c => c.track_id)).size !== crops.length) return reply({ error: "duplicate_track_id" }, 400, origin);
-    const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_frame", p_max: 30, p_window_seconds: 60 });
+    // FIX-007: own per-minute bucket, and the daily cap is charged one unit per crop (each crop is one AI image).
+    const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_label_batch", p_max: LABEL_BATCHES_PER_MINUTE, p_window_seconds: 60 });
     if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
-    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
+    const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "images", crops.length);
+    if (guestStop) return reply(guestStop.body, guestStop.status, origin);
+    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow_units", { p_subject: subject, p_units: crops.length, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
     const providerStartedAt = Date.now();
     let model = escalate ? ESCALATION_MODEL : MODEL, r = await readLabelBatch(anthropicKey, model, crops);
@@ -580,7 +631,9 @@ Deno.serve(async (req: Request) => {
     if (image.length < 2000 || !/^[A-Za-z0-9+/=]+$/.test(image) || !image.startsWith("/9j/")) return reply({ error: "jpeg_frame_required" }, 400, origin);
     const { data: minuteOk, error: minuteErr } = await db.rpc("discover_rate_limit", { p_subject: subject, p_bucket: "bottle_frame", p_max: 30, p_window_seconds: 60 });
     if (minuteErr || minuteOk !== true) return reply({ error: minuteErr ? "rate_limit_unavailable" : "rate_limited" }, minuteErr ? 503 : 429, origin);
-    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow", { p_subject: subject, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
+    const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "images", 1);
+    if (guestStop) return reply(guestStop.body, guestStop.status, origin);
+    const { data: dayOk, error: dayErr } = await db.rpc("discover_bottle_scan_allow_units", { p_subject: subject, p_units: 1, p_user_max: USER_FRAMES_PER_DAY, p_global_max: PROJECT_FRAMES_PER_DAY });
     if (dayErr || dayOk !== true) return reply({ error: dayErr ? "daily_limit_unavailable" : "daily_limit_reached" }, dayErr ? 503 : 429, origin);
 
     const providerStartedAt = Date.now();
@@ -695,6 +748,8 @@ Deno.serve(async (req: Request) => {
         proof: clean(b.proof, 30), size: clean(b.size, 30), words: (Array.isArray(b.words) ? b.words : []).map((w) => clean(w, 40)).filter(Boolean).slice(0, 8), confidence: unit(b.confidence), details: pickDetails(b), field_confidence: b.fieldConfidence && typeof b.fieldConfidence === "object" ? b.fieldConfidence : {}, research_sources: Array.isArray(b.research_sources) ? b.research_sources : [] }))
       .filter((b) => b.brand && b.confidence >= MIN_LABEL_CONFIDENCE);
     if (!incoming.length) return reply({ error: "no_bottles" }, 400, origin);
+    const guestStop = await guestRefusal(db, auth.user, req, serviceKey, "bottle_save", 1);
+    if (guestStop) return reply(guestStop.body, guestStop.status, origin);
     const { data: dailySaveOk, error: dailySaveError } = await db.rpc("discover_bottle_save_allow", {
       p_subject: subject,
       p_user_max: USER_SAVES_PER_DAY,

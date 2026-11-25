@@ -5,7 +5,6 @@ import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core
 import { frameSharpness, SteadyGate } from './steadyCapture';
 import { isReadableLabel, SAMPLE_GAP_MS, samplesForLabel, zoomReadiness } from './distanceCapture';
 import { readLiveFrame, readLiveLabelBatch, saveLiveSightings, type BottleRead, type LabelBatchRead, type LiveSightingInput, type ResolvedIdentity } from '../services/discoverLiveApi';
-import { BrowserDepthEstimator, type RelativeDepthMap } from './BrowserDepthEstimator';
 import { frameGateRetryDelay, sampleLumaGrid, shouldReadChangedFrame } from './frameChangeGate';
 import { SegmentationRunner } from './segmentationEngine';
 import { extractMaskContour } from './maskContour';
@@ -17,6 +16,7 @@ import { biggestWords, brandWords, chooseGuess, fragmentWords, probableBrand, pr
 import { noLabelStep } from './labelBatch';
 import { fragmentLookup, letterLookup, logScanTimings, type ScanTimingRow } from '../services/discoverLetterApi';
 import { associateBottleReadTracks, type BottleReadTrack } from './bottleReadIdentity';
+import { applyLocalTrackerBoxes, buildTrackingSeeds, type LocalTrackerBox, type TrackingSeed } from './nativeLocalTracking';
 import { loadDfineSegOnnxProvider } from './dfineSegRuntime';
 import { detectorBackendPreference } from './dfineWorkerProvider';
 import { hasBottleIdentityConflict, isConfirmedWebBottleTrack, mergeBottleRead } from './webTrackPolicy';
@@ -62,13 +62,17 @@ type NativeProps = ViewProps & {
   /** Settings > Quick Guess: the phone reads the biggest label words for an instant "Probably …". */
   quickGuess?: boolean;
   captureRequestId?: number;
+  /** iOS only, set by DiscoverARSurface itself: cloud boxes the phone's Vision tracker should follow between reads. */
+  trackingSeeds?: TrackingSeed[];
+  /** iOS only, handled by DiscoverARSurface itself: up to 10 Hz box positions from the phone's Vision tracker. */
+  onLocalTrack?: (event: { nativeEvent: { timestamp: number; boxes: LocalTrackerBox[] } }) => void;
   onCapturedImage?: (event: { nativeEvent: { uri: string; width: number; height: number; timestamp: number } }) => void;
   onFrame?: (event: { nativeEvent: { imageBase64: string; timestamp: number; depthEstimate?: ARKitDepthFrame } }) => void;
   onTrackingUpdate?: (event: { nativeEvent: ARTrackingUpdate }) => void;
   onARReady?: (event: ARViewEvent) => void;
   onARError?: (event: ARViewEvent) => void;
   onVisualCandidates?: (event: { nativeEvent: { count: number; reset?: boolean; source?: 'cloud' | 'local'; depthFrame?: ARKitDepthFrame; candidates: Array<{ trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp?: number; source?: 'cloud' | 'local'; contour?: Array<{ x: number; y: number }>; bottle?: BottleRead; liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } } }> } }) => void;
-  onDepthEstimate?: (event: { nativeEvent: RelativeDepthMap | ARKitDepthFrame }) => void;
+  onDepthEstimate?: (event: { nativeEvent: ARKitDepthFrame }) => void;
   onCameraPose?: (event: { nativeEvent: ARKitCameraPose }) => void;
   onDepthStatus?: (event: { nativeEvent: { status: string } }) => void;
   onLiquidMetrics?: (event: { nativeEvent: { jobsDispatched: number; jobsCompleted: number; framesSkipped: number; workerErrors: number; lastWorkerMs: number; maxWorkerMs: number; segmentationMs: number; localFrameMs: number; workerAvailable: boolean } }) => void;
@@ -391,8 +395,6 @@ function WebLiveCamera(props: NativeProps) {
     // Bottles re-found from memory get one fresh label check before their
     // remembered name is trusted as verified again.
     const reverifyTracks = new Set<number>();
-    let depthTimer = 0;
-    let depthEstimator: BrowserDepthEstimator | null = null;
     let recognitionBusy = false;
     let labelBatchBusy = false;
     let lastSentFrameSignature: Uint8Array | null = null;
@@ -1434,22 +1436,10 @@ function WebLiveCamera(props: NativeProps) {
           return;
         }
 
-        // The relative-depth transformer is a large additional WASM/WebGPU
-        // allocation. Mobile browsers have a much tighter camera-process memory
-        // budget, so keep it off the mobile web path; native iOS uses ARKit depth.
-        const mobileBrowser = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        if (mobileBrowser) {
-          callbacksRef.current.onDepthStatus?.({ nativeEvent: { status: 'Mobile browser depth paused for camera stability; use native iPhone ARKit for metric depth.' } });
-        } else {
-          depthEstimator = new BrowserDepthEstimator(
-            depth => callbacksRef.current.onDepthEstimate?.({ nativeEvent: depth }),
-            status => callbacksRef.current.onDepthStatus?.({ nativeEvent: { status } }),
-          );
-          depthEstimator.start();
-          depthTimer = window.setInterval(() => {
-            if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) depthEstimator?.submit(video);
-          }, 1700);
-        }
+        // Web browsers have no measured depth. The earlier relative-depth model
+        // (S2-B2-005) produced maps nothing on screen used, so it is not started;
+        // native iPhone ARKit remains the only depth source.
+        callbacksRef.current.onDepthStatus?.({ nativeEvent: { status: 'Web camera has no depth; use native iPhone ARKit for metric depth.' } });
 
         const verifyFrame = () => {
           if (disposed) return;
@@ -1538,13 +1528,11 @@ function WebLiveCamera(props: NativeProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
       markScannerStopped();
-      if (depthTimer) window.clearInterval(depthTimer);
       localBottleTracker.reset();
       liquidAnalysisQueue.dispose();
       liquidHistoryByTrack.clear();
         liquidGuard.clear();
       if (segmentationRunner) void segmentationRunner.dispose();
-      depthEstimator?.dispose();
       if (stream) stream.getTracks().forEach(track => track.stop());
       const video = videoRef.current;
       if (video) {
@@ -1721,7 +1709,18 @@ function trackNativeBottleReads(bottles: BottleRead[]) {
   return result.tracks.filter(track => bottles.includes(track.bottle));
 }
 
+type NativeCandidate = {
+  trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
+  source?: 'cloud' | 'local';
+  liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
+};
+
 export function DiscoverARSurface(props: NativeProps) {
+  // S2-B2-004: the phone's own tracker moves the last cloud boxes between cloud reads.
+  const [nativeTrackingSeeds, setNativeTrackingSeeds] = useState<TrackingSeed[]>([]);
+  const nativeSeedTimestamp = useRef(0);
+  const nativeCloudCandidates = useRef<NativeCandidate[]>([]);
+  const nativeLatestLocalBoxes = useRef<LocalTrackerBox[]>([]);
   const nativeVisionSignals = useRef<{ text: string[]; barcodes: Array<{ value: string; symbology: string }>; timestamp: number } | null>(null);
   const nativeFrameReadBusy = useRef(false);
   const nativeLiquidBusy = useRef(false);
@@ -1746,6 +1745,17 @@ export function DiscoverARSurface(props: NativeProps) {
     nextNativeRecognitionTrackId = 1;
     nativeVisionSignals.current = null;
     nativeLiquidHistory.current.clear();
+    nativeSeedTimestamp.current = 0;
+    nativeCloudCandidates.current = [];
+    nativeLatestLocalBoxes.current = [];
+    setNativeTrackingSeeds(previous => previous.length ? [] : previous);
+  };
+  /** Publishes the latest cloud boxes, moved to where the phone tracker last saw them. */
+  const publishNativeCandidates = (candidates: NativeCandidate[], depthFrame?: ARKitDepthFrame) => {
+    const { candidates: placed } = nativeSeedTimestamp.current
+      ? applyLocalTrackerBoxes(candidates, nativeLatestLocalBoxes.current, nativeSeedTimestamp.current, Date.now())
+      : { candidates };
+    props.onVisualCandidates?.({ nativeEvent: { count: placed.length, depthFrame, candidates: placed } });
   };
   useEffect(() => () => {
     nativeSessionGeneration.current += 1;
@@ -1755,6 +1765,19 @@ export function DiscoverARSurface(props: NativeProps) {
   if (!NativeARView) return <FallbackNativeCamera {...props} />;
   const { onLiquidMetrics, ...nativeViewProps } = props;
   return <NativeARView {...nativeViewProps}
+    trackingSeeds={nativeTrackingSeeds}
+    onLocalTrack={event => {
+      const seedTimestamp = nativeSeedTimestamp.current;
+      const cloud = nativeCloudCandidates.current;
+      if (!seedTimestamp || !cloud.length) return;
+      const boxes = (event.nativeEvent.boxes || []).filter(box => box.sourceTimestamp === seedTimestamp);
+      if (!boxes.length) return;
+      nativeLatestLocalBoxes.current = boxes;
+      const { candidates, moved } = applyLocalTrackerBoxes(cloud, boxes, seedTimestamp, Date.now());
+      // Never publish an empty or unchanged list from the tracker: an empty list would clear the boxes.
+      if (!moved) return;
+      props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, source: 'local', candidates } });
+    }}
     onARReady={event => {
       if (event.nativeEvent.state === 'starting') resetNativeSession();
       props.onARReady?.(event);
@@ -1794,10 +1817,15 @@ export function DiscoverARSurface(props: NativeProps) {
           barcodeStatus: 'available',
         } });
         const tracked = trackNativeBottleReads(result.bottles);
-        const candidates = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle } as {
-          trackId: number; x: number; y: number; width: number; height: number; confidence: number; timestamp: number; bottle: BottleRead;
-          liquidLevel?: { heightPercent: number; confidence: number; method: 'temporal_consensus'; calibratedVolume?: { milliliters: number; fluidOunces: number; profileId: string } };
-        }));
+        const candidates: NativeCandidate[] = tracked.map(track => ({ trackId: track.trackId, x: track.x, y: track.y, width: track.width, height: track.height, confidence: track.confidence, timestamp: frame.timestamp, bottle: track.bottle }));
+        // Hand the new boxes to the phone's tracker (S2-B2-004). Boxes with LiDAR depth become
+        // 3D anchors that already follow the camera, so they are not tracked twice.
+        const hasMetricDepth = frame.depthEstimate?.unit === 'meters';
+        const seeds = buildTrackingSeeds(candidates, frame.timestamp, hasMetricDepth);
+        nativeCloudCandidates.current = hasMetricDepth ? [] : candidates;
+        nativeSeedTimestamp.current = seeds.length ? frame.timestamp : 0;
+        nativeLatestLocalBoxes.current = [];
+        setNativeTrackingSeeds(previous => previous.length || seeds.length ? seeds : previous);
         // Publish bottle boxes immediately. Liquid analysis is fire-and-forget
         // and can only enrich these candidates after its background result.
         props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
@@ -1858,7 +1886,11 @@ export function DiscoverARSurface(props: NativeProps) {
               workerErrors: 0, lastWorkerMs: nativeProcessingMs, maxWorkerMs: nativeProcessingMs,
               segmentationMs: 0, localFrameMs: 0, workerAvailable: true,
             } });
-            if (changed) props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
+            // Keep the boxes where the phone tracker has moved them since this read.
+            if (changed && generation === nativeSessionGeneration.current) {
+              if (nativeCloudCandidates.current === candidates) publishNativeCandidates(candidates, frame.depthEstimate);
+              else if (!nativeCloudCandidates.current.length) props.onVisualCandidates?.({ nativeEvent: { count: candidates.length, depthFrame: frame.depthEstimate, candidates } });
+            }
           }).catch(() => {
             onLiquidMetrics?.({ nativeEvent: {
               jobsDispatched: 1, jobsCompleted: 0, framesSkipped: 0, workerErrors: 1,

@@ -18,6 +18,13 @@ This service is development-only and is not production deployable yet.
 - `POST /v1/observations/:id/complete`
 
 ## Worker behavior
+
+> **Retired (21 Nov 2026, kit S4-D5-002).** This worker was never hosted. Its `validate_assets` jobs are now closed
+> automatically after one day by `public.discover_expire_photo_checks()` (daily timed job
+> `discover-expire-photo-checks-daily`). The live menu reader (`discover-menu-read`) reads uploaded pages directly,
+> and the app re-saves each page as JPEG on the phone before upload. To bring the worker back, host it and run the
+> rollback in `supabase/rollback/20261121180000_discover_retire_photo_check_queue_ROLLBACK.sql`.
+
 - Claims jobs with a Postgres `FOR UPDATE SKIP LOCKED` function.
 - Checks JPEG/PNG/WebP signatures and byte-size consistency.
 - Computes SHA-256 hashes.

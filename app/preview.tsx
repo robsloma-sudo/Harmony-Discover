@@ -3,6 +3,9 @@ import { View, Text, Image, Pressable, ScrollView, ActivityIndicator, TextInput 
 import { router } from 'expo-router';
 import { Screen, styles } from '../src/ui';
 import { useScan } from '../src/state/ScanContext';
+import { ExploreLimitError, getMenuLinks, type MenuLineLink } from '../src/services/menuExplore';
+import { useVisibleLinePrefetch } from '../src/explore/useVisibleLinePrefetch';
+import { LineTitle, LinkedLineBlock, LinksNotice } from '../src/explore/MenuLineList';
 import { getMockJourney } from '../src/services/mockJourneyApi';
 import { processMenuPhotos, saveMenuItemCorrection, getObservationContribution, grantObservationContribution, withdrawObservationContribution, confirmObservationVenue, DiscoveredMenuItem } from '../src/services/discoverObservationApi';
 
@@ -23,6 +26,9 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
   const [venueName, setVenueName] = useState('');
   const [venueConfirmed, setVenueConfirmed] = useState(false);
   const [contributionBusy, setContributionBusy] = useState(false);
+  const [links, setLinks] = useState<MenuLineLink[]>([]);
+  const [linksNotice, setLinksNotice] = useState('');
+  const visible = useVisibleLinePrefetch(links);
 
   useEffect(() => {
     let active = true;
@@ -51,6 +57,9 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
         catch { setMessage('Menu read succeeded, but contribution-permission status could not be checked.'); }
       }
       setEditingId(null);
+      setLinks([]); setLinksNotice('');
+      // Links are a bonus: if they fail the menu review carries on with unlinked lines.
+      getMenuLinks(result.id, result.items || []).then(found => { setLinks(found); }).catch(e => { if (e instanceof ExploreLimitError) setLinksNotice(e.message); });
       if (result.status !== 'ready_for_review') setMessage(`Scan status: ${result.status}. Some pages may need another attempt.`);
       if (!result.items?.length) setMessage('No readable menu items were returned. Try a clearer photo with the menu filling the frame.');
     } catch (e) { setMessage(e instanceof Error ? e.message : 'Could not process this menu.'); }
@@ -73,8 +82,11 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
 
   const journey = journeyItemId ? getMockJourney(journeyItemId) : null;
 
-  return <Screen hideTabs={!!onClose}>
-    <Text style={styles.back} onPress={() => onClose ? onClose() : router.back()}>‹  Back</Text>
+  return <Screen hideTabs={!!onClose} onScroll={visible.onScroll} onLayout={visible.onScreenLayout}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+      <Text style={styles.back} onPress={() => onClose ? onClose() : router.back()}>‹  Back</Text>
+      <Text style={styles.back} onPress={() => router.push('/my-versions' as never)}>My versions</Text>
+    </View>
     {journey ? <>
       <Text style={styles.back} onPress={() => setJourneyItemId(null)}>‹  Menu review</Text>
       <Text style={styles.eyebrow}>YOUR JOURNEY · PREVIEW</Text>
@@ -114,7 +126,8 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
     {items && <>
       <Text style={styles.sectionTitle}>Review extracted items · {items.length}</Text>
       <Text style={styles.footnote}>Check the transcription carefully. Save each correction to update your private Discover scan and retain an audit of what changed.</Text>
-      {items.map(item => <View key={item.id} style={[styles.item, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+      <LinksNotice message={linksNotice} />
+      {items.map(item => <View key={item.id} onLayout={visible.onLineLayout(item.id)} style={[styles.item, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
         {editingId === item.id ? <>
           <Text style={styles.eyebrow}>CORRECT TRANSCRIPTION</Text>
           <TextInput value={item.name} onChangeText={value => setItems(old => old?.map(x => x.id === item.id ? { ...x, name: value } : x) || null)} placeholder="Drink or item name" placeholderTextColor="#858C95" style={reviewField} />
@@ -125,11 +138,14 @@ export function PreviewPanel({ onClose, onAddPages, onExplore }: { onClose?: () 
           <Pressable style={styles.secondary} onPress={() => setEditingId(null)} disabled={savingId === item.id}><Text style={styles.secondaryText}>Keep editing later</Text></Pressable>
         </> : <>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, gap: 6 }}>
+              <LineTitle item={item} link={links.find(l => l.line_id === item.id)} observationId={observationId}>
               <Text style={styles.itemTitle}>{item.name}</Text>
               {!!item.section && <Text style={styles.categoryDesc}>{item.section}</Text>}
               {!!item.description && <Text style={styles.categoryDesc}>{item.description}</Text>}
               <Text style={styles.footnote}>{item.category.replace('_', ' ')} · {item.text_verified ? 'verified' : 'needs review'}</Text>
+              </LineTitle>
+              <LinkedLineBlock item={item} link={links.find(l => l.line_id === item.id)} observationId={observationId} />
             </View>
             {!!item.price && <Text style={styles.price}>{item.price}</Text>}
           </View>
