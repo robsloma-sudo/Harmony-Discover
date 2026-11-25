@@ -1,9 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
-import { buildRealtimeSession, MODEL } from "./_shared/realtimeSession.ts";
-import { MAX_REQUEST_BYTES, parseVoiceRequest } from "./_shared/voiceRequest.ts";
+import { martyCharacterBook } from "./_shared/martyCharacterBook.ts";
+import { buildRealtimeSession, lookupsAllowed, MODEL } from "./_shared/realtimeSession.ts";
+import { MAX_REQUEST_BYTES, parseLookupRequest, parseVoiceRequest } from "./_shared/voiceRequest.ts";
+import { loadPhgConfig, parseLookupArgs, runLookup } from "./_shared/lookups.ts";
 
 const DEV_REF = "lqqmwqrffelgnbngrkep";
+// The Discover website and its preview builds (same rule as discover-explore), plus any extra origins in DISCOVER_ALLOWED_ORIGINS.
+const SITE_ORIGIN = /^https:\/\/([a-z0-9-]+--)?harmony-discover\.netlify\.app$/;
 
 const ALLOWED_HEADERS = "authorization, apikey, content-type, x-client-info";
 const ALLOWED_METHODS = "POST, OPTIONS";
@@ -15,7 +19,8 @@ function configuredOrigins(): Set<string> {
   }).filter(Boolean));
 }
 function originAllowed(origin: string | null): boolean {
-  if (!origin) return true; // Native clients do not send Origin.
+  if (!origin) return true;
+  if (SITE_ORIGIN.test(origin)) return true;
   return configuredOrigins().has(origin);
 }
 function responseHeaders(origin: string | null): Headers {
@@ -37,6 +42,32 @@ function json(body: unknown, status = 200, origin: string | null = null) {
   return new Response(JSON.stringify(body), { status, headers: responseHeaders(origin) });
 }
 
+// Shared by the mint and look-up paths: who is this, and is their voice consent active right now?
+// Returns a ready error Response, or the signed-in user, the service client and the consent row.
+// deno-lint-ignore no-explicit-any
+type Authorized = { user: { id: string }; admin: any; consent: any } | { error: Response };
+async function authorizeGuest(
+  supabaseUrl: string, anonKey: string, serviceKey: string, token: string, origin: string | null,
+): Promise<Authorized> {
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: authData, error: authError } = await authClient.auth.getUser(token);
+  if (authError || !authData.user) return { error: json({ error: "Your sign-in has expired. Please sign in again." }, 401, origin) };
+
+  const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { data: consent, error: consentError } = await admin
+    .from("bartender_voice_consents").select("*").eq("user_id", authData.user.id).maybeSingle();
+  if (consentError) return { error: json({ error: "Could not verify voice consent." }, 503, origin) };
+  if (!consent?.voice_enabled ||
+      consent.voice_consent_version !== MARTY_BOSTON_CONSENT_VERSION ||
+      consent.voice_withdrawn_at) {
+    return { error: json({ error: "Voice consent is not active." }, 403, origin) };
+  }
+  return { user: authData.user, admin, consent };
+}
+
 Deno.serve(async (request: Request) => {
   const origin = request.headers.get("Origin");
   if (!originAllowed(origin)) return json({ error: "Origin is not allowed." }, 403);
@@ -53,7 +84,7 @@ Deno.serve(async (request: Request) => {
         Deno.env.get("DISCOVER_PROJECT_REF") !== DEV_REF) {
       return json({ error: "Voice sessions are disabled outside the approved Discover DEV environment." }, 503, origin);
     }
-    if (!anonKey || !serviceKey || !openAiKey) return json({ error: "Bartender voice is not configured in Discover DEV." }, 503, origin);
+    if (!anonKey || !serviceKey) return json({ error: "Bartender voice is not configured in Discover DEV." }, 503, origin);
 
     const authorization = request.headers.get("Authorization") ?? "";
     const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
@@ -67,31 +98,38 @@ Deno.serve(async (request: Request) => {
     if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) return json({ error: "Request body is too large." }, 413, origin);
     let input: unknown;
     try { input = JSON.parse(rawBody); } catch { return json({ error: "Request body must be valid JSON." }, 400, origin); }
+
+    // Second request kind: a look-up Marty asked for. Reads only; never logs arguments or results.
+    if (input && typeof input === "object" && (input as Record<string, unknown>).action === "lookup") {
+      const lookup = parseLookupRequest(input);
+      if (!lookup.ok) return json({ error: "That look-up request is not valid." }, 400, origin);
+      const guest = await authorizeGuest(supabaseUrl, anonKey, serviceKey, token, origin);
+      if ("error" in guest) return guest.error;
+      if (!lookupsAllowed(Deno.env)) return json({ error: "Look-ups are switched off." }, 503, origin);
+      const { data: lookupAllowed, error: lookupRateError } = await guest.admin.rpc("discover_rate_limit", {
+        p_subject: guest.user.id, p_bucket: "marty_lookup", p_max: 30, p_window_seconds: 60,
+      });
+      if (lookupRateError) return json({ error: "Look-up protection is not ready." }, 503, origin);
+      if (lookupAllowed !== true) return json({ error: "Too many look-ups. Wait a minute and try again." }, 429, origin);
+      const args = parseLookupArgs(lookup.tool, lookup.args);
+      if (!args) return json({ error: "That look-up request is not valid." }, 400, origin);
+      const result = await runLookup({ db: guest.admin, phg: () => loadPhgConfig(guest.admin) }, guest.user.id, args);
+      return json({ ok: true, tool: lookup.tool, output: JSON.stringify(result) }, 200, origin);
+    }
+
+    if (!openAiKey) return json({ error: "Bartender voice is not configured in Discover DEV." }, 503, origin);
     const parsed = parseVoiceRequest(input);
     if (!parsed.ok) {
       return json({ error: "A current, explicit push-to-talk consent is required." }, 400, origin);
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data: authData, error: authError } = await authClient.auth.getUser(token);
-    if (authError || !authData.user) return json({ error: "Your sign-in has expired. Please sign in again." }, 401, origin);
-
-    const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: consent, error: consentError } = await admin
-      .from("bartender_voice_consents").select("*").eq("user_id", authData.user.id).maybeSingle();
-    if (consentError) return json({ error: "Could not verify voice consent." }, 503, origin);
-    if (!consent?.voice_enabled ||
-        consent.voice_consent_version !== MARTY_BOSTON_CONSENT_VERSION ||
-        consent.voice_withdrawn_at) {
-      return json({ error: "Voice consent is not active." }, 403, origin);
-    }
+    const guest = await authorizeGuest(supabaseUrl, anonKey, serviceKey, token, origin);
+    if ("error" in guest) return guest.error;
+    const { user, admin, consent } = guest;
 
     const windowStart = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
     const { data: allowed, error: rateError } = await admin.rpc("consume_marty_voice_rate_limit", {
-      p_user_id: authData.user.id, p_window_start: windowStart, p_limit: 4,
+      p_user_id: user.id, p_window_start: windowStart, p_limit: 4,
     });
     if (rateError) return json({ error: "Voice session protection is not ready." }, 503, origin);
     if (allowed !== true) return json({ error: "Too many voice sessions. Wait a minute and try again." }, 429, origin);
@@ -101,7 +139,7 @@ Deno.serve(async (request: Request) => {
       const { data: memories, error: memoryError } = await admin
         .from("bartender_memories")
         .select("category,label,value")
-        .eq("user_id", authData.user.id)
+        .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(30);
       if (memoryError) return json({ error: "Could not safely load saved bartender memories." }, 503, origin);
@@ -117,6 +155,8 @@ Deno.serve(async (request: Request) => {
     const built = buildRealtimeSession({
       voiceEnv: Deno.env.get("MARTY_VOICE"),
       handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE"),
+      lookupsEnabled: lookupsAllowed(Deno.env),
+      characterBook: martyCharacterBook,
       mode: parsed.mode,
       screenContext: parsed.screenContext,
       memoryContext,
@@ -130,7 +170,6 @@ Deno.serve(async (request: Request) => {
       }),
     });
     if (!response.ok) {
-      // Never return provider response bodies or credentials to the client.
       console.error("Marty Realtime credential request failed:", response.status);
       return json({ error: "The bartender is temporarily unavailable." }, 503, origin);
     }

@@ -1,4 +1,4 @@
 import type { MartyFaceComponent } from './faceTypes';
-import { VestFace } from './faces/VestFace';
+import { PhotoFace } from './faces/PhotoFace';
 // Swap the face here.
-export const MartyFace: MartyFaceComponent = VestFace;
+export const MartyFace: MartyFaceComponent = PhotoFace;
