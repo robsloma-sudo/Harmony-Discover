@@ -8,6 +8,7 @@ import {
   MODEL as CURRENT_MODEL,
   type VoiceMode,
 } from "../../discover-voice-session/_shared/realtimeSession.ts";
+import { AGE_CHECK_FIELD, validAgeField } from "../../discover-voice-session/_shared/ageCheck.ts";
 
 export { MARTY_BOSTON_CONSENT_VERSION, CURRENT_MODEL };
 
@@ -44,9 +45,9 @@ export function resolveContender(orderEnv: string | undefined | null, letter: st
 }
 
 // ---- request -----------------------------------------------------------------------------------
-const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp"]);
+const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp", AGE_CHECK_FIELD]);
 export type CompareRequestResult =
-  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string }
+  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; sdp?: string }
   | { ok: false };
 export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
@@ -57,7 +58,11 @@ export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (body.mode !== "push_to_talk" && body.mode !== "hands_free") return { ok: false };
   if (body.reveal !== undefined && typeof body.reveal !== "boolean") return { ok: false };
   if (body.sdp !== undefined && !validSdp(body.sdp)) return { ok: false };
-  const out: CompareRequestResult = { ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true };
+  if (!validAgeField(body[AGE_CHECK_FIELD])) return { ok: false };
+  const out: CompareRequestResult = {
+    ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true,
+    ageConfirmed: body[AGE_CHECK_FIELD] === true,
+  };
   if (typeof body.sdp === "string") out.sdp = body.sdp;
   return out;
 }
@@ -129,6 +134,7 @@ export function buildCurrent(mode: VoiceMode, voiceEnv: string | undefined, hand
 export const DEPLOY_FILES = [
   "discover-voice-compare/index.ts",
   "discover-voice-compare/_shared/compare.ts",
+  "discover-voice-session/_shared/ageCheck.ts",
   "discover-voice-session/_shared/martyCharacterBook.ts",
   "discover-voice-session/_shared/martyDelivery.ts",
   "discover-voice-session/_shared/martySullivanBoston.ts",

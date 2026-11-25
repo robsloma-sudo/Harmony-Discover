@@ -3,6 +3,7 @@ import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
 import { martyCharacterBook } from "./_shared/martyCharacterBook.ts";
 import { buildRealtimeSession, lookupsAllowed, MODEL } from "./_shared/realtimeSession.ts";
 import { MAX_REQUEST_BYTES, parseLookupRequest, parseVoiceRequest } from "./_shared/voiceRequest.ts";
+import { ageGate } from "./_shared/ageCheck.ts";
 import { loadPhgConfig, parseLookupArgs, runLookup } from "./_shared/lookups.ts";
 
 const DEV_REF = "lqqmwqrffelgnbngrkep";
@@ -122,6 +123,9 @@ Deno.serve(async (request: Request) => {
     if (!parsed.ok) {
       return json({ error: "A current, explicit push-to-talk consent is required." }, 400, origin);
     }
+    // 21+ age check: refuse before sign-in look-up, rate limit or any paid provider call.
+    const ageBlock = ageGate(parsed.ageConfirmed, Deno.env.get("MARTY_AGE_CHECK"));
+    if (ageBlock) return json(ageBlock.body, ageBlock.status, origin);
 
     const guest = await authorizeGuest(supabaseUrl, anonKey, serviceKey, token, origin);
     if ("error" in guest) return guest.error;

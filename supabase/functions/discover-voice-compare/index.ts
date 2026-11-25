@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { compareAllowed, MARTY_BOSTON_CONSENT_VERSION, MAX_REQUEST_BYTES, mintContender, parseCompareRequest, RATE_LIMIT } from "./_shared/compare.ts";
+import { ageGate } from "../discover-voice-session/_shared/ageCheck.ts";
 
 // Listening test only (P-20261125-0219 part 1b). Same guards as discover-voice-session; hidden unless switched on for named users.
 const DEV_REF = "lqqmwqrffelgnbngrkep";
@@ -89,6 +90,9 @@ Deno.serve(async (request: Request) => {
     try { input = JSON.parse(rawBody); } catch { return json({ error: "Request body must be valid JSON." }, 400, origin); }
     const parsed = parseCompareRequest(input);
     if (!parsed.ok) return json({ error: "A valid contender, mode and current voice consent are required." }, 400, origin);
+    // 21+ age check (same rule as Marty): refuse before consent look-up, rate limit or any paid provider call.
+    const ageBlock = ageGate(parsed.ageConfirmed, Deno.env.get("MARTY_AGE_CHECK"));
+    if (ageBlock) return json(ageBlock.body, ageBlock.status, origin);
 
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: consent, error: consentError } = await admin

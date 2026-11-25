@@ -2,12 +2,13 @@ import { MARTY_BOSTON_CONSENT_VERSION } from "./martySullivanBoston.ts";
 import { sanitizeScreenContext, type ScreenContext } from "./screenContext.ts";
 import { LOOKUP_TOOL_NAMES, type LookupToolName } from "./lookupContract.ts";
 import type { VoiceMode } from "./realtimeSession.ts";
+import { AGE_CHECK_FIELD, validAgeField } from "./ageCheck.ts";
 
 export const MAX_REQUEST_BYTES = 8192;
-const ALLOWED_KEYS = new Set(["consentVersion", "mode", "screenContext"]);
+const ALLOWED_KEYS = new Set(["consentVersion", "mode", "screenContext", AGE_CHECK_FIELD]);
 
 export type VoiceRequestResult =
-  | { ok: true; mode: VoiceMode; screenContext: ScreenContext | null }
+  | { ok: true; mode: VoiceMode; screenContext: ScreenContext | null; ageConfirmed: boolean }
   | { ok: false };
 
 export function parseVoiceRequest(input: unknown): VoiceRequestResult {
@@ -17,7 +18,11 @@ export function parseVoiceRequest(input: unknown): VoiceRequestResult {
   if (keys.some((k) => !ALLOWED_KEYS.has(k))) return { ok: false };
   if (body.consentVersion !== MARTY_BOSTON_CONSENT_VERSION) return { ok: false };
   if (body.mode !== "push_to_talk" && body.mode !== "hands_free") return { ok: false };
-  return { ok: true, mode: body.mode, screenContext: sanitizeScreenContext(body.screenContext) };
+  if (!validAgeField(body[AGE_CHECK_FIELD])) return { ok: false };
+  return {
+    ok: true, mode: body.mode, screenContext: sanitizeScreenContext(body.screenContext),
+    ageConfirmed: body[AGE_CHECK_FIELD] === true,
+  };
 }
 
 // Second request kind: a look-up Marty asked for. Keys are exactly action, tool, arguments.
