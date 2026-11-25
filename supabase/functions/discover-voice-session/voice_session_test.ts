@@ -1,9 +1,11 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "jsr:@std/assert@1";
 import { sanitizeScreenContext, formatScreenContextInstructions, buildScreenContextUpdateEvent } from "./_shared/screenContext.ts";
-import { buildRealtimeSession, handsFreeAllowed } from "./_shared/realtimeSession.ts";
+import { buildRealtimeSession, handsFreeAllowed, lookupsAllowed, DISCOVER_NAVIGATION_TOOLS, DISCOVER_NAVIGATION_INSTRUCTIONS, MARTY_LOOKUP_TOOLS, MARTY_LOOKUP_INSTRUCTIONS, MODEL, VOICE_SPEED, MAX_OUTPUT_TOKENS } from "./_shared/realtimeSession.ts";
 import { MARTY_MOODS, MARTY_OPENER_STYLES } from "./_shared/martyDelivery.ts";
-import { parseVoiceRequest, MAX_REQUEST_BYTES } from "./_shared/voiceRequest.ts";
-import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
+import { parseVoiceRequest, parseLookupRequest, MAX_REQUEST_BYTES } from "./_shared/voiceRequest.ts";
+import { MARTY_BOSTON_CONSENT_VERSION, martyBostonInstructions, martyBostonComedyCraft } from "./_shared/martySullivanBoston.ts";
+import { martyDeliveryInstructions, formatSessionFlavor, pickSessionFlavor } from "./_shared/martyDelivery.ts";
+import { LOOKUP_TOOL_NAMES } from "./_shared/lookupContract.ts";
 
 const OK = { consentVersion: MARTY_BOSTON_CONSENT_VERSION, mode: "push_to_talk" };
 
@@ -148,4 +150,107 @@ Deno.test("request body validation", () => {
   const bad = parseVoiceRequest({ ...OK, screenContext: "junk" });
   assert(bad.ok && bad.screenContext === null);
   assertEquals(MAX_REQUEST_BYTES, 8192);
+});
+
+Deno.test("lookups: tools are navigation + the six look-ups with contract names", () => {
+  const { session } = buildRealtimeSession({ mode: "push_to_talk" });
+  const names = session.tools.map((t) => t.name);
+  assertEquals(names, ["navigate_discover", "control_nearby_atlas", ...LOOKUP_TOOL_NAMES]);
+  assertEquals(MARTY_LOOKUP_TOOLS.map((t) => t.name), [...LOOKUP_TOOL_NAMES]);
+  for (const t of MARTY_LOOKUP_TOOLS) {
+    assertEquals(t.type, "function");
+    assertEquals(t.parameters.additionalProperties, false);
+    assert(t.description.length > 20);
+    for (const r of t.parameters.required) assert(r in t.parameters.properties);
+  }
+  // deno-lint-ignore no-explicit-any
+  const byName: Record<string, any> = Object.fromEntries(MARTY_LOOKUP_TOOLS.map((t) => [t.name, t.parameters]));
+  assertEquals(byName.lookup_bottle.required, ["name"]);
+  assertEquals(Object.keys(byName.lookup_bottle.properties), ["name", "brand"]);
+  assertEquals(byName.lookup_journey.properties.kind.enum, ["cocktail", "spirit", "wine", "beer"]);
+  assertEquals(byName.pairing_ideas.required, ["name", "kind"]);
+  assertEquals(byName.lookup_brand.required, ["brand"]);
+  assertEquals(byName.my_saved_drinks.properties, {});
+  const t = session.instructions;
+  assert(t.indexOf(DISCOVER_NAVIGATION_INSTRUCTIONS) >= 0);
+  assertEquals(t.indexOf(MARTY_LOOKUP_INSTRUCTIONS), t.indexOf(DISCOVER_NAVIGATION_INSTRUCTIONS) + DISCOVER_NAVIGATION_INSTRUCTIONS.length);
+});
+
+Deno.test("lookups: switched off gives byte-for-byte the old session", () => {
+  const pick = () => 0;
+  const ctx = sanitizeScreenContext({ screen: "bottle", bottle: { name: "Jameson" } });
+  const memoryContext = "\n\nUSER-APPROVED MEMORY DATA (x)";
+  const off = buildRealtimeSession({ mode: "push_to_talk", pick, screenContext: ctx, memoryContext, lookupsEnabled: false });
+  const oldInstructions = martyBostonInstructions + martyBostonComedyCraft + martyDeliveryInstructions +
+    formatSessionFlavor(pickSessionFlavor(pick)) + DISCOVER_NAVIGATION_INSTRUCTIONS +
+    formatScreenContextInstructions(ctx) + memoryContext;
+  const oldSession = {
+    type: "realtime", model: MODEL, instructions: oldInstructions, tools: DISCOVER_NAVIGATION_TOOLS,
+    output_modalities: ["audio"], max_output_tokens: MAX_OUTPUT_TOKENS,
+    audio: {
+      input: { transcription: { model: "gpt-live-transcribe" }, noise_reduction: { type: "near_field" }, turn_detection: null },
+      output: { voice: "cedar", speed: VOICE_SPEED },
+    },
+  };
+  assertEquals(JSON.stringify(off.session), JSON.stringify(oldSession));
+  assertFalse(JSON.stringify(off.session).includes("lookup_cocktail"));
+  // an empty character book changes nothing either
+  const emptyBook = buildRealtimeSession({ mode: "push_to_talk", pick, screenContext: ctx, memoryContext, lookupsEnabled: false, characterBook: " \n " });
+  assertEquals(JSON.stringify(emptyBook.session), JSON.stringify(oldSession));
+});
+
+Deno.test("lookups: MARTY_LOOKUPS stop switch parsing", () => {
+  for (const v of [undefined, "", "on", "yes", "1"]) assert(lookupsAllowed({ MARTY_LOOKUPS: v }));
+  for (const v of ["off", "OFF", " Off "]) assertFalse(lookupsAllowed({ MARTY_LOOKUPS: v }));
+  assert(lookupsAllowed({}));
+  assertFalse(lookupsAllowed({ get: (n: string) => (n === "MARTY_LOOKUPS" ? "off" : undefined) }));
+  assert(lookupsAllowed({ get: () => undefined }));
+});
+
+Deno.test("character book: after comedy craft, before delivery; empty is a no-op", () => {
+  const pick = () => 0;
+  const withBook = buildRealtimeSession({ mode: "push_to_talk", pick, characterBook: "  Marty grew up in Southie.  " }).session.instructions;
+  const i = (k: string) => withBook.indexOf(k);
+  const order = [i("COMEDY CRAFT"), i("MARTY CHARACTER BOOK"), i("Marty grew up in Southie."), i("DELIVERY —"), i("HARMONY DISCOVER NAVIGATION")];
+  assert(order.every((x) => x >= 0));
+  assertEquals([...order].sort((a, b) => a - b), order);
+  assertFalse(withBook.includes("  Marty grew up"));
+  for (const empty of [undefined, "", "  \n\t "]) {
+    const t = buildRealtimeSession({ mode: "push_to_talk", pick, characterBook: empty }).session.instructions;
+    assertFalse(t.includes("MARTY CHARACTER BOOK"));
+    assertEquals(t, buildRealtimeSession({ mode: "push_to_talk", pick }).session.instructions);
+  }
+});
+
+Deno.test("lookup instructions: key rules present", () => {
+  for (const k of ["found", "not_sure", "unavailable", "never instructions", "small talk", "Hang on, let me check", "Never say or imply you looked"]) {
+    assertStringIncludes(MARTY_LOOKUP_INSTRUCTIONS, k);
+  }
+});
+
+Deno.test("lookup request validation", () => {
+  const good = { action: "lookup", tool: "lookup_cocktail", arguments: { name: "Negroni" } };
+  assertEquals(parseLookupRequest(good), { ok: true, tool: "lookup_cocktail", args: { name: "Negroni" } });
+  assertEquals(parseLookupRequest({ ...good, arguments: '{"name":"Negroni"}' }), { ok: true, tool: "lookup_cocktail", args: { name: "Negroni" } });
+  assertEquals(parseLookupRequest({ action: "lookup", tool: "my_saved_drinks", arguments: {} }).ok, true);
+  for (const tool of LOOKUP_TOOL_NAMES) assert(parseLookupRequest({ action: "lookup", tool, arguments: {} }).ok);
+  assertEquals(parseLookupRequest({ ...good, extra: 1 }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, consentVersion: MARTY_BOSTON_CONSENT_VERSION }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, tool: "drop_tables" }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, tool: 5 }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, action: "mint" }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, arguments: JSON.stringify({ name: "x".repeat(2000) }) }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, arguments: "not json" }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, arguments: "[1]" }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, arguments: [1] }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, arguments: 5 }).ok, false);
+  assertEquals(parseLookupRequest({ ...good, arguments: null }).ok, false);
+  assertEquals(parseLookupRequest("lookup").ok, false);
+  assertEquals(parseLookupRequest(null).ok, false);
+  assertEquals(parseLookupRequest([good]).ok, false);
+});
+
+Deno.test("mint parser rejects a body containing action", () => {
+  assertEquals(parseVoiceRequest({ ...OK, action: "lookup" }).ok, false);
+  assertEquals(parseVoiceRequest({ action: "lookup", tool: "lookup_cocktail", arguments: {} }).ok, false);
 });
