@@ -6,6 +6,7 @@ import { parseVoiceRequest, parseLookupRequest, MAX_REQUEST_BYTES } from "./_sha
 import { MARTY_BOSTON_CONSENT_VERSION, martyBostonInstructions, martyBostonComedyCraft } from "./_shared/martySullivanBoston.ts";
 import { martyDeliveryInstructions, formatSessionFlavor, pickSessionFlavor } from "./_shared/martyDelivery.ts";
 import { LOOKUP_TOOL_NAMES } from "./_shared/lookupContract.ts";
+import { martyCharacterBook, MARTY_CHARACTER_BOOK_MAX_CHARS, MARTY_CHARACTER_BOOK_VERSION } from "./_shared/martyCharacterBook.ts";
 
 const OK = { consentVersion: MARTY_BOSTON_CONSENT_VERSION, mode: "push_to_talk" };
 
@@ -253,4 +254,43 @@ Deno.test("lookup request validation", () => {
 Deno.test("mint parser rejects a body containing action", () => {
   assertEquals(parseVoiceRequest({ ...OK, action: "lookup" }).ok, false);
   assertEquals(parseVoiceRequest({ action: "lookup", tool: "lookup_cocktail", arguments: {} }).ok, false);
+});
+
+Deno.test("real character book: loads, versioned, under cap, ASCII, no template holes, made-up bar names", () => {
+  assert(MARTY_CHARACTER_BOOK_VERSION.startsWith("marty-book-v"));
+  assert(martyCharacterBook.length > 5000 && martyCharacterBook.length <= MARTY_CHARACTER_BOOK_MAX_CHARS);
+  assertFalse(/[^\x09\x0A\x0D\x20-\x7E]/.test(martyCharacterBook));
+  assertFalse(martyCharacterBook.includes("${"));
+  assertFalse(/toast/i.test(martyCharacterBook));
+  assertFalse(/anchor/i.test(martyCharacterBook));
+  assertStringIncludes(martyCharacterBook, "the Leaky Dory");
+  assertStringIncludes(martyCharacterBook, "all made-up names");
+});
+
+Deno.test("real character book: wired in once, both modes, with and without look-ups, core rules first", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (const lookupsEnabled of [true, false]) {
+      const t = buildRealtimeSession({ mode, pick: () => 0, characterBook: martyCharacterBook, lookupsEnabled }).session.instructions;
+      assertEquals(t.split("CHARACTER BOOK - MARTY SULLIVAN").length, 2);
+      assertEquals(t.split("MARTY CHARACTER BOOK").length, 2);
+      assertStringIncludes(t, martyCharacterBook.trim());
+      assert(t.indexOf("Never invent recipe origins") < t.indexOf("CHARACTER BOOK - MARTY SULLIVAN"));
+      assert(t.indexOf("CHARACTER BOOK - MARTY SULLIVAN") < t.indexOf("DELIVERY —"));
+      for (const k of ["HUMAN JUDGMENT", "11. FACTS RULE", "988", "made-up character voice", "the character book that follows"]) assertStringIncludes(t, k);
+      assertEquals(t.includes("MARTY'S LOOK-UPS"), lookupsEnabled);
+    }
+  }
+});
+
+Deno.test("base script: personal-history line allows only the book, no clash", () => {
+  assertFalse(martyBostonInstructions.includes("Do not invent personal history, local facts"));
+  assertStringIncludes(martyBostonInstructions, "Do not invent personal history beyond the character book that follows; it is your only backstory, and the bars named in it are fictional.");
+  assertStringIncludes(martyBostonInstructions, "Do not invent local facts, real venues, or affiliations.");
+  assertStringIncludes(martyCharacterBook, "Do not invent personal history");
+});
+
+Deno.test("instructions: total size stays bounded with book + look-ups + full context", () => {
+  const ctx = sanitizeScreenContext({ screen: "menu", menuLines: Array.from({ length: 25 }, () => "m".repeat(140)) });
+  const t = buildRealtimeSession({ mode: "hands_free", screenContext: ctx, pick: () => 0, memoryContext: "x".repeat(4000), characterBook: martyCharacterBook }).session.instructions;
+  assert(t.length < 45000, `instructions ${t.length} chars`);
 });
