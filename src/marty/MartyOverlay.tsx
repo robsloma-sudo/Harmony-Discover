@@ -2,6 +2,9 @@
  * Marty on the scanner (P-20261125-0216 part 2): a round Marty button bottom-right over the open
  * camera; tapping it slides his face up from the bottom. The camera keeps running underneath.
  * One switch (here and in Settings) turns him fully off: no button, no face, microphone off.
+ * P-20261125-1654 part 3 (Rob): no red "LISTENING" boxes or signs anywhere. Only the round face
+ * that talks; listening shows as the thin ring inside the face circle. The phone's own
+ * microphone light still shows when the mic is on.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
@@ -67,11 +70,11 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
   const lastMarty = [...voice.lines].reverse().find(l => l.who === 'marty');
 
   if (hidden) {
-    // Still listening while something else is on screen: always show it.
+    // Still listening while something else is on screen: show only his small face (no sign).
     return micOn ? (
       <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 90 }, noSelect]}>
-        <Pressable testID="marty-listening-pill" accessibilityRole="button" accessibilityLabel="Marty is listening. Turn Marty off" onPress={turnMartyOff} style={s.pill}>
-          <View style={s.dot} /><Text style={s.fabBadgeText}>MARTY LISTENING · TAP TO TURN OFF</Text>
+        <Pressable testID="marty-listening-face" accessibilityRole="button" accessibilityLabel="Marty is listening. Tap to turn Marty off" onPress={turnMartyOff} style={s.mini}>
+          <View style={s.fabFace}><MartyFace state={faceState} mouthOpen={voice.mouthOpen} size={52} /></View>
         </Pressable>
       </View>
     ) : null;
@@ -85,10 +88,9 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
           accessibilityRole="button"
           accessibilityLabel={micOn ? 'Open Marty. Marty is listening' : 'Open Marty'}
           onPress={openMarty}
-          style={[s.fab, { bottom: bottomOffset + 10 }, micOn && s.fabLive]}
+          style={[s.fab, { bottom: bottomOffset + 10 }]}
         >
           <View style={s.fabFace}><MartyFace state={faceState} mouthOpen={voice.mouthOpen} size={52} /></View>
-          {micOn && <View style={s.fabBadge}><View style={s.dot} /><Text style={s.fabBadgeText}>LISTENING</Text></View>}
         </Pressable>
       )}
       {sheetMounted && (
@@ -113,11 +115,7 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
           <View style={s.faceWrap}>
             <MartyFace state={faceState} mouthOpen={voice.mouthOpen} size={176} />
           </View>
-          <View style={[s.micSign, micOn ? s.micSignOn : null]} accessibilityLiveRegion="polite">
-            <View style={[s.dot, !micOn && s.dotOff]} />
-            <Text style={[s.micText, micOn && { color: C.text }]}>{micOn ? 'LISTENING · MICROPHONE ON' : 'MICROPHONE OFF'}</Text>
-          </View>
-          <Text style={s.caption}>{faceCaption(faceState, voice.handsFree, voice.connected)}</Text>
+          <Text style={s.caption} accessibilityLiveRegion="polite">{faceCaption(faceState, voice.handsFree, voice.connected)}</Text>
           {!!lastMarty && <Text style={s.said} numberOfLines={3}>“{lastMarty.text}”</Text>}
 
           {voice.loadingConsent ? null : !voice.consent ? (
@@ -168,13 +166,8 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
 
 const s = StyleSheet.create({
   fab: { position: 'absolute', right: 12, width: 64, height: 64, borderRadius: 32, backgroundColor: '#0E1116', borderWidth: 2, borderColor: C.gold, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 12 },
-  fabLive: { borderColor: C.live },
   fabFace: { width: 56, height: 56, borderRadius: 28, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
-  fabBadge: { position: 'absolute', top: -10, right: -6, flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 8, backgroundColor: 'rgba(8,10,13,0.95)', borderWidth: 1, borderColor: C.live },
-  fabBadgeText: { color: C.text, fontSize: 7, fontWeight: '900', letterSpacing: 0.6 },
-  pill: { position: 'absolute', top: 54, right: 10, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12, backgroundColor: 'rgba(8,10,13,0.95)', borderWidth: 1, borderColor: C.live },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.live },
-  dotOff: { backgroundColor: '#5A6069' },
+  mini: { position: 'absolute', top: 54, right: 10, width: 64, height: 64, borderRadius: 32, backgroundColor: '#0E1116', borderWidth: 2, borderColor: C.gold, alignItems: 'center', justifyContent: 'center', elevation: 12 },
   sheet: { position: 'absolute', left: 8, right: 8, maxHeight: '86%', padding: 14, paddingTop: 10, borderRadius: 22, backgroundColor: C.panel, borderWidth: 1, borderColor: C.line, gap: 8 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   title: { flex: 1, color: C.text, fontSize: 12, fontWeight: '900', letterSpacing: 1.6 },
@@ -183,9 +176,6 @@ const s = StyleSheet.create({
   hide: { paddingHorizontal: 8, paddingVertical: 2 },
   hideText: { color: C.muted, fontSize: 22, lineHeight: 22 },
   faceWrap: { alignItems: 'center', marginTop: 2 },
-  micSign: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, borderWidth: 1, borderColor: '#3A3F47' },
-  micSignOn: { borderColor: C.live, backgroundColor: 'rgba(255,90,78,0.12)' },
-  micText: { color: C.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1 },
   caption: { color: C.gold, fontSize: 12, fontWeight: '800', textAlign: 'center' },
   said: { color: C.text, fontSize: 13, lineHeight: 19, textAlign: 'center', fontStyle: 'italic' },
   block: { gap: 8 },

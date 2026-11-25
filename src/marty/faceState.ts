@@ -24,7 +24,7 @@ export function faceStateFor({ connected, connecting, handsFree, phase }: FaceIn
   return handsFree ? 'listening' : 'idle';
 }
 
-/** The microphone is live only in these cases; the UI shows the "listening" sign exactly then. */
+/** The microphone is live only in these cases; the face shows its thin listening ring exactly then. */
 export function microphoneLive({ connected, handsFree, phase }: Pick<FaceInputs, 'connected' | 'handsFree' | 'phase'>): boolean {
   if (!connected) return false;
   return handsFree || phase === 'talking';
