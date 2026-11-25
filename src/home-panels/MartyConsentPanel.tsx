@@ -121,7 +121,7 @@ export function MartyConsentPanel() {
       <Text style={s.body}>Voice and cross-session memory are separate opt-ins. Neither is enabled by default. Marty uses only the permissions you actively grant.</Text>
       <Text style={s.bodySmall}>{martyAccountNote(session)}</Text>
       <View style={s.card}>
-        <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Live voice</Text><Text style={s.bodySmall}>Allow push-to-talk Realtime conversations after microphone permission. No background listening.</Text></View><Switch value={voiceEnabled} onValueChange={setVoiceEnabled} trackColor={{ true: C.gold }} /></View>
+        <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Live voice</Text><Text style={s.bodySmall}>Allow live voice with Marty after microphone permission. While Marty is on he listens all the time and answers what he hears. Turning Marty off (on his face or in Settings) turns the microphone off at once. Nothing is heard while he is off or the page is in the background.</Text></View><Switch value={voiceEnabled} onValueChange={setVoiceEnabled} trackColor={{ true: C.gold }} /></View>
         <View style={s.rule} />
         <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Saved bartender memory</Text><Text style={s.bodySmall}>Allow only facts or preferences you manually save. This is not automatic profiling.</Text></View><Switch value={memoryEnabled} onValueChange={setMemoryEnabled} trackColor={{ true: C.gold }} /></View>
         <Pressable style={s.primary} disabled={busy} onPress={() => void saveConsent()}><Text style={s.primaryText}>{busy ? 'SAVING…' : 'SAVE CONSENT CHOICES'}</Text></Pressable>
