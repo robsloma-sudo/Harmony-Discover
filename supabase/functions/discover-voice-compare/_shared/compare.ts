@@ -9,7 +9,10 @@ import {
   type VoiceMode,
 } from "../../discover-voice-session/_shared/realtimeSession.ts";
 import { AGE_CHECK_FIELD, validAgeField } from "../../discover-voice-session/_shared/ageCheck.ts";
-import { ELEVENLABS_KEY_MISSING, mintElevenLabs, VOICE_PICKS, type VoicePick } from "./elevenlabs.ts";
+import {
+  ELEVEN_CONNECTIONS, ELEVENLABS_KEY_MISSING, type ElevenConnection, mintElevenLabs, VOICE_PICKS, type VoicePick,
+} from "./elevenlabs.ts";
+import { FACE_AUDIO_INPUT, FACE_PICKS, FACE_PROVIDER, type FacePick, faceNotReady, mintFace } from "./face.ts";
 
 export { MARTY_BOSTON_CONSENT_VERSION, CURRENT_MODEL };
 
@@ -47,9 +50,14 @@ export function resolveContender(orderEnv: string | undefined | null, letter: st
 
 // ---- request -----------------------------------------------------------------------------------
 // "voice" (optional, P-20261126-0004): "current" (default) or "elevenlabs". Absent = today's behaviour.
-const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp", "voice", AGE_CHECK_FIELD]);
+// "face" (optional, P-20261126-0028): "phone" (default) or "photo" (photo-real face service, Rob-only preview).
+// "connection" (optional): "webrtc" (default) or "websocket"; only changes the ElevenLabs voice (sound + timing).
+const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp", "voice", "face", "connection", AGE_CHECK_FIELD]);
 export type CompareRequestResult =
-  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; voice: VoicePick; sdp?: string }
+  | {
+    ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; voice: VoicePick;
+    face: FacePick; connection: ElevenConnection; sdp?: string;
+  }
   | { ok: false };
 export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
@@ -62,9 +70,12 @@ export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (body.sdp !== undefined && !validSdp(body.sdp)) return { ok: false };
   if (!validAgeField(body[AGE_CHECK_FIELD])) return { ok: false };
   if (body.voice !== undefined && (typeof body.voice !== "string" || !VOICE_PICKS.includes(body.voice))) return { ok: false };
+  if (body.face !== undefined && (typeof body.face !== "string" || !FACE_PICKS.includes(body.face))) return { ok: false };
+  if (body.connection !== undefined && (typeof body.connection !== "string" || !ELEVEN_CONNECTIONS.includes(body.connection))) return { ok: false };
   const out: CompareRequestResult = {
     ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true,
     ageConfirmed: body[AGE_CHECK_FIELD] === true, voice: body.voice === "elevenlabs" ? "elevenlabs" : "current",
+    face: body.face === "photo" ? "photo" : "phone", connection: body.connection === "websocket" ? "websocket" : "webrtc",
   };
   if (typeof body.sdp === "string") out.sdp = body.sdp;
   return out;
@@ -138,6 +149,7 @@ export const DEPLOY_FILES = [
   "discover-voice-compare/index.ts",
   "discover-voice-compare/_shared/compare.ts",
   "discover-voice-compare/_shared/elevenlabs.ts",
+  "discover-voice-compare/_shared/face.ts",
   "discover-voice-session/_shared/ageCheck.ts",
   "discover-voice-session/_shared/martyCharacterBook.ts",
   "discover-voice-session/_shared/martyDelivery.ts",
@@ -154,6 +166,9 @@ export interface MintEnv {
   elevenLabsVoiceId?: string;
   elevenLabsAgentId?: string;
   elevenLabsLlm?: string;
+  faceKey?: string;
+  faceAvatarId?: string;
+  faceAvatarModel?: string;
   orderEnv?: string;
   voiceEnv?: string;
   handsFreeEnv?: string;
@@ -164,11 +179,44 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 const COULD_NOT_START = "This contender could not start.";
 
 // Never returns, logs or forwards a provider response body or key; only the status code.
+type MintRequest = {
+  contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string; voice?: VoicePick; face?: FacePick;
+  connection?: ElevenConnection;
+};
+
+// face "photo" (P-20261126-0028 part 1): start the photo-real face service first (a short-lived token only, so a
+// voice refusal wastes nothing paid), then the voice exactly as without it, and add the face block to the answer.
+// The face key is checked again here so no call is ever made without it (index.ts already refused earlier).
 export async function mintContender(
-  req: { contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string; voice?: VoicePick },
+  req: MintRequest,
   env: MintEnv,
   fetchImpl: FetchLike = fetch,
   now: Date = new Date(),
+): Promise<MintResult> {
+  const faceEnv = { apiKey: env.faceKey, avatarId: env.faceAvatarId, avatarModel: env.faceAvatarModel };
+  const notReady = faceNotReady(req.face, faceEnv);
+  if (notReady) return notReady;
+  if (req.face !== "photo") return await mintVoice(req, env, fetchImpl, now);
+  if (!resolveContender(env.orderEnv, req.contender)) return { status: 400, body: { error: "Unknown contender." } };
+  if (req.voice === "elevenlabs" && !env.elevenLabsKey) return { status: 503, body: { error: ELEVENLABS_KEY_MISSING } };
+  const face = await mintFace(faceEnv, fetchImpl);
+  if (!face.ok) return { status: 502, body: { error: "The face could not start.", status: face.status, step: face.step } };
+  const voice = await mintVoice(req, env, fetchImpl, now);
+  if (voice.status !== 200) return voice;
+  return {
+    status: 200,
+    body: {
+      ...voice.body,
+      face: { provider: FACE_PROVIDER, sessionToken: face.sessionToken, audioInput: { ...FACE_AUDIO_INPUT } },
+    },
+  };
+}
+
+async function mintVoice(
+  req: MintRequest,
+  env: MintEnv,
+  fetchImpl: FetchLike,
+  now: Date,
 ): Promise<MintResult> {
   const which = resolveContender(env.orderEnv, req.contender);
   if (!which) return { status: 400, body: { error: "Unknown contender." } };
@@ -180,12 +228,17 @@ export async function mintContender(
     const built = buildCurrent(req.mode, env.voiceEnv, env.handsFreeEnv);
     const r = await mintElevenLabs(built.session.instructions, {
       apiKey: env.elevenLabsKey, voiceId: env.elevenLabsVoiceId, agentId: env.elevenLabsAgentId, llm: env.elevenLabsLlm,
-    }, fetchImpl);
+    }, fetchImpl, req.connection === "websocket" ? "websocket" : "webrtc");
     if (!r.ok) return { status: 502, body: { error: COULD_NOT_START, status: r.status, step: r.step } };
-    const body: Record<string, unknown> = {
-      contender: req.contender, provider: "elevenlabs_agents", conversationToken: r.token,
-      transport: "webrtc", connectHint: "elevenlabs", voice: "elevenlabs",
-    };
+    const body: Record<string, unknown> = r.signedUrl
+      ? {
+        contender: req.contender, provider: "elevenlabs_agents", signedUrl: r.signedUrl,
+        transport: "websocket", connectHint: "elevenlabs", voice: "elevenlabs",
+      }
+      : {
+        contender: req.contender, provider: "elevenlabs_agents", conversationToken: r.token,
+        transport: "webrtc", connectHint: "elevenlabs", voice: "elevenlabs",
+      };
     if (req.reveal) body.model = "elevenlabs";
     return { status: 200, body };
   }
