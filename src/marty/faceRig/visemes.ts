@@ -163,3 +163,22 @@ export function mouthAt(keys: VisemeKey[], t: number, ease = 70): MouthWeights {
   if (prev && prev.shape !== 'rest' && k < 1) w[prev.shape] += prev.amount * (1 - k);
   return normalise(w);
 }
+
+/** ElevenLabs alignment for one sound chunk (letters with start and length in ms) to word marks. */
+export function marksFromAlignment(a: { chars?: unknown; char_start_times_ms?: unknown; char_durations_ms?: unknown } | null | undefined): Array<{ kind: 'word'; value: string; startMs: number; endMs: number }> {
+  if (!a || !Array.isArray(a.chars) || !Array.isArray(a.char_start_times_ms) || !Array.isArray(a.char_durations_ms)) return [];
+  const chars = a.chars as unknown[]; const st = a.char_start_times_ms as unknown[]; const du = a.char_durations_ms as unknown[];
+  const out: Array<{ kind: 'word'; value: string; startMs: number; endMs: number }> = [];
+  let word = ''; let s0 = 0; let e0 = 0;
+  const flush = () => { if (word.trim()) out.push({ kind: 'word', value: word, startMs: s0, endMs: e0 }); word = ''; };
+  for (let i = 0; i < chars.length; i += 1) {
+    const c = typeof chars[i] === 'string' ? (chars[i] as string) : '';
+    const s = Number(st[i]); const d = Number(du[i]);
+    if (!Number.isFinite(s) || !Number.isFinite(d)) continue;
+    if (/\s/.test(c) || !c) { flush(); continue; }
+    if (!word) s0 = s;
+    word += c; e0 = s + d;
+  }
+  flush();
+  return out;
+}

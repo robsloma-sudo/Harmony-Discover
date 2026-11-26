@@ -38,6 +38,12 @@ export interface TransportHooks {
   onMartyText?(delta: string): void;
   /** Marty finished (or was cut off in) a reply. */
   onMartyTurnDone?(): void;
+  /** Voice service word timing for a sound chunk that starts playing at `startsAt` (performance.now() ms). */
+  onSpeechMarks?(marks: Array<{ kind: 'word'; value: string; startMs: number; endMs: number }>, startsAt: number): void;
+  /** Marty's voice as 16 kHz mono PCM16, chunk by chunk (feeds the option B face service). */
+  onVoicePcm16k?(pcm: Int16Array): void;
+  /** Marty was interrupted (barge-in or Stop): drop queued sound. */
+  onMartyInterrupted?(): void;
 }
 
 async function getMic(): Promise<MediaStream> {

@@ -6,11 +6,14 @@ import type { FacePose } from './facePose';
 import { FaceEngine, type EngineFaceState } from './faceEngine';
 import { moodFromText, type MoodRead } from './expression';
 import { featuresFrom, mouthAt, scriptFromText, visemesForWord, type AudioFeatures, type VisemeKey } from './visemes';
+export { marksFromAlignment } from './visemes';
 
 /*
- * TODO(P-20261126-0028 backend contract): the Discover backend PR will name the fields for the voice service's own
- * sound/word timing. Map them to SpeechMark below and call FaceDriver.pushSpeechMarks() as they arrive; until then
- * the face works from the audio alone. Times are ms from the start of that reply's audio.
+ * Voice service timing (P-20261126-0028, backend PR #157): ElevenLabs over `connection: "websocket"` sends each sound
+ * chunk with `alignment: { chars, char_start_times_ms, char_durations_ms }`. marksFromAlignment() turns that into
+ * word marks; the transport calls pushSpeechMarks(marks, startsAt) with the performance.now() time at which that
+ * chunk starts playing, so the mouth shape lands with the sound (even a little ahead of it). Today's OpenAI voice
+ * sends no timing; the face then works from the audio alone.
  */
 export interface SpeechMark { kind: 'word' | 'viseme'; value: string; startMs: number; endMs?: number }
 
@@ -24,8 +27,8 @@ export interface FaceDriver {
   pushMartyText(delta: string): void;
   /** A mood tag from the server, if it ever sends one; wins over the word rules. */
   pushMood(read: MoodRead): void;
-  /** Word/sound timing for the reply now playing (see SpeechMark). */
-  pushSpeechMarks(marks: SpeechMark[]): void;
+  /** Word/sound timing for audio that starts playing at `startsAt` (performance.now() ms; default now). */
+  pushSpeechMarks(marks: SpeechMark[], startsAt?: number): void;
   /** Marty finished a reply (or was cut off). */
   endMartyTurn(): void;
   /** Idle / listening / thinking from the session (talking is worked out from the voice). */
@@ -77,7 +80,7 @@ export function createFaceDriver(): FaceDriver {
     const timed = script ?? marks;
     if (timed) {
       const local = t - timed.t0;
-      if (local > timed.end) {
+      if (local < 0) { /* queued chunk, not playing yet */ } else if (local > timed.end) {
         if (timed === script) { script = null; const done = scriptDone; scriptDone = null; engine.endTurn(t); done?.(); } else marks = null;
       } else scriptMouth = mouthAt(timed.keys, local);
     }
@@ -121,16 +124,21 @@ export function createFaceDriver(): FaceDriver {
       engine.setMood(moodFromText(replyText), now());
     },
     pushMood(read) { engine.setMood(read, now()); },
-    pushSpeechMarks(list) {
+    pushSpeechMarks(list, startsAt) {
       const keys: VisemeKey[] = [];
       for (const m of list) {
         if (m.kind === 'word') keys.push(...visemesForWord(m.value, m.startMs, Math.max(80, (m.endMs ?? m.startMs + 250) - m.startMs)));
-        // TODO(P-20261126-0028 backend contract): map the voice service's own viseme names here when they are known.
       }
       if (!keys.length) return;
-      keys.sort((a, b) => a.at - b.at);
+      const at = startsAt ?? now();
       const end = Math.max(...list.map(m => m.endMs ?? m.startMs + 250));
-      marks = marks && now() - marks.t0 < marks.end ? { ...marks, keys: [...marks.keys, ...keys].sort((a, b) => a.at - b.at), end: Math.max(marks.end, end) } : { keys, t0: now(), end };
+      // Merge with the chunks already queued: keys are kept on one clock (t0 of the first chunk still playing).
+      if (marks && at - marks.t0 < marks.end + 400) {
+        const shift = at - marks.t0;
+        marks = { t0: marks.t0, keys: [...marks.keys, ...keys.map(k => ({ ...k, at: k.at + shift }))].sort((a, b) => a.at - b.at), end: Math.max(marks.end, end + shift) };
+      } else {
+        marks = { keys: keys.sort((a, b) => a.at - b.at), t0: at, end };
+      }
     },
     endMartyTurn() { engine.endTurn(now()); replyText = ''; },
     setFaceState(s) { engine.setFaceState(s); },
