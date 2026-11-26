@@ -37,7 +37,20 @@ export interface ElevenEnv {
   llm?: string; // optional ELEVENLABS_LLM; unset = the agent's default thinking model
 }
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
-export type ElevenResult = { ok: true; token: string; voiceId: string; agentId: string } | { ok: false; step: string; status: number };
+export type ElevenResult =
+  | { ok: true; token: string; voiceId: string; agentId: string; signedUrl?: string }
+  | { ok: false; step: string; status: number };
+
+// Connection (P-20261126-0028 part 1): "webrtc" (default, today) or "websocket". Over WebRTC ElevenLabs plays the
+// audio itself (LiveKit) and sends NO "audio" events, so the phone gets no sound chunks and no word timing.
+// Over WebSocket every "audio" event carries the sound and its letter timing (ElevenLabs client-events page,
+// read 26 Nov 2026): { type: "audio", audio_event: { audio_base_64, event_id, alignment: { chars,
+// char_start_times_ms, char_durations_ms } } }. The face (phone animation or photo-real service) needs both.
+// Confirmed: GET /v1/convai/conversation/get-signed-url?agent_id= with xi-api-key (WebSocket page). UNCONFIRMED: the
+// answer field name signed_url (ElevenLabs' usual name, not quoted on the page read); a miss = step signed_url. The app
+// opens that wss:// address directly (it holds only a short-lived signed address, never the key).
+export type ElevenConnection = "webrtc" | "websocket";
+export const ELEVEN_CONNECTIONS: readonly string[] = ["webrtc", "websocket"];
 
 function headers(apiKey: string): Record<string, string> {
   return { "xi-api-key": apiKey, "Content-Type": "application/json" };
@@ -79,7 +92,9 @@ async function findAgent(f: FetchLike, key: string): Promise<{ id: string } | { 
 }
 
 // Never returns, logs or forwards a provider body or key: only the failing step name and status code.
-export async function mintElevenLabs(instructions: string, env: ElevenEnv, fetchImpl: FetchLike = fetch): Promise<ElevenResult> {
+export async function mintElevenLabs(
+  instructions: string, env: ElevenEnv, fetchImpl: FetchLike = fetch, connection: ElevenConnection = "webrtc",
+): Promise<ElevenResult> {
   const key = env.apiKey;
   const voiceId = (env.voiceId ?? "").trim() || MARTY_VOICE_ID;
   const missing = await checkVoice(fetchImpl, key, voiceId);
@@ -99,6 +114,12 @@ export async function mintElevenLabs(instructions: string, env: ElevenEnv, fetch
     // Keep the agent's script identical to today's Marty on every start.
     const u = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", headers: headers(key), body: JSON.stringify(config) });
     if (u.status !== 200) return { ok: false, step: "agent_update", status: u.status };
+  }
+  if (connection === "websocket") {
+    const w = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agentId)}`, { method: "GET", headers: { "xi-api-key": key } });
+    const signedUrl = str((w.body as { signed_url?: unknown })?.signed_url);
+    if (w.status !== 200 || !signedUrl.startsWith("wss://")) return { ok: false, step: "signed_url", status: w.status };
+    return { ok: true, token: "", signedUrl, voiceId, agentId };
   }
   const t = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/conversation/token?agent_id=${encodeURIComponent(agentId)}`, { method: "GET", headers: { "xi-api-key": key } });
   const token = str((t.body as { token?: unknown })?.token);

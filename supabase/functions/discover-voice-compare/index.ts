@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { compareAllowed, MARTY_BOSTON_CONSENT_VERSION, MAX_REQUEST_BYTES, mintContender, parseCompareRequest, RATE_LIMIT } from "./_shared/compare.ts";
 import { ageGate } from "../discover-voice-session/_shared/ageCheck.ts";
+import { faceNotReady } from "./_shared/face.ts";
 
 // Listening test only (P-20261125-0219 part 1b). Same guards as discover-voice-session; hidden unless switched on for named users.
 const DEV_REF = "lqqmwqrffelgnbngrkep";
@@ -93,6 +94,15 @@ Deno.serve(async (request: Request) => {
     // 21+ age check (same rule as Marty): refuse before consent look-up, rate limit or any paid provider call.
     const ageBlock = ageGate(parsed.ageConfirmed, Deno.env.get("MARTY_AGE_CHECK"));
     if (ageBlock) return json(ageBlock.body, ageBlock.status, origin);
+    // Photo-real face preview (P-20261126-0028 part 1): key only from the ANAM_API_KEY secret, our own face only
+    // from ANAM_AVATAR_ID. Missing either = plain refusal before consent look-up, rate limit or any paid call.
+    const faceEnv = {
+      apiKey: Deno.env.get("ANAM_API_KEY") ?? "",
+      avatarId: Deno.env.get("ANAM_AVATAR_ID") ?? "",
+      avatarModel: Deno.env.get("ANAM_AVATAR_MODEL") ?? undefined,
+    };
+    const faceBlock = faceNotReady(parsed.face, faceEnv);
+    if (faceBlock) return json(faceBlock.body, faceBlock.status, origin);
 
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: consent, error: consentError } = await admin
@@ -118,6 +128,9 @@ Deno.serve(async (request: Request) => {
       elevenLabsVoiceId: Deno.env.get("ELEVENLABS_VOICE_ID") ?? undefined,
       elevenLabsAgentId: Deno.env.get("ELEVENLABS_AGENT_ID") ?? undefined,
       elevenLabsLlm: Deno.env.get("ELEVENLABS_LLM") ?? undefined,
+      faceKey: faceEnv.apiKey,
+      faceAvatarId: faceEnv.avatarId,
+      faceAvatarModel: faceEnv.avatarModel,
       orderEnv: Deno.env.get("MARTY_COMPARE_ORDER") ?? undefined,
       voiceEnv: Deno.env.get("MARTY_VOICE"),
       handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE"),

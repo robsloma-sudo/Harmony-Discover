@@ -68,3 +68,31 @@ Unset `MARTY_COMPARE` (instant, all callers get 404), or delete the function. No
 ## Tests
 
 `deno test --no-lock --no-config --import-map <shim> compare_test.ts` (pure, fetch stubbed). Real audio cannot be proven before deploy (the OpenAI key is only a DEV function secret): first post-approval checks are a DEV mint of each contender and Rob's ear test.
+
+## Marty's face (P-20261126-0028 part 1, Rob-only preview)
+
+Two new optional request fields. Both absent = exactly the old answer.
+
+- `face`: `"phone"` (default, today's face L animated on the phone, option A) or `"photo"` (option B, photo-real face service).
+- `connection`: `"webrtc"` (default) or `"websocket"`. Only changes the ElevenLabs voice.
+
+### Option B: `face: "photo"`
+Service: **Anam** (`api.anam.ai`), audio passthrough mode: Anam only draws the face, it never thinks or talks for Marty. Our own original face L image is uploaded once by Rob as an Anam custom (one-shot) avatar; no stock avatar or real person's face is ever used. Gates: same Rob-only switch, then 21+, then the face key check, all before the consent look-up, the rate limit and any paid call.
+
+Secrets (Discover dev, Edge Functions secrets):
+- `ANAM_API_KEY`: Rob's Anam key (lab.anam.ai, API keys). Missing = `503 {"error":"face service key not set"}`.
+- `ANAM_AVATAR_ID`: the id of Rob's face L avatar in Anam (lab.anam.ai, Avatars, create from image). Missing = `503 {"error":"face not set up"}`.
+- `ANAM_AVATAR_MODEL` (optional): avatar model, default `cara-4` (docs); `cara-4.1-express` is newer in Anam's changelog.
+
+Answer (200): the normal voice answer plus
+`face: { provider: "anam", sessionToken, audioInput: { encoding: "pcm_s16le", sampleRate: 16000, channels: 1 } }`.
+If Anam refuses: `502 {"error":"The face could not start.","status":<code>,"step":"face_token"}` and no voice is started.
+
+App (Discover app team): `createClient(face.sessionToken, { disableInputAudio: true })`, `streamToVideoElement(<video id>)`, `createAgentAudioInputStream(face.audioInput)`, then `sendAudioChunk(<Marty's PCM>)` as it arrives, `endSequence()` at the end of each Marty turn, `interruptPersona()` on Stop or barge-in. Anam buffers about 480 ms of audio before the first frame, so play Anam's own stream (muted original) to keep lips and sound together.
+Where Marty's PCM comes from: today's voice = the OpenAI WebRTC audio track (tap it in the browser, resample to 16 kHz); ElevenLabs voice = ask with `connection: "websocket"` and use each `audio` event's `audio_event.audio_base_64`.
+
+### Option A: `face: "phone"`, sound and word timing for the phone's own animation
+- Today's voice (OpenAI): no timing exists; the phone has the audio track itself. No server change needed.
+- ElevenLabs voice: over WebRTC ElevenLabs sends no `audio` events (no sound chunks, no timing). Send `connection: "websocket"` and the answer is `{ contender, provider: "elevenlabs_agents", signedUrl, transport: "websocket", connectHint: "elevenlabs", voice: "elevenlabs", model? }` (no `conversationToken`). The app opens `signedUrl` and reads every `{ type: "audio", audio_event: { audio_base_64, event_id, alignment: { chars, char_start_times_ms, char_durations_ms } } }` (answer `ping` with `pong`). `alignment` gives each letter's start and length in ms, from which the phone can pick mouth shapes ahead of the sound.
+
+Unconfirmed: the `signed_url` answer field name of `get-signed-url` (step `signed_url` if wrong) and the newest Anam avatar model name.

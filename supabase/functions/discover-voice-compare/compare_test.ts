@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertFalse, assertStringIncludes } from "jsr:@std/assert@1";
 import {
   buildGeminiTokenBody, buildGptLiveSession, compareAllowed, DEFAULT_ORDER, GEMINI_AUTH_TOKENS_URL,
   GPT_LIVE_SESSIONS_URL, MARTY_BOSTON_CONSENT_VERSION, MAX_REQUEST_BYTES, MAX_SDP_BYTES, mintContender,
@@ -403,4 +403,157 @@ Deno.test("elevenlabs: server reads the key only from ELEVENLABS_API_KEY", async
   assertFalse(/console\./.test(lib));
   // no voice design or save path left in the server
   assertFalse(lib.includes("text-to-voice"));
+});
+
+// ---- Photo-real face service, option B (P-20261126-0028 part 1) -------------------------------
+import {
+  ANAM_SESSION_TOKEN_URL, buildFaceSessionBody, DEFAULT_AVATAR_MODEL, FACE_AUDIO_INPUT, FACE_AVATAR_MISSING,
+  FACE_KEY_MISSING,
+} from "./_shared/face.ts";
+
+const FACE_KEY = "ANAM-SECRET-KEY";
+const FACE_ENV = { ...env, faceKey: FACE_KEY, faceAvatarId: "our-face-l-avatar" };
+const FACE_REQ = { contender: "A" as const, mode: "push_to_talk" as const, reveal: false, face: "photo" as const };
+// Routes by full URL to canned answers; records every call.
+function urlStub(routes: Record<string, [number, unknown]>, calls: Call[]) {
+  return (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const hit = routes[url.split("?")[0]];
+    if (!hit) return Promise.resolve(new Response("{}", { status: 404 }));
+    return Promise.resolve(new Response(JSON.stringify(hit[1]), { status: hit[0] }));
+  };
+}
+
+Deno.test("face: face and connection fields are optional and strict", () => {
+  const d = parseCompareRequest(OK);
+  assert(d.ok && d.face === "phone" && d.connection === "webrtc");
+  const p = parseCompareRequest({ ...OK, face: "photo", connection: "websocket", voice: "elevenlabs" });
+  assert(p.ok && p.face === "photo" && p.connection === "websocket");
+  assert(parseCompareRequest({ ...OK, face: "phone" }).ok);
+  assertFalse(parseCompareRequest({ ...OK, face: "video" }).ok);
+  assertFalse(parseCompareRequest({ ...OK, face: true }).ok);
+  assertFalse(parseCompareRequest({ ...OK, connection: "sse" }).ok);
+});
+
+Deno.test("face: missing key -> exactly 'face service key not set', no provider call at all", async () => {
+  const calls: Call[] = [];
+  const r = await mintContender(FACE_REQ, { ...env, faceKey: "", faceAvatarId: "x" }, urlStub({}, calls));
+  assertEquals(r.status, 503);
+  assertEquals(r.body, { error: FACE_KEY_MISSING });
+  assertEquals(FACE_KEY_MISSING, "face service key not set");
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("face: missing avatar (our own face L) -> refuses, never falls back to a stock avatar", async () => {
+  const calls: Call[] = [];
+  const r = await mintContender(FACE_REQ, { ...env, faceKey: FACE_KEY }, urlStub({}, calls));
+  assertEquals(r.status, 503);
+  assertEquals(r.body, { error: FACE_AVATAR_MISSING });
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("face: index refuses not-Rob, no 21+ and missing key before consent, rate limit or any paid call", async () => {
+  const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const rob = src.indexOf("compareAllowed(");
+  const age = src.indexOf("ageGate(parsed.ageConfirmed");
+  const face = src.indexOf("faceNotReady(parsed.face");
+  assert(rob > 0 && age > rob && face > age, "order must be: Rob only, then 21+, then face key");
+  for (const later of ["from(\"bartender_voice_consents\")", "consume_marty_voice_rate_limit", "mintContender(parsed"]) {
+    assert(src.indexOf(later) > face, `${later} must come after the face key check`);
+  }
+  // key only from the ANAM_API_KEY secret, never a literal
+  assertStringIncludes(src, 'Deno.env.get("ANAM_API_KEY")');
+  const faceSrc = await Deno.readTextFile(new URL("./_shared/face.ts", import.meta.url));
+  assertFalse(/sk-|anam_[a-z0-9]{8}/i.test(faceSrc));
+});
+
+Deno.test("face: passthrough session for our avatar, no Anam brain, token only, then the voice", async () => {
+  const calls: Call[] = [];
+  const f = urlStub({
+    [ANAM_SESSION_TOKEN_URL]: [200, { sessionToken: "anam-session-1", extra: "SECRET-PROVIDER-FIELD" }],
+    [OPENAI_CLIENT_SECRETS_URL]: [200, OPENAI_OK],
+  }, calls);
+  const r = await mintContender(FACE_REQ, FACE_ENV, f);
+  assertEquals(r.status, 200);
+  assertEquals(calls.map((c) => c.url), [ANAM_SESSION_TOKEN_URL, OPENAI_CLIENT_SECRETS_URL]);
+  assertEquals((calls[0].init.headers as Record<string, string>).Authorization, `Bearer ${FACE_KEY}`);
+  const sent = JSON.parse(calls[0].init.body as string);
+  assertEquals(sent, { personaConfig: { avatarId: "our-face-l-avatar", avatarModel: DEFAULT_AVATAR_MODEL, enableAudioPassthrough: true } });
+  assertFalse("personaId" in sent.personaConfig);
+  assertEquals(r.body.face, { provider: "anam", sessionToken: "anam-session-1", audioInput: FACE_AUDIO_INPUT });
+  assertEquals(FACE_AUDIO_INPUT, { encoding: "pcm_s16le", sampleRate: 16000, channels: 1 });
+  // voice part unchanged
+  assertEquals(r.body.provider, "openai_realtime");
+  assertEquals(r.body.ephemeralToken, "ek_test");
+  const text = JSON.stringify(r.body);
+  assertFalse(text.includes(FACE_KEY));
+  assertFalse(text.includes("SECRET-PROVIDER-FIELD"));
+  assertEquals(buildFaceSessionBody("a", " cara-4.1-express ").personaConfig.avatarModel, "cara-4.1-express");
+});
+
+Deno.test("face: face refusal reports step and code only, and never starts the voice", async () => {
+  const calls: Call[] = [];
+  const f = urlStub({ [ANAM_SESSION_TOKEN_URL]: [401, { message: "SECRET-PROVIDER-BODY" }] }, calls);
+  const r = await mintContender(FACE_REQ, FACE_ENV, f);
+  assertEquals(r.status, 502);
+  assertEquals(r.body, { error: "The face could not start.", status: 401, step: "face_token" });
+  assertEquals(calls.length, 1);
+});
+
+Deno.test("face: ElevenLabs voice with the face, missing ElevenLabs key refused before the face call", async () => {
+  const calls: Call[] = [];
+  const r = await mintContender({ ...FACE_REQ, voice: "elevenlabs" }, FACE_ENV, urlStub({}, calls));
+  assertEquals(r.body, { error: ELEVENLABS_KEY_MISSING });
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("face: no face asked = today's answer exactly, no face call even if the key is set", async () => {
+  const calls: Call[] = [];
+  const r = await mintContender({ contender: "A", mode: "push_to_talk", reveal: false }, FACE_ENV, stub(200, OPENAI_OK, calls));
+  assertEquals(r.status, 200);
+  assertFalse("face" in r.body);
+  assertEquals(calls.map((c) => c.url), [OPENAI_CLIENT_SECRETS_URL]);
+});
+
+// ---- ElevenLabs over WebSocket: sound chunks + letter timing for the face (P-20261126-0028 part 1) ----
+Deno.test("elevenlabs websocket: returns a signed wss address (no key, no WebRTC token)", async () => {
+  const calls: Call[] = [];
+  const f = elStub({
+    [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }],
+    [`PATCH /v1/convai/agents/agent_1`]: [200, {}],
+    [`GET /v1/convai/conversation/get-signed-url`]: [200, { signed_url: "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_1&conversation_signature=x" }],
+  }, calls);
+  const r = await mintContender({ ...EL_REQ, connection: "websocket" }, { ...env, elevenLabsKey: EL_KEY, elevenLabsAgentId: "agent_1" }, f);
+  assertEquals(r.status, 200);
+  assertEquals(r.body.transport, "websocket");
+  assert(String(r.body.signedUrl).startsWith("wss://"));
+  assertFalse("conversationToken" in r.body);
+  assertFalse(calls.some((c) => c.url.includes("/conversation/token")));
+  assertFalse(JSON.stringify(r.body).includes(EL_KEY));
+  const bad = elStub({
+    [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }],
+    [`PATCH /v1/convai/agents/agent_1`]: [200, {}],
+    [`GET /v1/convai/conversation/get-signed-url`]: [200, { signed_url: "https://not-a-socket" }],
+  }, []);
+  const r2 = await mintContender({ ...EL_REQ, connection: "websocket" }, { ...env, elevenLabsKey: EL_KEY, elevenLabsAgentId: "agent_1" }, bad);
+  assertEquals(r2.body, { error: "This contender could not start.", status: 200, step: "signed_url" });
+});
+
+Deno.test("elevenlabs websocket + photo face: one answer carries both", async () => {
+  const calls: Call[] = [];
+  const el = elStub({
+    [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }],
+    [`PATCH /v1/convai/agents/agent_1`]: [200, {}],
+    [`GET /v1/convai/conversation/get-signed-url`]: [200, { signed_url: "wss://api.elevenlabs.io/x" }],
+  }, calls);
+  const f = (url: string, init: RequestInit) =>
+    url === ANAM_SESSION_TOKEN_URL
+      ? (calls.push({ url, init }), Promise.resolve(new Response(JSON.stringify({ sessionToken: "anam-2" }), { status: 200 })))
+      : el(url, init);
+  const r = await mintContender({ ...EL_REQ, face: "photo", connection: "websocket" },
+    { ...FACE_ENV, elevenLabsKey: EL_KEY, elevenLabsAgentId: "agent_1" }, f);
+  assertEquals(r.status, 200);
+  assertEquals(r.body.signedUrl, "wss://api.elevenlabs.io/x");
+  assertEquals((r.body.face as { sessionToken: string }).sessionToken, "anam-2");
+  assertEquals(calls[0].url, ANAM_SESSION_TOKEN_URL);
 });
