@@ -57,6 +57,21 @@ export function revealEnabled(scores: Scores): boolean {
   return LETTERS.every(l => isValidScore(scores[l]));
 }
 
+/** Which voice the listening test asks for (P-20261126-0004). Same Marty brain and character book; only the voice differs. */
+export type VoicePick = 'current' | 'elevenlabs';
+export const VOICE_PICKS: readonly { id: VoicePick; label: string }[] = [
+  { id: 'current', label: 'Current voice' },
+  { id: 'elevenlabs', label: 'ElevenLabs voice' },
+];
+export const DEFAULT_VOICE: VoicePick = 'current';
+export function isVoicePick(v: unknown): v is VoicePick { return v === 'current' || v === 'elevenlabs'; }
+
+/** Plain text shown when the server says the ElevenLabs key is missing. */
+export const ELEVENLABS_KEY_MISSING = 'ElevenLabs key not set.';
+export function isElevenLabsKeyMissing(text: unknown): boolean {
+  return typeof text === 'string' && /elevenlabs[\s_-]*key[\s_-]*not[\s_-]*set/i.test(text);
+}
+
 export type LetterState = 'idle' | 'connecting' | 'listening' | 'failed';
 
 /** One-line failure text; includes the server status where given. */

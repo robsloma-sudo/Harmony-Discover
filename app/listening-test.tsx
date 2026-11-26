@@ -7,8 +7,8 @@ import type { CompareLetter } from '../src/voice/voiceCompareClient';
 import { getMartyAgeAnswer, subscribeMartyAge, type MartyAgeAnswer } from '../src/marty/martyAge';
 import { connectGemini, connectWebrtc, type TransportHandle } from '../src/listeningTest/transports';
 import {
-  LETTERS, TEST_LINES, failureMessage, loadScores, notWiredMessage, revealEnabled, saveScores,
-  type Letter, type LetterState, type Score, type Scores,
+  DEFAULT_VOICE, LETTERS, TEST_LINES, VOICE_PICKS, failureMessage, loadScores, notWiredMessage, revealEnabled, saveScores,
+  type Letter, type LetterState, type Score, type Scores, type VoicePick,
 } from '../src/listeningTest/logic';
 
 const BG = '#090B0F', GOLD = '#C6A36A', IVORY = '#F0F1F2', MUTED = '#8A8F98', CARD = '#141821';
@@ -25,6 +25,8 @@ export default function ListeningTest() {
   const [revealMsg, setRevealMsg] = useState('');
   const [revealing, setRevealing] = useState(false);
   const [saved, setSaved] = useState(true);
+  // Voice pick (P-20261126-0004): only on this hidden screen, starts on the current voice every visit.
+  const [voice, setVoice] = useState<VoicePick>(DEFAULT_VOICE);
   const handleRef = useRef<TransportHandle | null>(null);
   const activeRef = useRef<Letter | null>(null);
   const attemptRef = useRef(0);
@@ -59,9 +61,17 @@ export default function ListeningTest() {
     return () => { document.removeEventListener('visibilitychange', onHide); stopCurrent(); };
   }, [isWeb, stopCurrent]);
 
-  function fail(letter: Letter, status?: number) {
+  function fail(letter: Letter, status?: number, plain?: string) {
     setStates(s => ({ ...s, [letter]: 'failed' }));
-    setMessages(m => ({ ...m, [letter]: failureMessage(letter, status) }));
+    setMessages(m => ({ ...m, [letter]: plain ?? failureMessage(letter, status) }));
+  }
+
+  function pickVoice(next: VoicePick) {
+    if (next === voice) return;
+    stopCurrent();
+    setVoice(next);
+    setMessages({});
+    setStates({ A: 'idle', B: 'idle', C: 'idle' });
   }
 
   async function start(letter: Letter) {
@@ -70,9 +80,9 @@ export default function ListeningTest() {
     activeRef.current = letter;
     setMessages(m => ({ ...m, [letter]: '' }));
     setStates(s => ({ ...s, [letter]: 'connecting' }));
-    const result = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter as CompareLetter, mode: 'hands_free', ageConfirmed });
+    const result = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter as CompareLetter, mode: 'hands_free', ageConfirmed, voice });
     if (attempt !== attemptRef.current) return;
-    if (!result.ok) { activeRef.current = null; fail(letter, result.status); return; }
+    if (!result.ok) { activeRef.current = null; fail(letter, result.status, result.keyMissing ? result.message : undefined); return; }
     const grant = result.grant;
     if (grant.provider === 'openai_realtime' && grant.connectHint !== 'realtime') {
       // GPT-Live has no browser keys; it needs the server to relay the connection first (see transports.ts).
@@ -108,7 +118,7 @@ export default function ListeningTest() {
     setRevealing(true); setRevealMsg('');
     const found: Partial<Record<Letter, string>> = {};
     for (const letter of LETTERS) {
-      const r = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter, mode: 'hands_free', reveal: true, ageConfirmed });
+      const r = await requestCompareSession({ supabaseUrl, accessToken: token, contender: letter, mode: 'hands_free', reveal: true, ageConfirmed, voice });
       found[letter] = r.ok ? (r.grant.model ?? 'not given') : 'could not be revealed';
     }
     setModels(found); setRevealing(false);
@@ -126,6 +136,12 @@ export default function ListeningTest() {
   return <ScrollView style={{ flex: 1, backgroundColor: BG }} contentContainerStyle={{ padding: 16, paddingBottom: 48, maxWidth: 560, width: '100%', alignSelf: 'center' }}>
     <Text style={{ color: GOLD, fontSize: 20, marginBottom: 4 }}>Listening test</Text>
     <Text style={{ color: MUTED, marginBottom: 16 }}>Pick a letter, talk to it with the five lines below, then score it. Use headphones.</Text>
+    <Text style={{ color: GOLD, marginBottom: 8, letterSpacing: 2, fontSize: 11 }}>VOICE</Text>
+    <View testID="listening-test-voice-pick" accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+      {VOICE_PICKS.map(v => <Pressable key={v.id} testID={`listening-test-voice-${v.id}`} accessibilityRole="radio" accessibilityState={{ checked: voice === v.id }} onPress={() => pickVoice(v.id)} style={btn(voice === v.id)}>
+        <Text style={{ color: voice === v.id ? BG : IVORY }}>{v.label}</Text>
+      </Pressable>)}
+    </View>
     {LETTERS.map(letter => {
       const st = states[letter];
       const score = scores[letter];

@@ -1,4 +1,5 @@
 import { MARTY_BOSTON_CONSENT_VERSION } from './martySullivanBoston';
+import { DEFAULT_VOICE, ELEVENLABS_KEY_MISSING, isElevenLabsKeyMissing, isVoicePick, type VoicePick } from '../listeningTest/logic';
 
 export type CompareLetter = 'A' | 'B' | 'C';
 export type CompareGrant =
@@ -21,7 +22,7 @@ export type CompareGrant =
     };
 export type CompareResult =
   | { ok: true; grant: CompareGrant }
-  | { ok: false; status?: number; message: string };
+  | { ok: false; status?: number; message: string; keyMissing?: boolean };
 
 const ALLOWED_BASE_URL = 'https://lqqmwqrffelgnbngrkep.supabase.co';
 const LETTERS = ['A', 'B', 'C'];
@@ -102,6 +103,8 @@ export async function requestCompareSession(input: {
   reveal?: boolean;
   /** True only after this device answered Yes to Marty's 21+ question (P-20261125-2244). */
   ageConfirmed?: boolean;
+  /** Listening test voice pick (P-20261126-0004). Defaults to the current voice. */
+  voice?: VoicePick;
   fetchImpl?: typeof fetch;
 }): Promise<CompareResult> {
   // Same rule as the normal Marty start: no Yes on this device, no network call at all.
@@ -117,6 +120,7 @@ export async function requestCompareSession(input: {
     contender: input.contender,
     mode: input.mode,
     age_confirmed: true,
+    voice: isVoicePick(input.voice) ? input.voice : DEFAULT_VOICE,
   };
   if (input.reveal === true) body.reveal = true;
 
@@ -132,11 +136,17 @@ export async function requestCompareSession(input: {
 
     if (!response.ok) {
       const status = response.status;
+      let errText = '';
+      try {
+        errText = typeof response.text === 'function' ? await response.text() : JSON.stringify(await response.json());
+      } catch { /* ignore */ }
+      // The server's own "ElevenLabs key not set" answer is shown plainly, whatever the status.
+      if (isElevenLabsKeyMissing(errText)) return { ok: false, status, message: ELEVENLABS_KEY_MISSING, keyMissing: true };
       if (status === 502) {
         // Include only the provider status code, never the raw provider error.
         let providerStatus: number | undefined;
         try {
-          const j = (await response.json()) as { status?: unknown };
+          const j = JSON.parse(errText) as { status?: unknown };
           if (typeof j?.status === 'number') providerStatus = j.status;
         } catch {
           // ignore
