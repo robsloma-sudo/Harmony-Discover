@@ -138,7 +138,7 @@ Deno.test("instructions: screen + memory + Boston core, in order", () => {
 });
 
 Deno.test("request body validation", () => {
-  assertEquals(parseVoiceRequest(OK), { ok: true, mode: "push_to_talk", screenContext: null });
+  assertEquals(parseVoiceRequest(OK), { ok: true, mode: "push_to_talk", screenContext: null, ageConfirmed: false });
   assertEquals(parseVoiceRequest({ ...OK, mode: "hands_free" }).ok, true);
   assertEquals(parseVoiceRequest({ ...OK, mode: "loud" }).ok, false);
   assertEquals(parseVoiceRequest({ ...OK, consentVersion: "old" }).ok, false);

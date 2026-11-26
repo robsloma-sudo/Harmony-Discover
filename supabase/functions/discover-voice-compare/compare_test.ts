@@ -213,3 +213,24 @@ Deno.test("deploy list covers every file the function imports", async () => {
   await walk("discover-voice-compare/index.ts");
   assertEquals([...seen].sort(), [...DEPLOY_FILES].sort());
 });
+
+// 21+ age check (P-20261125-2244 part 2): the listening test follows the same rule as Marty.
+import { ageGate } from "../discover-voice-session/_shared/ageCheck.ts";
+Deno.test("age: listening test request carries age_confirmed; gate refuses before any paid session", async () => {
+  const none = parseCompareRequest(OK);
+  assert(none.ok && none.ageConfirmed === false);
+  const no = parseCompareRequest({ ...OK, age_confirmed: false });
+  assert(no.ok && no.ageConfirmed === false);
+  const yes = parseCompareRequest({ ...OK, age_confirmed: true });
+  assert(yes.ok && yes.ageConfirmed === true);
+  assertFalse(parseCompareRequest({ ...OK, age_confirmed: "yes" }).ok);
+  assertEquals(ageGate(none.ok && none.ageConfirmed, undefined)?.body.code, "age_check_needed");
+  assertEquals(ageGate(no.ok && no.ageConfirmed, undefined)?.status, 403);
+  assertEquals(ageGate(yes.ok && yes.ageConfirmed, undefined), null);
+  const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const gate = src.indexOf("ageGate(parsed.ageConfirmed");
+  assert(gate > 0);
+  for (const later of ["from(\"bartender_voice_consents\")", "consume_marty_voice_rate_limit", "mintContender(parsed"]) {
+    assert(src.indexOf(later) > gate, `${later} must come after the age check`);
+  }
+});
