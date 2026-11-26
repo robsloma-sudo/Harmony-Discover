@@ -358,7 +358,7 @@ Deno.test("P-1654 r2: no warm-host, thank-you, sorry or anything-else lines anyw
       }
     }
   }
-  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.3.0");
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.4.0");
 });
 
 Deno.test("P-1654 r2: grumpy, roasting default, rare grudging respect, only the hard lines kept, no-host block before the book", () => {
@@ -469,4 +469,44 @@ Deno.test("cursing: way more, varied, and every limit kept in both modes", () =>
   assertFalse(martyBostonInstructions.includes("not in every sentence"));
   // swearing is never aimed at the guest's identity and never pointed at "you" as a person
   assertFalse(/\byou (fuckin|fucking|stupid|dumb)\b/i.test(martyBostonInstructions + martyDeliveryInstructions));
+});
+
+// ---- Ranting Boston energy, real words, more on request (P-20261126-0102 part 1b, Rob 26 Nov) ---
+import { buildElevenLabsPrompt } from "./_shared/elevenlabs.ts";
+const RANT_KEYS = [
+  "RANTING ENERGY",
+  "short, exasperated Boston rant: you start annoyed and you are fed up by the end of the line",
+  "Over a chat you escalate, annoyed first, then fed up, then completely done with this, but you still answer every time",
+  "never name, quote or imitate any real comedian, actor or other real person, and never use anyone's known jokes, catchphrases or voice",
+  "Basically every sentence you say has at least one curse in it",
+  "Say the real words: never water them down to darn, heck, gosh, frick or shoot, and never bleep or skip them",
+  "If a guest asks you to swear more, go harder for them, same limits",
+  "If a guest asks you to cut the swearing, cut it for them",
+  "Escalate like a rant: annoyed, then fed up, then completely done with tonight",
+  "HOW HE SOUNDS — EXAMPLE LINES (STYLE ONLY, NEVER REPEAT THEM WORD FOR WORD)",
+  "the anger at the order or the night, never at the guest, then the real answer",
+];
+Deno.test("1b: ranting energy, real curse words, more on request, own character — OpenAI and ElevenLabs get the same rules", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    const oa = buildRealtimeSession({ mode, characterBook: martyCharacterBook }).session.instructions;
+    const el = buildElevenLabsPrompt({ mode, characterBook: martyCharacterBook }).shared;
+    for (const t of [oa, el]) {
+      for (const k of [...RANT_KEYS, ...CURSING_KEYS]) assertStringIncludes(t, k);
+      assertEquals(hostTalkLeft(t.replace(martyCharacterBook.trim(), "")), []);
+    }
+  }
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.4.0");
+});
+
+Deno.test("1b: example lines curse in every sentence and never aim it at the guest", () => {
+  const block = martyDeliveryInstructions.split("HOW HE SOUNDS")[1].split("PET PEEVE SPIKES")[0];
+  const lines = [...block.matchAll(/: "([^"]+)"/g)].map((m) => m[1]);
+  assertEquals(lines.length, 4);
+  const CURSE = /\b(damn|hell|shit|crap|ass|pissed|christ|jesus|goddamn|fuck\w*|son of a bitch)\b/i;
+  for (const l of lines) {
+    for (const s of l.split(/(?<=[.?!])\s+/).filter((x) => x.trim())) assert(CURSE.test(s), `no curse in: ${s}`);
+    assertFalse(/\byou(')?(re)? (fuckin|fucking|stupid|dumb|idiot|moron|asshole)/i.test(l), l);
+  }
+  // starting moods stay grumpy (no plain good mood)
+  assertFalse(MARTY_MOODS.some((m) => /decent mood|good mood|cheerful|happy/i.test(m)));
 });
