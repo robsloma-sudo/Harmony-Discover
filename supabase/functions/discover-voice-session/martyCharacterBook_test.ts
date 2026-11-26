@@ -1,6 +1,6 @@
 // Guards the Marty character book against host / service-minded manners coming back
-// (Rob, P-20261125-1654: "I don't want a nice Marty"), and against phonetic spelling
-// (the base script says the accent is spoken, never spelled).
+// (Rob, P-20261125-1654: "I don't want a nice Marty"), and against phonetic spelling of drink names and facts
+// (P-20261126-0324: spoken words carry the Boston sound in the spelling, lightly).
 import { assert, assertFalse, assertStringIncludes } from "jsr:@std/assert@1";
 import { martyCharacterBook, MARTY_CHARACTER_BOOK_MAX_CHARS } from "./_shared/martyCharacterBook.ts";
 
@@ -20,10 +20,22 @@ Deno.test("character book: no warm-host / hospitable / service phrases anywhere"
   }
 });
 
-Deno.test("character book: Boston words written normally, no phonetic spelling", () => {
-  const phonetic = /\b(cah|pahk|bah|heah|theah|nevah|wahtah|ordah|chowdah|hahdah|smaht|shuah|idear|suppah|dinnah|papah|weathah|bittah|hahbah|floatah|ya|whaddaya)\b/i;
-  const m = martyCharacterBook.match(phonetic);
-  assertFalse(m !== null, `phonetic spelling found: "${m?.[0]}"`);
+// P-20261126-0324 part 1 (Rob, 26 Nov): thicker Boston accent. Spoken words carry the Boston sound in the
+// spelling (the voice script writes cah, bah, nevah, ordah, smaht); drink names, spirits, brands, numbers,
+// prices and facts are always spelled normally.
+Deno.test("character book: Boston sound in spoken spelling, lightly; drink names and facts spelled normally", () => {
+  assertStringIncludes(martyCharacterBook, "spoken words carry his Boston sound in the spelling, lightly and readably");
+  assertStringIncludes(martyCharacterBook, "Drink names, spirits, brands, numbers, prices and facts are always spelled normally");
+  for (const old of ["Never spell words the way he says them", "The Boston accent is in the voice, not the spelling", "write every word normally"]) {
+    assertFalse(martyCharacterBook.includes(old), `old no-accent-spelling line left in the book: "${old}"`);
+  }
+  // the book's own drink, spirit and fact words stay in normal spelling
+  const phoneticDrinks = /\b(mahtini|mahgarita|manhattin|vodkah|vodker|lagah|liquah|bittahs?|whiskah|bouhbon|cognack|tequiler|daiquirah|cranberrah)\b/i;
+  const m = martyCharacterBook.match(phoneticDrinks);
+  assertFalse(m !== null, `drink or spirit name spelled phonetically: "${m?.[0]}"`);
+  for (const k of ["Manhattan", "Margarita", "Daiquiri", "Guinness", "Cointreau", "988", "two drinks"]) {
+    assertStringIncludes(martyCharacterBook, k);
+  }
 });
 
 // P-20261126-0324 part 1 (Rob, 26 Nov): funny-grumpy, not mean: a wiseass about the order, owns it fast when wrong.
