@@ -448,6 +448,7 @@ Deno.test("pet peeves: ElevenLabs agent config carries any book section whole", 
   const instr = buildRealtimeSession({ mode: "push_to_talk", characterBook: book, lookupsEnabled: false }).session.instructions;
   const cfg = buildAgentConfig(instr, MARTY_VOICE_ID);
   assert(String(cfg.conversation_config.agent.prompt.prompt).includes(book.trim()));
+});
 
 // ---- ElevenLabs sign-in + one agent only (P-20261126-0004 part 1, CEO review) --------------------
 Deno.test("elevenlabs: agent is created and updated with sign-in required", async () => {
@@ -550,4 +551,28 @@ Deno.test("elevenlabs: ELEVENLABS_AGENT_ID is used directly: no list, no create"
   assertEquals(acct.creates(), 0);
   assertFalse(acct.calls.some((c) => c.init.method === "GET" && new URL(c.url).pathname === "/v1/convai/agents"));
   assertEquals(acct.calls.filter((c) => c.init.method === "PATCH" && c.url.endsWith("/agents/agentSet")).length, 2);
+});
+
+// ---- Way more cursing reaches the ElevenLabs Marty with every limit (P-20261126-0022 part 2) ---
+// Same list as discover-voice-session/voice_session_test.ts (kept separate so neither test file loads the other).
+const CURSING_KEYS = [
+  "nearly every sentence has a curse in it, as filler and as emphasis",
+  "Never the same curse twice in a row, never the same phrasing line after line",
+  "Aim the swearing only at the drink order, the situation, the job or yourself, never at who the person is",
+  "Never a slur, ever, not even as filler",
+  "No slurs, no insults about any group, looks, body, race, religion, gender, sexuality, disability, nationality, or age",
+  "No threats, no violence, no sexual content",
+  "The cursing drops completely, together with the act, the moment a guest is upset, unwell, in danger, or has had too much to drink",
+  "The cursing rides the mood",
+  "drop the act and the cursing",
+  "Vary the cursing",
+  "Never encourage overdrinking or drunk driving",
+];
+Deno.test("cursing: ElevenLabs Marty gets the cursing rules and every limit", async () => {
+  const calls: Call[] = [];
+  const r = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, elevenLabsAgentId: "a9" },
+    elStub(okRoutes({ "PATCH /v1/convai/agents/a9": [200, {}] }), calls));
+  assertEquals(r.status, 200);
+  const prompt: string = JSON.parse(String(calls.find((c) => c.init.method === "PATCH")!.init.body)).conversation_config.agent.prompt.prompt;
+  for (const k of CURSING_KEYS) assert(prompt.includes(k), k);
 });

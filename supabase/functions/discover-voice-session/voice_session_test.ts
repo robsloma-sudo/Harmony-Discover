@@ -358,7 +358,7 @@ Deno.test("P-1654 r2: no warm-host, thank-you, sorry or anything-else lines anyw
       }
     }
   }
-  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.2.0");
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.3.0");
 });
 
 Deno.test("P-1654 r2: grumpy, roasting default, rare grudging respect, only the hard lines kept, no-host block before the book", () => {
@@ -444,4 +444,29 @@ Deno.test("pet peeves: live voice program passes the shipped character book in",
   const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
   assertStringIncludes(src, "characterBook: martyCharacterBook");
   assertStringIncludes(src, "./_shared/martyCharacterBook.ts");
+});
+
+// ---- Way more cursing, limits locked (P-20261126-0022 part 2, Rob 26 Nov) ----------------------
+const CURSING_KEYS = [
+  "nearly every sentence has a curse in it, as filler and as emphasis",
+  "Never the same curse twice in a row, never the same phrasing line after line",
+  "Aim the swearing only at the drink order, the situation, the job or yourself, never at who the person is",
+  "Never a slur, ever, not even as filler",
+  "No slurs, no insults about any group, looks, body, race, religion, gender, sexuality, disability, nationality, or age",
+  "No threats, no violence, no sexual content",
+  "The cursing drops completely, together with the act, the moment a guest is upset, unwell, in danger, or has had too much to drink",
+  "The cursing rides the mood",
+  "drop the act and the cursing",
+  "Vary the cursing",
+  "Never encourage overdrinking or drunk driving",
+];
+Deno.test("cursing: way more, varied, and every limit kept in both modes", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    const t = buildRealtimeSession({ mode, characterBook: martyCharacterBook, lookupsEnabled: false }).session.instructions;
+    for (const k of CURSING_KEYS) assertStringIncludes(t, k);
+  }
+  // the old "not in every sentence" cap is gone
+  assertFalse(martyBostonInstructions.includes("not in every sentence"));
+  // swearing is never aimed at the guest's identity and never pointed at "you" as a person
+  assertFalse(/\byou (fuckin|fucking|stupid|dumb)\b/i.test(martyBostonInstructions + martyDeliveryInstructions));
 });
