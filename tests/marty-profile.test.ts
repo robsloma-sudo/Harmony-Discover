@@ -4,7 +4,7 @@ import { comedyScenarios } from '../src/voice/comedyScenarios';
 
 describe('Marty Sullivan Boston profile', () => {
   it('uses a separately versioned Boston identity', () => {
-    expect(MARTY_BOSTON_PROFILE_VERSION).toBe('marty-boston-v1.3.0');
+    expect(MARTY_BOSTON_PROFILE_VERSION).toBe('marty-boston-v1.4.0');
     expect(MARTY_BOSTON_CONSENT_VERSION).toBeTruthy();
     expect(martyBostonInstructions).toContain('South Boston');
     expect(martyBostonInstructions).toContain('New York source remains preserved separately');
