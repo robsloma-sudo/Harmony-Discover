@@ -31,4 +31,4 @@ export function goneResponse(request: Request): Response {
   return new Response(JSON.stringify(GONE_BODY), { status: 410, headers });
 }
 
-if (import.meta.main) Deno.serve(goneResponse);
+Deno.serve(goneResponse);

@@ -31,4 +31,6 @@ Deno.test("listening test is gone: the stub reads no secrets and calls nothing",
     assertFalse(code.includes(banned), banned);
   }
   assert(code.includes("410"));
+  assert(code.includes("Deno.serve(goneResponse)"), "starts plainly like our other programs");
+  assertFalse(code.includes("import.meta.main"), "no import.meta.main guard");
 });
