@@ -176,3 +176,9 @@ export function parseGeminiMessage(data: unknown): { setupComplete: boolean; int
 export function geminiToolResponse(calls: { id: string; name: string }[]): string {
   return JSON.stringify({ toolResponse: { functionResponses: calls.map(c => ({ id: c.id, name: c.name, response: { status: 'unavailable', note: 'listening test' } })) } });
 }
+
+/** Demo lines for the option A face preview (hidden listening test only). */
+export const FACE_DEMO_LINES = [
+  { id: 'annoyed', label: 'Annoyed line', text: "No. Absolutely not. You don't put ice in a forty-dollar single malt. I'm not doing it." },
+  { id: 'sarcastic', label: 'Sarcastic line', text: "Oh, a vodka soda. Bold choice. Really pushing the boundaries tonight, huh?" },
+] as const;

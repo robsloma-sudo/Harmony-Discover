@@ -28,7 +28,17 @@ const ICE_GRACE_MS = 1500;
 const STEP_TIMEOUT_MS = 12000;
 
 export interface TransportHandle { stop(): void }
-export interface TransportHooks { onClosed(reason: string): void }
+export interface TransportHooks {
+  onClosed(reason: string): void;
+  /** Marty's voice as a MediaStream (webrtc). */
+  onVoiceStream?(stream: MediaStream): void;
+  /** An analyser on Marty's voice playback graph (gemini); called once. */
+  onVoiceAnalyser?(node: AnalyserNode): void;
+  /** Marty's words as they arrive. */
+  onMartyText?(delta: string): void;
+  /** Marty finished (or was cut off in) a reply. */
+  onMartyTurnDone?(): void;
+}
 
 async function getMic(): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
@@ -54,11 +64,15 @@ export async function connectWebrtc(opts: { token: string; hint: ConnectHint; ho
   };
   const dc = pc.createDataChannel('oai-events');
   try {
-    pc.ontrack = e => { audio.srcObject = e.streams[0]; void audio.play().catch(() => undefined); };
+    pc.ontrack = e => { audio.srcObject = e.streams[0]; void audio.play().catch(() => undefined); if (e.streams[0]) { try { hooks.onVoiceStream?.(e.streams[0]); } catch { /* preview only */ } } };
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
     dc.onmessage = event => {
       try {
         const data = JSON.parse(event.data);
+        try {
+          if (data.type === 'response.output_audio_transcript.delta' && typeof data.delta === 'string') hooks.onMartyText?.(data.delta);
+          else if (data.type === 'response.done' || data.type === 'output_audio_buffer.stopped') hooks.onMartyTurnDone?.();
+        } catch { /* preview only */ }
         if (data.type === 'response.function_call_arguments.done' && typeof data.call_id === 'string' && dc.readyState === 'open') {
           for (const e of functionCallAnswerEvents(hint, data.call_id)) dc.send(JSON.stringify(e));
         }
@@ -111,6 +125,13 @@ export async function connectGemini(opts: { token: string; hooks: TransportHooks
   let proc: ScriptProcessorNode | null = null;
   let playHead = 0;
   const sources = new Set<AudioBufferSourceNode>();
+  let analyser: AnalyserNode | null = null;
+  if (hooks.onVoiceAnalyser) {
+    try {
+      analyser = ctx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.3;
+      hooks.onVoiceAnalyser(analyser);
+    } catch { analyser = null; }
+  }
   const stop = () => {
     if (closed) return; closed = true;
     stopStream(stream);
@@ -126,6 +147,7 @@ export async function connectGemini(opts: { token: string; hooks: TransportHooks
     const buf = ctx.createBuffer(1, samples.length, 24000);
     buf.copyToChannel(samples as unknown as Float32Array, 0);
     const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+    if (analyser) { try { src.connect(analyser); } catch { /* preview only */ } }
     playHead = Math.max(playHead, ctx.currentTime);
     src.start(playHead); playHead += buf.duration;
     sources.add(src); src.onended = () => sources.delete(src);
