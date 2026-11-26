@@ -3,13 +3,25 @@ import { sanitizeScreenContext, type ScreenContext } from "./screenContext.ts";
 import { LOOKUP_TOOL_NAMES, type LookupToolName } from "./lookupContract.ts";
 import type { VoiceMode } from "./realtimeSession.ts";
 import { AGE_CHECK_FIELD, validAgeField } from "./ageCheck.ts";
+import { ELEVEN_CONNECTIONS, VOICE_ENGINES, type ElevenConnection, type VoiceEngine } from "./elevenlabs.ts";
 
 export const MAX_REQUEST_BYTES = 8192;
-const ALLOWED_KEYS = new Set(["consentVersion", "mode", "screenContext", AGE_CHECK_FIELD]);
+// voiceEngines / elevenLabsConnection (P-20261126-0102): optional, sent only by new app copies that can play
+// ElevenLabs. Absent = an old app copy = exactly today's OpenAI grant.
+const ALLOWED_KEYS = new Set(["consentVersion", "mode", "screenContext", AGE_CHECK_FIELD, "voiceEngines", "elevenLabsConnection"]);
 
 export type VoiceRequestResult =
-  | { ok: true; mode: VoiceMode; screenContext: ScreenContext | null; ageConfirmed: boolean }
+  | {
+    ok: true; mode: VoiceMode; screenContext: ScreenContext | null; ageConfirmed: boolean;
+    voiceEngines: VoiceEngine[] | null; elevenLabsConnection: ElevenConnection;
+  }
   | { ok: false };
+
+function validEngines(v: unknown): boolean {
+  if (v === undefined) return true;
+  if (!Array.isArray(v) || v.length < 1 || v.length > VOICE_ENGINES.length) return false;
+  return v.every((e) => typeof e === "string" && VOICE_ENGINES.includes(e)) && new Set(v).size === v.length;
+}
 
 export function parseVoiceRequest(input: unknown): VoiceRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
@@ -19,9 +31,14 @@ export function parseVoiceRequest(input: unknown): VoiceRequestResult {
   if (body.consentVersion !== MARTY_BOSTON_CONSENT_VERSION) return { ok: false };
   if (body.mode !== "push_to_talk" && body.mode !== "hands_free") return { ok: false };
   if (!validAgeField(body[AGE_CHECK_FIELD])) return { ok: false };
+  if (!validEngines(body.voiceEngines)) return { ok: false };
+  const conn = body.elevenLabsConnection;
+  if (conn !== undefined && (typeof conn !== "string" || !ELEVEN_CONNECTIONS.includes(conn))) return { ok: false };
   return {
     ok: true, mode: body.mode, screenContext: sanitizeScreenContext(body.screenContext),
     ageConfirmed: body[AGE_CHECK_FIELD] === true,
+    voiceEngines: body.voiceEngines === undefined ? null : body.voiceEngines as VoiceEngine[],
+    elevenLabsConnection: conn === "websocket" ? "websocket" : "webrtc",
   };
 }
 

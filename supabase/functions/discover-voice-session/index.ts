@@ -1,7 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { MARTY_BOSTON_CONSENT_VERSION } from "./_shared/martySullivanBoston.ts";
 import { martyCharacterBook } from "./_shared/martyCharacterBook.ts";
-import { buildRealtimeSession, lookupsAllowed, MODEL } from "./_shared/realtimeSession.ts";
+import { lookupsAllowed } from "./_shared/realtimeSession.ts";
+import { mintGrant } from "./_shared/mintGrant.ts";
 import { MAX_REQUEST_BYTES, parseLookupRequest, parseVoiceRequest } from "./_shared/voiceRequest.ts";
 import { ageGate } from "./_shared/ageCheck.ts";
 import { loadPhgConfig, parseLookupArgs, runLookup } from "./_shared/lookups.ts";
@@ -156,42 +157,28 @@ Deno.serve(async (request: Request) => {
       }
     }
 
-    const built = buildRealtimeSession({
-      voiceEnv: Deno.env.get("MARTY_VOICE"),
-      handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE"),
-      lookupsEnabled: lookupsAllowed(Deno.env),
-      characterBook: martyCharacterBook,
+    // Voice engine (P-20261126-0102): Rob's ElevenLabs "Marty" voice for app copies that can play it, today's
+    // OpenAI voice for old app copies, as the fallback, and when the switch (code default or MARTY_VOICE_ENGINE) says openai.
+    const result = await mintGrant({
       mode: parsed.mode,
       screenContext: parsed.screenContext,
+      voiceEngines: parsed.voiceEngines,
+      elevenLabsConnection: parsed.elevenLabsConnection,
       memoryContext,
+      characterBook: martyCharacterBook,
+      lookupsEnabled: lookupsAllowed(Deno.env),
+      env: {
+        openAiKey,
+        elevenLabsKey: Deno.env.get("ELEVENLABS_API_KEY") ?? "",
+        voiceEngineEnv: Deno.env.get("MARTY_VOICE_ENGINE") ?? undefined,
+        elevenLabsVoiceId: Deno.env.get("ELEVENLABS_VOICE_ID") ?? undefined,
+        elevenLabsAgentId: Deno.env.get("ELEVENLABS_AGENT_ID") ?? undefined,
+        elevenLabsLlm: Deno.env.get("ELEVENLABS_LLM") ?? undefined,
+        voiceEnv: Deno.env.get("MARTY_VOICE") ?? undefined,
+        handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE") ?? undefined,
+      },
     });
-    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${openAiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        expires_after: { anchor: "created_at", seconds: 60 },
-        session: built.session,
-      }),
-    });
-    if (!response.ok) {
-      console.error("Marty Realtime credential request failed:", response.status);
-      return json({ error: "The bartender is temporarily unavailable." }, 503, origin);
-    }
-    const payload = await response.json();
-    if (typeof payload.value !== "string" || !payload.value || !payload.expires_at) {
-      return json({ error: "The voice provider returned an incomplete session grant." }, 502, origin);
-    }
-
-    return json({
-      sessionId: payload.session?.id ?? crypto.randomUUID(),
-      provider: "openai_realtime",
-      ephemeralToken: payload.value,
-      expiresAt: new Date(Number(payload.expires_at) * 1000).toISOString(),
-      transport: "webrtc",
-      model: MODEL,
-      voice: built.voice,
-      mode: built.mode,
-    }, 200, origin);
+    return json(result.body, result.status, origin);
   } catch {
     return json({ error: "Could not start the bartender voice session." }, 500, origin);
   }

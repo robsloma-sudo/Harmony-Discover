@@ -44,8 +44,11 @@ Deno.test("age: voice program refuses before any paid session is started", async
   assert(gate > 0);
   assert(src.indexOf("if (ageBlock) return json(ageBlock.body, ageBlock.status, origin);") > gate);
   for (const later of ["authorizeGuest(supabaseUrl, anonKey, serviceKey, token, origin);\n    if (\"error\" in guest) return guest.error;\n    const { user",
-                       "consume_marty_voice_rate_limit", "realtime/client_secrets", "buildRealtimeSession({"]) {
+                       "consume_marty_voice_rate_limit", "await mintGrant("]) {
     const at = src.indexOf(later);
     assert(at > gate, `${later} must come after the age check`);
   }
+  // P-20261126-0102: every paid voice call (OpenAI or ElevenLabs) now lives in mintGrant, called once, after the gate.
+  assert(!src.includes("realtime/client_secrets") && !src.includes("elevenlabs.io"));
+  assert(src.split("await mintGrant(").length === 2);
 });
