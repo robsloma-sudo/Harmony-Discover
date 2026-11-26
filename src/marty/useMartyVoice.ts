@@ -6,13 +6,18 @@
  * (talking over Marty cuts him off). If the server answers "push_to_talk" (its stop switch),
  * Marty falls back to hold-to-talk. Turning Marty off (martyPresence) stops the microphone,
  * his voice and the session at once.
+ *
+ * P-20261126-0102: the server picks Marty's voice. An ElevenLabs grant (Rob's "Marty" voice) plays through
+ * the official ElevenLabs browser kit (src/voice/elevenlabsVoice.ts); today's OpenAI grant keeps the WebRTC
+ * path below. The app sends the same request either way, so the server can switch back with no app change.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../services/supabase';
 import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../voice/voiceSessionCoordinator';
-import type { VoiceSessionGrant } from '../voice/sessionContract';
+import { isElevenLabsGrant, type ElevenLabsVoiceGrant, type VoiceSessionGrant } from '../voice/sessionContract';
+import { connectElevenLabsMarty, rmsFromElevenLabsVolume, type ElevenLabsMartyHandle } from '../voice/elevenlabsVoice';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
 import { isMartyLookupTool, runMartyLookup } from '../voice/martyLookups';
 import { ensureMartySession, grantMartyVoiceConsent } from '../voice/martyGuest';
@@ -80,6 +85,9 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number | null>(null);
   const isTalkingRef = useRef(false);
+  /** Set while Marty talks on the ElevenLabs voice (the kit owns mic, playback and turns). */
+  const elevenRef = useRef<ElevenLabsMartyHandle | null>(null);
+  const elevenSpeakingRef = useRef(false);
   const sessionStartedRef = useRef(false);
   const sessionStartedResolveRef = useRef<(() => void) | null>(null);
   const sessionStartedRejectRef = useRef<((error: Error) => void) | null>(null);
@@ -96,6 +104,11 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     isTalkingRef.current = false;
     streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.muted = true; }
+    // ElevenLabs voice: the kit mutes its microphone synchronously, then ends the conversation.
+    const eleven = elevenRef.current;
+    elevenRef.current = null;
+    elevenSpeakingRef.current = false;
+    eleven?.stop();
   }, []);
 
   const stopLipSync = useCallback(() => {
@@ -206,9 +219,62 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     if (audioRef.current && turn && (turn.isAudioPlaying || turn.isResponseActive)) audioRef.current.muted = true;
   }
 
+  /** Mouth sync for the ElevenLabs voice: the kit reports how loud Marty is right now. */
+  function startElevenLabsLipSync(handle: ElevenLabsMartyHandle) {
+    stopLipSync();
+    if (typeof requestAnimationFrame !== 'function') return;
+    let open = 0;
+    let lastPush = 0;
+    const tick = (t: number) => {
+      rafRef.current = requestAnimationFrame(tick);
+      const live = elevenRef.current === handle && elevenSpeakingRef.current;
+      open = mouthOpenFromLevel(live ? rmsFromElevenLabsVolume(handle.outputVolume()) : 0, open);
+      if (t - lastPush >= 33) { lastPush = t; setMouthOpen(prev => (prev === open ? prev : open)); }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }
+
+  async function connectElevenLabsTransport(grant: ElevenLabsVoiceGrant) {
+    // The kit opens its own microphone; close the permission check's one so only one mic is ever open.
+    streamRef.current?.getTracks().forEach(track => { track.enabled = false; track.stop(); });
+    streamRef.current = null;
+    elevenSpeakingRef.current = false;
+    let handle: ElevenLabsMartyHandle | null = null;
+    const isMine = () => handle !== null && elevenRef.current === handle;
+    handle = await connectElevenLabsMarty({
+      conversationToken: grant.conversationToken,
+      hooks: {
+        onMode: mode => {
+          if (!isMine()) return;
+          elevenSpeakingRef.current = mode === 'speaking';
+          setPhase(mode === 'speaking' ? 'speaking' : 'idle');
+        },
+        onLine: (who, text) => { if (isMine()) addLine(who, text); },
+        onClosed: reason => {
+          if (!isMine() || transportClosingRef.current) return;
+          transportClosingRef.current = true;
+          setError(reason === 'failed'
+            ? 'Marty’s voice connection hit an error. Tap Talk to Marty to start again.'
+            : 'Marty’s voice connection closed. Tap Talk to Marty to start again.');
+          void stop();
+        },
+      },
+    });
+    elevenRef.current = handle;
+    // Last check: if Marty was switched off or stopped while connecting, end it now (mic included).
+    if (!getMartyPresence().enabled) throw new Error('Marty was turned off.');
+    if (startGenRef.current !== stopGenRef.current) throw new Error('Marty was stopped.');
+    startElevenLabsLipSync(handle);
+    setHandsFree(true);
+    setConnected(true);
+    setNotice('');
+    addLine('system', 'Marty is listening. Just talk. Turn him off any time with the switch.');
+  }
+
   async function connectTransport(grant: VoiceSessionGrant) {
     transportClosingRef.current = false;
     sessionStartedRef.current = false;
+    if (isElevenLabsGrant(grant)) { await connectElevenLabsTransport(grant); return; }
     const stream = streamRef.current;
     if (!stream) throw new Error('Microphone permission is missing.');
     const alwaysOn = grant.mode === 'hands_free';
@@ -451,6 +517,8 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
 
   function sendText(text: string) {
     const t = text.trim();
+    // ElevenLabs voice: the kit takes typed text directly (its own turn-taking handles the rest).
+    if (t && elevenRef.current) { if (elevenRef.current.sendText(t)) addLine('you', t); return; }
     const turn = turnRef.current;
     if (!t || !turn || dcRef.current?.readyState !== 'open') return;
     muteMartyNow();
