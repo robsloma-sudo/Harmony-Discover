@@ -1,6 +1,6 @@
 // Guards the Marty character book against host / service-minded manners coming back
-// (Rob, P-20261125-1654: "I don't want a nice Marty"), and against phonetic spelling
-// (the base script says the accent is spoken, never spelled).
+// (Rob, P-20261125-1654: "I don't want a nice Marty"), and against phonetic spelling of drink names and facts
+// (P-20261126-0324: spoken words carry the Boston sound in the spelling, lightly).
 import { assert, assertFalse, assertStringIncludes } from "jsr:@std/assert@1";
 import { martyCharacterBook, MARTY_CHARACTER_BOOK_MAX_CHARS } from "./_shared/martyCharacterBook.ts";
 
@@ -20,49 +20,77 @@ Deno.test("character book: no warm-host / hospitable / service phrases anywhere"
   }
 });
 
-Deno.test("character book: Boston words written normally, no phonetic spelling", () => {
-  const phonetic = /\b(cah|pahk|bah|heah|theah|nevah|wahtah|ordah|chowdah|hahdah|smaht|shuah|idear|suppah|dinnah|papah|weathah|bittah|hahbah|floatah|ya|whaddaya)\b/i;
-  const m = martyCharacterBook.match(phonetic);
-  assertFalse(m !== null, `phonetic spelling found: "${m?.[0]}"`);
+// P-20261126-0324 part 1 (Rob, 26 Nov): thicker Boston accent. Spoken words carry the Boston sound in the
+// spelling (the voice script writes cah, bah, nevah, ordah, smaht); drink names, spirits, brands, numbers,
+// prices and facts are always spelled normally.
+Deno.test("character book: Boston sound in spoken spelling, lightly; drink names and facts spelled normally", () => {
+  assertStringIncludes(martyCharacterBook, "spoken words carry his Boston sound in the spelling, lightly and readably");
+  assertStringIncludes(martyCharacterBook, "Drink names, spirits, brands, numbers, prices and facts are always spelled normally");
+  for (const old of ["Never spell words the way he says them", "The Boston accent is in the voice, not the spelling", "write every word normally"]) {
+    assertFalse(martyCharacterBook.includes(old), `old no-accent-spelling line left in the book: "${old}"`);
+  }
+  // the book's own drink, spirit and fact words stay in normal spelling
+  const phoneticDrinks = /\b(mahtini|mahgarita|manhattin|vodkah|vodker|lagah|liquah|bittahs?|whiskah|bouhbon|cognack|tequiler|daiquirah|cranberrah)\b/i;
+  const m = martyCharacterBook.match(phoneticDrinks);
+  assertFalse(m !== null, `drink or spirit name spelled phonetically: "${m?.[0]}"`);
+  for (const k of ["Manhattan", "Margarita", "Daiquiri", "Guinness", "Cointreau", "988", "two drinks"]) {
+    assertStringIncludes(martyCharacterBook, k);
+  }
 });
 
-Deno.test("character book: default is grumpy and mean, hard lines kept, niceness is no exception", () => {
+// P-20261126-0324 part 1 (Rob, 26 Nov): funny-grumpy, not mean: a wiseass about the order, owns it fast when wrong.
+Deno.test("character book: default is funny-grumpy (not mean), hard lines kept, niceness is no exception", () => {
   for (const k of [
     "grumpy, impatient, sarcastic", "He roasts what the guest orders", "He never flatters the guest",
-    "He never apologizes", "He curses", "Roast the order or the question, never who the person is",
+    "a wiseass about the order", "grumpy outside, a softie underneath", "Funny-grumpy, never cruel",
+    "When he's wrong he owns it fast", "Never syrupy", "not a goddamn unicorn", "He curses", "Roast the order or the question, never who the person is",
     "No slurs", "No threats. Nothing sexual.", "drop the act at once", "call or text 988",
     "Never encourage overdrinking", "drunk driving", "Being nice, polite or helpful-sounding is NOT an exception",
     "11. FACTS RULE", "made-up character voice", "Do not invent personal history", "the Leaky Dory", "all made-up names",
   ]) assertStringIncludes(martyCharacterBook, k);
   assertFalse(martyCharacterBook.includes("MARTY CHARACTER BOOK"));
+  for (const old of [
+    "mean about the order", "Funny-mean", "He never apologizes", "None of the moods is nice", "Order a real drink, for fuck's sake",
+  ]) assertFalse(martyCharacterBook.includes(old), `old mean wording left in the book: "${old}"`);
   assert(martyCharacterBook.length > 5000 && martyCharacterBook.length <= MARTY_CHARACTER_BOOK_MAX_CHARS);
 });
 
-// P-20261126-0022 part 1: Marty's pet peeves (trigger -> reaction), with the hard lines restated inside it.
+// P-20261126-0022 part 1, rebuilt by P-20261126-0324 part 1: section 12 is now MARTY'S BAR CODE (the pet peeves
+// merged in), with strength, sample lines and how the guest wins him back; hard lines restated inside it.
 const peeves = () => {
-  const i = martyCharacterBook.indexOf("12. MARTY'S PET PEEVES");
+  const i = martyCharacterBook.indexOf("12. MARTY'S BAR CODE");
   return i < 0 ? "" : martyCharacterBook.slice(i);
 };
 
-Deno.test("character book: pet peeves section present, with triggers and the groan-then-answer rule", () => {
+Deno.test("character book: bar code section present, with triggers and the groan-then-answer rule", () => {
   const p = peeves();
-  assert(p.length > 1500, "pet peeves section missing or too short");
+  assert(p.length > 5000, "bar code section missing or too short");
+  assertFalse(martyCharacterBook.includes("12. MARTY'S PET PEEVES"), "old section 12 left behind next to the bar code");
   for (const k of [
-    "DRINKS HE HATES MAKING", "THINGS HE HATES HEARING OR SEEING", "EAST COAST OLD-MAN GRUDGES",
+    "BY SPIRIT", "HOW THEY ORDER", "WHAT THEY SAY AND DO", "WHAT EARNS RESPECT", "SPIRIT NORMS", "BOSTON / EAST COAST",
+    "WINNING HIM BACK, ANY SLIGHT", "CALLING BULLSHIT BOTH WAYS", "LOVES/LIKES/MEH/ANNOYED/HATES", "WIN:",
     "then still gives the real answer or a better pick", "never the same line twice in a row",
     "spikes on a peeve, then settles", "Mojito", "Ramos Gin Fizz", "Long Island", "This ain't a cruise ship",
     "Cosmo", "Espresso martini", "Make it strong", "less ice", "Surprise me", "It's my birthday",
-    "Snapping", "smile more", "oat milk", "mixologist", "Yankees fans",
+    "Snapping", "Smile more", "I know the owner", "I'm a bartender too", "Vodka Red Bull", "Single malt",
+    "Sidecar", "Mezcal", "Guinness", "corked", "Irish Car Bomb", "One drink at a time for a group",
+    "Last call means last", "tipping right", "oat milk", "mixologist", "Yankees fans",
+    "When the guest catches HIM wrong, he admits it", "Facts beat pride",
   ]) assertStringIncludes(p, k);
+  // every item line carries a strength word
+  const items = p.split("\n").filter((x) => x.startsWith("- ") && x.includes(" | "));
+  assert(items.length >= 40, `expected 40+ items, got ${items.length}`);
+  for (const x of items) assert(/\| (LOVES|LIKES|MEH|ANNOYED|HATES)/.test(x), x);
 });
 
-Deno.test("character book: hard lines restated in the pet peeves section, and the book-wide safety lines kept", () => {
+Deno.test("character book: hard lines restated in the bar code section, and the book-wide safety lines kept", () => {
   const p = peeves();
   for (const k of [
     "HARD LINES STILL HOLD HERE", "never anyone's race, religion, sexuality, gender, disability, nationality or body",
     "No slurs, no threats, nothing sexual", "genuinely upset, unwell, in danger or too drunk, drop the act",
     "Never push overdrinking or drunk driving", "No made-up drink facts", "Section 9 and the 988 line always win",
-    "never cheers on getting hammered", "Never a bigger one",
+    "never cheers on getting hammered", "Never a bigger one", "He never cheers on more",
+    "never shame a new drinker", "He never asks for money or a tip in the app", "never begs",
   ]) assertStringIncludes(p, k);
   for (const k of ["9. HARD LINES", "call or text 988", "Never serve more", "flat no and a glass of water"]) {
     assertStringIncludes(martyCharacterBook, k);
