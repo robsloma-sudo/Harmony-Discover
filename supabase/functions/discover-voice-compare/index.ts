@@ -114,6 +114,10 @@ Deno.serve(async (request: Request) => {
     const result = await mintContender(parsed, {
       openAiKey,
       geminiKey: Deno.env.get("GEMINI_API_KEY") ?? "",
+      elevenLabsKey: Deno.env.get("ELEVENLABS_API_KEY") ?? "",
+      elevenLabsVoiceId: Deno.env.get("ELEVENLABS_VOICE_ID") ?? undefined,
+      elevenLabsAgentId: Deno.env.get("ELEVENLABS_AGENT_ID") ?? undefined,
+      elevenLabsLlm: Deno.env.get("ELEVENLABS_LLM") ?? undefined,
       orderEnv: Deno.env.get("MARTY_COMPARE_ORDER") ?? undefined,
       voiceEnv: Deno.env.get("MARTY_VOICE"),
       handsFreeEnv: Deno.env.get("MARTY_HANDS_FREE"),

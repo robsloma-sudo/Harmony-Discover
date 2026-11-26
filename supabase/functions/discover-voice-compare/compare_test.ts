@@ -234,3 +234,151 @@ Deno.test("age: listening test request carries age_confirmed; gate refuses befor
     assert(src.indexOf(later) > gate, `${later} must come after the age check`);
   }
 });
+
+// ---- ElevenLabs voice (P-20261126-0004 part 1) -------------------------------------------------
+import {
+  AGENT_TTS_MODEL, buildAgentConfig, buildVoiceDesignBody, ELEVENLABS_KEY_MISSING, MARTY_AGENT_NAME,
+  MARTY_VOICE_DESCRIPTION, MARTY_VOICE_NAME,
+} from "./_shared/elevenlabs.ts";
+
+const EL_KEY = "EL-SECRET-KEY";
+type Call = { url: string; init: RequestInit };
+// Routes each ElevenLabs call to a canned answer; records every call.
+function elStub(routes: Record<string, [number, unknown]>, calls: Call[]) {
+  return (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const key = `${init.method} ${new URL(url).pathname}`;
+    const hit = routes[key];
+    if (!hit) return Promise.resolve(new Response("{}", { status: 404 }));
+    return Promise.resolve(new Response(JSON.stringify(hit[1]), { status: hit[0] }));
+  };
+}
+const EL_REQ = { contender: "A" as const, mode: "push_to_talk" as const, reveal: false, voice: "elevenlabs" as const };
+
+Deno.test("elevenlabs: voice field accepted, optional, strict", () => {
+  const p = parseCompareRequest({ ...OK, voice: "elevenlabs" });
+  assert(p.ok && p.voice === "elevenlabs");
+  const d = parseCompareRequest(OK);
+  assert(d.ok && d.voice === "current");
+  assert(parseCompareRequest({ ...OK, voice: "current" }).ok);
+  assertFalse(parseCompareRequest({ ...OK, voice: "eleven" }).ok);
+  assertFalse(parseCompareRequest({ ...OK, voice: 1 }).ok);
+});
+
+Deno.test("elevenlabs: no key -> exact key-missing message, no provider call", async () => {
+  const calls: Call[] = [];
+  const r = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "" }, elStub({}, calls));
+  assertEquals(r.status, 503);
+  assertEquals(r.body.error, ELEVENLABS_KEY_MISSING);
+  assertEquals(ELEVENLABS_KEY_MISSING, "ElevenLabs key not set.");
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("elevenlabs: first run designs an original voice, creates agent with today's Marty script, returns token only", async () => {
+  const calls: Call[] = [];
+  const f = elStub({
+    "GET /v2/voices": [200, { voices: [{ voice_id: "other", name: "Someone else" }] }],
+    "POST /v1/text-to-voice/design": [200, { previews: [{ generated_voice_id: "gen1", audio_base_64: "AAAA" }], text: "x" }],
+    "POST /v1/text-to-voice": [200, { voice_id: "voice1", name: MARTY_VOICE_NAME }],
+    "GET /v1/convai/agents": [200, { agents: [] }],
+    "POST /v1/convai/agents/create": [200, { agent_id: "agent1" }],
+    "GET /v1/convai/conversation/token": [200, { token: "conv-token", conversation_id: "c1", extra: "SECRET-PROVIDER-FIELD" }],
+  }, calls);
+  const r = await mintContender({ ...EL_REQ, reveal: true }, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY }, f);
+  assertEquals(r.status, 200);
+  assertEquals(r.body, {
+    contender: "A", provider: "elevenlabs_agents", conversationToken: "conv-token", transport: "webrtc",
+    connectHint: "elevenlabs", voice: "elevenlabs", model: "elevenlabs",
+  });
+  // every call goes to the official API host with the key in the header only
+  for (const c of calls) {
+    assertEquals(new URL(c.url).host, "api.elevenlabs.io");
+    assertFalse(c.url.includes(EL_KEY));
+    assertEquals((c.init.headers as Record<string, string>)["xi-api-key"], EL_KEY);
+  }
+  assertFalse(JSON.stringify(r.body).includes(EL_KEY));
+  assertFalse(JSON.stringify(r.body).includes("SECRET-PROVIDER-FIELD"));
+  // designed from words only, saved under our name
+  const design = JSON.parse(String(calls.find((c) => c.url.endsWith("/v1/text-to-voice/design"))!.init.body));
+  assertEquals(design, buildVoiceDesignBody());
+  assert(!("reference_audio_base64" in design));
+  const save = JSON.parse(String(calls.find((c) => new URL(c.url).pathname === "/v1/text-to-voice")!.init.body));
+  assertEquals(save, { voice_name: MARTY_VOICE_NAME, voice_description: MARTY_VOICE_DESCRIPTION, generated_voice_id: "gen1" });
+  // agent gets exactly the same Marty instructions as contender A today
+  const created = JSON.parse(String(calls.find((c) => c.url.endsWith("/agents/create"))!.init.body));
+  const today = buildRealtimeSession({ voiceEnv: undefined, handsFreeEnv: undefined, mode: "push_to_talk", characterBook: martyCharacterBook, lookupsEnabled: false });
+  // identical except the per-session random starting mood/opener, which every Marty session re-rolls
+  const noFlavor = (t: string) => t.replace(/\nSESSION FLAVOR[\s\S]*?the rules above\.\n/, "");
+  assertEquals(noFlavor(created.conversation_config.agent.prompt.prompt), noFlavor(today.session.instructions));
+  assert(created.conversation_config.agent.prompt.prompt.includes("SESSION FLAVOR"));
+  assert(created.conversation_config.agent.prompt.prompt.includes(martyCharacterBook.slice(0, 200)));
+  assertEquals(created.conversation_config.tts, { voice_id: "voice1", model_id: AGENT_TTS_MODEL });
+  assertEquals(created.name, MARTY_AGENT_NAME);
+  assert(!("llm" in created.conversation_config.agent.prompt));
+  const tok = calls.find((c) => c.url.includes("/conversation/token"))!;
+  assertEquals(new URL(tok.url).searchParams.get("agent_id"), "agent1");
+});
+
+Deno.test("elevenlabs: later runs reuse voice and agent, refresh the script, never redesign", async () => {
+  const calls: Call[] = [];
+  const f = elStub({
+    "GET /v2/voices": [200, { voices: [{ voice_id: "voice1", name: MARTY_VOICE_NAME }] }],
+    "GET /v1/convai/agents": [200, { agents: [{ agent_id: "agent1", name: MARTY_AGENT_NAME }] }],
+    "PATCH /v1/convai/agents/agent1": [200, { agent_id: "agent1" }],
+    "GET /v1/convai/conversation/token": [200, { token: "t2" }],
+  }, calls);
+  const r = await mintContender({ ...EL_REQ, mode: "hands_free" }, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, elevenLabsLlm: "gemini-2.5-flash" }, f);
+  assertEquals(r.status, 200);
+  assertEquals(r.body.conversationToken, "t2");
+  assert(!("model" in r.body));
+  assertFalse(calls.some((c) => c.url.includes("text-to-voice")));
+  assertFalse(calls.some((c) => c.url.includes("/agents/create")));
+  const patch = JSON.parse(String(calls.find((c) => c.init.method === "PATCH")!.init.body));
+  assertEquals(patch.conversation_config.agent.prompt.llm, "gemini-2.5-flash");
+});
+
+Deno.test("elevenlabs: secret ids skip look-ups", async () => {
+  const calls: Call[] = [];
+  const f = elStub({
+    "PATCH /v1/convai/agents/agentX": [200, {}],
+    "GET /v1/convai/conversation/token": [200, { token: "t3" }],
+  }, calls);
+  const r = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, elevenLabsVoiceId: "voiceX", elevenLabsAgentId: "agentX" }, f);
+  assertEquals(r.status, 200);
+  assertEquals(calls.length, 2);
+  assertEquals(buildAgentConfig("i", "voiceX").conversation_config.tts.voice_id, "voiceX");
+});
+
+Deno.test("elevenlabs: refusal reports only step and status, never the provider body", async () => {
+  const calls: Call[] = [];
+  const f = elStub({ "GET /v2/voices": [401, { detail: "SECRET-PROVIDER-FIELD invalid key" }] }, calls);
+  const r = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY }, f);
+  assertEquals(r.status, 502);
+  assertEquals(r.body, { error: "This contender could not start.", status: 401, step: "voice_list" });
+  const f2 = elStub({
+    "GET /v2/voices": [200, { voices: [{ voice_id: "voice1", name: MARTY_VOICE_NAME }] }],
+    "GET /v1/convai/agents": [200, { agents: [{ agent_id: "agent1", name: MARTY_AGENT_NAME }] }],
+    "PATCH /v1/convai/agents/agent1": [200, {}],
+    "GET /v1/convai/conversation/token": [200, { nope: true }],
+  }, []);
+  const r2 = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY }, f2);
+  assertEquals(r2.body, { error: "This contender could not start.", status: 200, step: "token" });
+});
+
+Deno.test("elevenlabs: picking current voice leaves contender A exactly as before", async () => {
+  const calls: Call[] = [];
+  const f = elStub({ "POST /v1/realtime/client_secrets": [200, { value: "ek", expires_at: 1795000000 }] }, calls);
+  const r = await mintContender({ contender: "A", mode: "push_to_talk", reveal: false, voice: "current" }, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY }, f);
+  assertEquals(r.status, 200);
+  assertEquals(r.body.provider, "openai_realtime");
+  assertEquals(calls.length, 1);
+  assertFalse(calls.some((c) => c.url.includes("elevenlabs")));
+});
+
+Deno.test("elevenlabs: server reads the key only from ELEVENLABS_API_KEY", async () => {
+  const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  assert(src.includes('Deno.env.get("ELEVENLABS_API_KEY")'));
+  const lib = await Deno.readTextFile(new URL("./_shared/elevenlabs.ts", import.meta.url));
+  assertFalse(lib.includes("Deno.env"));
+  assertFalse(/console\./.test(lib));
+});

@@ -9,6 +9,7 @@ import {
   type VoiceMode,
 } from "../../discover-voice-session/_shared/realtimeSession.ts";
 import { AGE_CHECK_FIELD, validAgeField } from "../../discover-voice-session/_shared/ageCheck.ts";
+import { ELEVENLABS_KEY_MISSING, mintElevenLabs, VOICE_PICKS, type VoicePick } from "./elevenlabs.ts";
 
 export { MARTY_BOSTON_CONSENT_VERSION, CURRENT_MODEL };
 
@@ -45,9 +46,10 @@ export function resolveContender(orderEnv: string | undefined | null, letter: st
 }
 
 // ---- request -----------------------------------------------------------------------------------
-const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp", AGE_CHECK_FIELD]);
+// "voice" (optional, P-20261126-0004): "current" (default) or "elevenlabs". Absent = today's behaviour.
+const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp", "voice", AGE_CHECK_FIELD]);
 export type CompareRequestResult =
-  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; sdp?: string }
+  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; voice: VoicePick; sdp?: string }
   | { ok: false };
 export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
@@ -59,9 +61,10 @@ export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (body.reveal !== undefined && typeof body.reveal !== "boolean") return { ok: false };
   if (body.sdp !== undefined && !validSdp(body.sdp)) return { ok: false };
   if (!validAgeField(body[AGE_CHECK_FIELD])) return { ok: false };
+  if (body.voice !== undefined && (typeof body.voice !== "string" || !VOICE_PICKS.includes(body.voice))) return { ok: false };
   const out: CompareRequestResult = {
     ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true,
-    ageConfirmed: body[AGE_CHECK_FIELD] === true,
+    ageConfirmed: body[AGE_CHECK_FIELD] === true, voice: body.voice === "elevenlabs" ? "elevenlabs" : "current",
   };
   if (typeof body.sdp === "string") out.sdp = body.sdp;
   return out;
@@ -134,6 +137,7 @@ export function buildCurrent(mode: VoiceMode, voiceEnv: string | undefined, hand
 export const DEPLOY_FILES = [
   "discover-voice-compare/index.ts",
   "discover-voice-compare/_shared/compare.ts",
+  "discover-voice-compare/_shared/elevenlabs.ts",
   "discover-voice-session/_shared/ageCheck.ts",
   "discover-voice-session/_shared/martyCharacterBook.ts",
   "discover-voice-session/_shared/martyDelivery.ts",
@@ -146,6 +150,10 @@ export const DEPLOY_FILES = [
 export interface MintEnv {
   openAiKey: string;
   geminiKey: string;
+  elevenLabsKey?: string;
+  elevenLabsVoiceId?: string;
+  elevenLabsAgentId?: string;
+  elevenLabsLlm?: string;
   orderEnv?: string;
   voiceEnv?: string;
   handsFreeEnv?: string;
@@ -157,13 +165,30 @@ const COULD_NOT_START = "This contender could not start.";
 
 // Never returns, logs or forwards a provider response body or key; only the status code.
 export async function mintContender(
-  req: { contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string },
+  req: { contender: Letter; mode: VoiceMode; reveal: boolean; sdp?: string; voice?: VoicePick },
   env: MintEnv,
   fetchImpl: FetchLike = fetch,
   now: Date = new Date(),
 ): Promise<MintResult> {
   const which = resolveContender(env.orderEnv, req.contender);
   if (!which) return { status: 400, body: { error: "Unknown contender." } };
+
+  // ElevenLabs voice (Rob-only test, P-20261126-0004 part 1): same Marty script as every contender, spoken
+  // by an original designed ElevenLabs voice. Applies to whichever letter is pressed; the letter is echoed.
+  if (req.voice === "elevenlabs") {
+    if (!env.elevenLabsKey) return { status: 503, body: { error: ELEVENLABS_KEY_MISSING } };
+    const built = buildCurrent(req.mode, env.voiceEnv, env.handsFreeEnv);
+    const r = await mintElevenLabs(built.session.instructions, {
+      apiKey: env.elevenLabsKey, voiceId: env.elevenLabsVoiceId, agentId: env.elevenLabsAgentId, llm: env.elevenLabsLlm,
+    }, fetchImpl);
+    if (!r.ok) return { status: 502, body: { error: COULD_NOT_START, status: r.status, step: r.step } };
+    const body: Record<string, unknown> = {
+      contender: req.contender, provider: "elevenlabs_agents", conversationToken: r.token,
+      transport: "webrtc", connectHint: "elevenlabs", voice: "elevenlabs",
+    };
+    if (req.reveal) body.model = "elevenlabs";
+    return { status: 200, body };
+  }
 
   if (which === "gemini") {
     if (!env.geminiKey) return { status: 503, body: { error: "Contender not configured." } };
