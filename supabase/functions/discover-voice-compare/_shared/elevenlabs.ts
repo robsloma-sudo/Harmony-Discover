@@ -3,35 +3,29 @@
 // The key never leaves the server; the app only gets a one-conversation WebRTC token.
 //
 // Flow on each ElevenLabs start (all server side):
-//  1. Voice: ELEVENLABS_VOICE_ID if set, else find our own designed voice by its exact name, else DESIGN a new
-//     ORIGINAL voice from a text description (never a clone, never a real person) and save it.
+//  1. Voice: always Rob's own original voice "Marty" (MARTY_VOICE_ID below), unless the ELEVENLABS_VOICE_ID
+//     secret overrides it. The server checks that the voice exists (GET /v1/voices/{voice_id}); it NEVER designs,
+//     saves or changes a voice on Rob's account. If the voice cannot be found it stops with step voice_not_found.
 //  2. Agent: ELEVENLABS_AGENT_ID if set, else find our agent by its exact name, else create it.
 //  3. Update the agent with today's exact Marty script (same builder as every other contender) and the voice,
 //     so the only difference from today's Marty is the voice (and ElevenLabs' own thinking model).
 //  4. Ask for a WebRTC conversation token for that agent and return it.
-// Confirmed from ElevenLabs docs (read 26 Nov 2026): text-to-voice/design and text-to-voice request/response
-// fields, GET /v1/convai/conversation/token?agent_id= -> { token, conversation_id }, xi-api-key header,
-// client Conversation.startSession({ conversationToken, connectionType: "webrtc" }).
-// UNCONFIRMED (agent pages could not be read): agent create/update/list paths and body shape
-// (conversation_config.agent.prompt.prompt, agent.language, tts.voice_id, tts.model_id),
-// /v2/voices?search= list shape. Each is one line below; a refusal reports only the step and status code.
+// Confirmed from ElevenLabs docs (read 26 Nov 2026): GET /v1/convai/conversation/token?agent_id= ->
+// { token, conversation_id }, xi-api-key header, client Conversation.startSession({ conversationToken,
+// connectionType: "webrtc" }).
+// UNCONFIRMED (pages not re-read this session): GET /v1/voices/{voice_id} -> { voice_id, ... } (ElevenLabs' standard
+// get-voice call), and agent create/update/list paths and body shape (conversation_config.agent.prompt.prompt,
+// agent.language, tts.voice_id, tts.model_id). Each is one line below;
+// a refusal reports only the step and status code.
 
 export const ELEVENLABS_API = "https://api.elevenlabs.io";
 export const ELEVENLABS_KEY_MISSING = "ElevenLabs key not set.";
-export const MARTY_VOICE_NAME = "Marty Boston Bartender (original, Harmony listening test)";
+// Rob's own original voice "Marty", designed and saved by Rob himself in ElevenLabs (category: generated).
+// Not a secret: a voice id only works with Rob's key. Override with the ELEVENLABS_VOICE_ID secret.
+export const MARTY_VOICE_ID = "p9Y6zzVEQV7SMw7VcCkd";
 export const MARTY_AGENT_NAME = "Marty listening test (Harmony Discover, Rob only)";
-export const VOICE_DESIGN_MODEL = "eleven_ttv_v3";
 // English-only agents use the low-latency Flash TTS model.
 export const AGENT_TTS_MODEL = "eleven_flash_v2";
-
-// Original voice, designed from words only. No real person is named or imitated.
-export const MARTY_VOICE_DESCRIPTION =
-  "An original, fictional character voice: a gruff older working-class Boston bartender in his sixties, " +
-  "thick old-school Boston accent with dropped Rs, raspy and gravelly, low pitch, impatient and dry, " +
-  "speaking fast in short clipped sentences, close-mic'd in a quiet room.";
-export const MARTY_VOICE_SAMPLE_TEXT =
-  "Yeah, yeah, I heard ya the first time. You want a drink or you want a lecture? " +
-  "Park the car, grab a stool, and tell me what you're having before I lose my patience, pal.";
 
 export type VoicePick = "current" | "elevenlabs";
 export const VOICE_PICKS: readonly string[] = ["current", "elevenlabs"];
@@ -57,9 +51,6 @@ async function call(fetchImpl: FetchLike, url: string, init: RequestInit): Promi
 }
 const str = (v: unknown) => (typeof v === "string" && v ? v : "");
 
-export function buildVoiceDesignBody() {
-  return { voice_description: MARTY_VOICE_DESCRIPTION, model_id: VOICE_DESIGN_MODEL, text: MARTY_VOICE_SAMPLE_TEXT };
-}
 export function buildAgentConfig(instructions: string, voiceId: string, llm?: string) {
   const prompt: Record<string, unknown> = { prompt: instructions };
   if (llm) prompt.llm = llm;
@@ -72,25 +63,12 @@ export function buildAgentConfig(instructions: string, voiceId: string, llm?: st
   };
 }
 
-async function findVoice(f: FetchLike, key: string): Promise<{ id: string } | { step: string; status: number }> {
-  const r = await call(f, `${ELEVENLABS_API}/v2/voices?search=${encodeURIComponent(MARTY_VOICE_NAME)}`, { method: "GET", headers: headers(key) });
-  if (r.status !== 200) return { step: "voice_list", status: r.status };
-  const voices = (r.body as { voices?: { voice_id?: unknown; name?: unknown }[] })?.voices ?? [];
-  const hit = voices.find((v) => v?.name === MARTY_VOICE_NAME && str(v.voice_id));
-  return { id: hit ? str(hit.voice_id) : "" };
-}
-async function designVoice(f: FetchLike, key: string): Promise<{ id: string } | { step: string; status: number }> {
-  const d = await call(f, `${ELEVENLABS_API}/v1/text-to-voice/design`, { method: "POST", headers: headers(key), body: JSON.stringify(buildVoiceDesignBody()) });
-  if (d.status !== 200) return { step: "voice_design", status: d.status };
-  const gen = str((d.body as { previews?: { generated_voice_id?: unknown }[] })?.previews?.[0]?.generated_voice_id);
-  if (!gen) return { step: "voice_design", status: 200 };
-  const c = await call(f, `${ELEVENLABS_API}/v1/text-to-voice`, {
-    method: "POST", headers: headers(key),
-    body: JSON.stringify({ voice_name: MARTY_VOICE_NAME, voice_description: MARTY_VOICE_DESCRIPTION, generated_voice_id: gen }),
-  });
-  const id = str((c.body as { voice_id?: unknown })?.voice_id);
-  if (c.status !== 200 || !id) return { step: "voice_save", status: c.status };
-  return { id };
+// Checks the voice exists on Rob's account. Read-only: never designs, saves or edits a voice.
+async function checkVoice(f: FetchLike, key: string, voiceId: string): Promise<{ step: string; status: number } | null> {
+  const r = await call(f, `${ELEVENLABS_API}/v1/voices/${encodeURIComponent(voiceId)}`, { method: "GET", headers: { "xi-api-key": key } });
+  if (r.status === 200 && str((r.body as { voice_id?: unknown })?.voice_id) === voiceId) return null;
+  if (r.status === 200 || r.status === 400 || r.status === 404 || r.status === 422) return { step: "voice_not_found", status: r.status };
+  return { step: "voice_check", status: r.status };
 }
 async function findAgent(f: FetchLike, key: string): Promise<{ id: string } | { step: string; status: number }> {
   const r = await call(f, `${ELEVENLABS_API}/v1/convai/agents?search=${encodeURIComponent(MARTY_AGENT_NAME)}`, { method: "GET", headers: headers(key) });
@@ -103,17 +81,9 @@ async function findAgent(f: FetchLike, key: string): Promise<{ id: string } | { 
 // Never returns, logs or forwards a provider body or key: only the failing step name and status code.
 export async function mintElevenLabs(instructions: string, env: ElevenEnv, fetchImpl: FetchLike = fetch): Promise<ElevenResult> {
   const key = env.apiKey;
-  let voiceId = (env.voiceId ?? "").trim();
-  if (!voiceId) {
-    const found = await findVoice(fetchImpl, key);
-    if ("step" in found) return { ok: false, ...found };
-    voiceId = found.id;
-    if (!voiceId) {
-      const made = await designVoice(fetchImpl, key);
-      if ("step" in made) return { ok: false, ...made };
-      voiceId = made.id;
-    }
-  }
+  const voiceId = (env.voiceId ?? "").trim() || MARTY_VOICE_ID;
+  const missing = await checkVoice(fetchImpl, key, voiceId);
+  if (missing) return { ok: false, ...missing };
   const config = buildAgentConfig(instructions, voiceId, (env.llm ?? "").trim() || undefined);
   let agentId = (env.agentId ?? "").trim();
   if (!agentId) {

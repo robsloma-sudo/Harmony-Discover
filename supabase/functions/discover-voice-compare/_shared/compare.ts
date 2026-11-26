@@ -174,7 +174,7 @@ export async function mintContender(
   if (!which) return { status: 400, body: { error: "Unknown contender." } };
 
   // ElevenLabs voice (Rob-only test, P-20261126-0004 part 1): same Marty script as every contender, spoken
-  // by an original designed ElevenLabs voice. Applies to whichever letter is pressed; the letter is echoed.
+  // by Rob's own original ElevenLabs voice "Marty" (never designed or saved by the server). Applies to whichever letter is pressed; the letter is echoed.
   if (req.voice === "elevenlabs") {
     if (!env.elevenLabsKey) return { status: 503, body: { error: ELEVENLABS_KEY_MISSING } };
     const built = buildCurrent(req.mode, env.voiceEnv, env.handsFreeEnv);
