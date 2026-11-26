@@ -3,6 +3,7 @@
  * Each connect() returns a handle; stop() turns the microphone off first, then closes everything.
  */
 import { base64ToBytes, floatToPcm16, functionCallAnswerEvents, geminiAudioMessage, geminiSetupMessage, geminiToolResponse, parseGeminiMessage, pcm16ToFloat, resample, type ConnectHint } from './logic';
+import { bytesToInt16 } from './elevenlabsProtocol';
 
 export const REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 /*
@@ -54,29 +55,54 @@ function stopStream(stream: MediaStream | null) {
   stream?.getTracks().forEach(t => { t.enabled = false; t.stop(); });
 }
 
-export async function connectWebrtc(opts: { token: string; hint: ConnectHint; hooks: TransportHooks }): Promise<TransportHandle> {
-  const { token, hint, hooks } = opts;
+export async function connectWebrtc(opts: { token: string; hint: ConnectHint; hooks: TransportHooks; muteOutput?: boolean }): Promise<TransportHandle> {
+  const { token, hint, hooks, muteOutput } = opts;
   if (hint !== 'realtime') throw new LiveNotWiredError();
   const stream = await getMic();
   const pc = new RTCPeerConnection();
   const audio = new Audio(); audio.autoplay = true;
+  if (muteOutput) audio.muted = true;
   let closed = false;
+  // Optional 16 kHz tap of Marty's voice (feeds the option B face service). Only built when the hook is given.
+  let tapCtx: AudioContext | null = null;
+  let tapProc: ScriptProcessorNode | null = null;
+  const startTap = (remote: MediaStream) => {
+    if (!hooks.onVoicePcm16k || tapCtx) return;
+    try {
+      const Ctx = (globalThis as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+        ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      const c = new Ctx(); tapCtx = c;
+      void c.resume?.().catch(() => undefined);
+      const src = c.createMediaStreamSource(remote);
+      const p = c.createScriptProcessor(2048, 1, 1); tapProc = p;
+      p.onaudioprocess = ev => {
+        if (closed) return;
+        try { hooks.onVoicePcm16k?.(bytesToInt16(floatToPcm16(resample(ev.inputBuffer.getChannelData(0), c.sampleRate, 16000)))); } catch { /* preview only */ }
+      };
+      src.connect(p);
+      const mute = c.createGain(); mute.gain.value = 0; p.connect(mute); mute.connect(c.destination);
+    } catch { /* preview only */ }
+  };
   const stop = () => {
     if (closed) return; closed = true;
     stopStream(stream);
     audio.pause(); audio.srcObject = null;
+    if (tapProc) { tapProc.onaudioprocess = null; try { tapProc.disconnect(); } catch { /* ok */ } }
+    if (tapCtx) void tapCtx.close().catch(() => undefined);
     try { dc.close(); } catch { /* already closed */ }
     try { pc.close(); } catch { /* already closed */ }
   };
   const dc = pc.createDataChannel('oai-events');
   try {
-    pc.ontrack = e => { audio.srcObject = e.streams[0]; void audio.play().catch(() => undefined); if (e.streams[0]) { try { hooks.onVoiceStream?.(e.streams[0]); } catch { /* preview only */ } } };
+    pc.ontrack = e => { audio.srcObject = e.streams[0]; void audio.play().catch(() => undefined); if (e.streams[0]) { try { hooks.onVoiceStream?.(e.streams[0]); } catch { /* preview only */ } startTap(e.streams[0]); } };
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
     dc.onmessage = event => {
       try {
         const data = JSON.parse(event.data);
         try {
           if (data.type === 'response.output_audio_transcript.delta' && typeof data.delta === 'string') hooks.onMartyText?.(data.delta);
+          else if (data.type === 'input_audio_buffer.speech_started' || data.type === 'output_audio_buffer.cleared') hooks.onMartyInterrupted?.();
           else if (data.type === 'response.done' || data.type === 'output_audio_buffer.stopped') hooks.onMartyTurnDone?.();
         } catch { /* preview only */ }
         if (data.type === 'response.function_call_arguments.done' && typeof data.call_id === 'string' && dc.readyState === 'open') {

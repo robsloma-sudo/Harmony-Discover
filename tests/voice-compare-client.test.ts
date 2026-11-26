@@ -108,3 +108,63 @@ describe('requestCompareSession', () => {
     expect(JSON.parse(f.mock.calls[0][1].body).age_confirmed).toBe(true);
   });
 });
+
+describe('option B: face and connection', () => {
+  const face = { provider: 'anam', sessionToken: 'ft', audioInput: { encoding: 'pcm_s16le', sampleRate: 16000, channels: 1 } };
+  const eleven = { contender: 'A', provider: 'elevenlabs_agents', signedUrl: 'wss://api.elevenlabs.io/x?token=1', transport: 'websocket', connectHint: 'elevenlabs', voice: 'elevenlabs' };
+  const elevenRtc = { contender: 'A', provider: 'elevenlabs_agents', conversationToken: 'ct', transport: 'webrtc', connectHint: 'elevenlabs', voice: 'elevenlabs' };
+  it('sends face and connection only when given', async () => {
+    const f = vi.fn().mockResolvedValue(res(200, openai));
+    await req(f);
+    const b0 = JSON.parse(f.mock.calls[0][1].body);
+    expect('face' in b0 || 'connection' in b0).toBe(false);
+    const g = vi.fn().mockResolvedValue(res(200, openai));
+    await req(g, { face: 'photo', connection: 'websocket' });
+    const b1 = JSON.parse(g.mock.calls[0][1].body);
+    expect(b1.face).toBe('photo');
+    expect(b1.connection).toBe('websocket');
+  });
+  it('parses the face block and drops a malformed one', async () => {
+    const ok = await req(vi.fn().mockResolvedValue(res(200, { ...openai, face })));
+    expect(ok.ok && ok.grant.face).toEqual(face);
+    for (const bad of [
+      { ...face, provider: 'x' }, { ...face, sessionToken: '' }, { ...face, audioInput: { ...face.audioInput, sampleRate: 24000 } },
+      { ...face, audioInput: null }, 'nope',
+    ]) {
+      const r = await req(vi.fn().mockResolvedValue(res(200, { ...openai, face: bad })));
+      expect(r.ok && 'face' in r.grant).toBe(false);
+      expect(r.ok).toBe(true);
+    }
+  });
+  it('maps the three face refusals, status number only', async () => {
+    const m = async (s: number, body: unknown) => {
+      const f = vi.fn().mockResolvedValue({ status: s, ok: false, text: async () => JSON.stringify(body) } as unknown as Response);
+      return req(f, { face: 'photo' });
+    };
+    const a = await m(503, { error: 'face service key not set' });
+    expect(!a.ok && a.message).toBe("Face service key not set. Option B can't start until it is added.");
+    expect(!a.ok && a.faceKeyMissing).toBe(true);
+    const b = await m(503, { error: 'face not set up' });
+    expect(!b.ok && b.message).toBe("Marty's face isn't set up in the face service yet (no face L avatar id).");
+    expect(!b.ok && b.faceKeyMissing).toBeUndefined();
+    const c = await m(502, { error: 'The face could not start.', status: 401, step: 'face_token' });
+    expect(!c.ok && c.message).toBe('The face service could not start (error 401).');
+    const d = await m(502, { error: 'The face could not start.', status: 'secret provider text', step: 'face_token' });
+    expect(!d.ok && d.message).toBe('The face service could not start.');
+  });
+  it('accepts the ElevenLabs websocket and webrtc grants', async () => {
+    const w = await req(vi.fn().mockResolvedValue(res(200, { ...eleven, model: 'elevenlabs', face })));
+    expect(w.ok && w.grant.provider === 'elevenlabs_agents' && w.grant.transport === 'websocket' && w.grant.signedUrl).toBe(eleven.signedUrl);
+    expect(w.ok && w.grant.face?.sessionToken).toBe('ft');
+    const r = await req(vi.fn().mockResolvedValue(res(200, elevenRtc)));
+    expect(r.ok && r.grant.provider === 'elevenlabs_agents' && r.grant.transport === 'webrtc' && r.grant.conversationToken).toBe('ct');
+  });
+  it('rejects bad ElevenLabs grants (not wss, missing fields)', async () => {
+    for (const b of [
+      { ...eleven, signedUrl: 'ws://x' }, { ...eleven, signedUrl: 'https://x' }, { ...eleven, signedUrl: '' },
+      { ...eleven, connectHint: 'realtime' }, { ...eleven, voice: 'current' }, { ...elevenRtc, conversationToken: '' },
+      { ...eleven, transport: 'other' },
+    ]) expect((await req(vi.fn().mockResolvedValue(res(200, b)))).ok).toBe(false);
+  });
+});
+

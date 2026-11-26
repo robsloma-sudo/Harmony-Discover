@@ -145,7 +145,7 @@ describe('the hidden listening test follows the same 21+ answer', () => {
     expect(page).toContain("from '../src/marty/martyAge'");
     expect(page).toMatch(/const ageConfirmed = ageAnswer === 'yes'/);
     expect(page).toMatch(/if \(!ageConfirmed\) return/);
-    expect(page.match(/requestCompareSession\(\{[^}]*ageConfirmed[^}]*\}\)/g)?.length).toBe(2);
+    expect(page.match(/requestCompareSession\(\{[^}]*ageConfirmed[^}]*\}\)/g)?.length).toBe(3);
   });
 
   it('no answer or No: the listening-test request is refused before any network call', async () => {

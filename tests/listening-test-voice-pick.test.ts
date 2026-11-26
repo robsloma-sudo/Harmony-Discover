@@ -64,7 +64,7 @@ describe('only on the hidden test screen', () => {
   it('the screen shows the pick and sends it with every start and reveal', () => {
     expect(page).toContain('testID="listening-test-voice-pick"');
     expect(page).toContain('useState<VoicePick>(DEFAULT_VOICE)');
-    expect(page.match(/requestCompareSession\(\{[^}]*ageConfirmed, voice[^}]*\}\)/g)?.length).toBe(2);
+    expect(page.match(/requestCompareSession\(\{[^}]*ageConfirmed, voice[^}]*\}\)/g)?.length).toBe(3);
   });
   it('the pick comes after the Rob-only and 21+ checks', () => {
     expect(page.indexOf("probe === 'no'")).toBeLessThan(page.indexOf('listening-test-voice-pick'));
