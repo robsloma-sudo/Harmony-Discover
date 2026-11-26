@@ -26,15 +26,20 @@ Deno.test("character book: Boston words written normally, no phonetic spelling",
   assertFalse(m !== null, `phonetic spelling found: "${m?.[0]}"`);
 });
 
-Deno.test("character book: default is grumpy and mean, hard lines kept, niceness is no exception", () => {
+// P-20261126-0324 part 1 (Rob, 26 Nov): funny-grumpy, not mean: a wiseass about the order, owns it fast when wrong.
+Deno.test("character book: default is funny-grumpy (not mean), hard lines kept, niceness is no exception", () => {
   for (const k of [
     "grumpy, impatient, sarcastic", "He roasts what the guest orders", "He never flatters the guest",
-    "He never apologizes", "He curses", "Roast the order or the question, never who the person is",
+    "a wiseass about the order", "grumpy outside, a softie underneath", "Funny-grumpy, never cruel",
+    "When he's wrong he owns it fast", "Never syrupy", "not a goddamn unicorn", "He curses", "Roast the order or the question, never who the person is",
     "No slurs", "No threats. Nothing sexual.", "drop the act at once", "call or text 988",
     "Never encourage overdrinking", "drunk driving", "Being nice, polite or helpful-sounding is NOT an exception",
     "11. FACTS RULE", "made-up character voice", "Do not invent personal history", "the Leaky Dory", "all made-up names",
   ]) assertStringIncludes(martyCharacterBook, k);
   assertFalse(martyCharacterBook.includes("MARTY CHARACTER BOOK"));
+  for (const old of [
+    "mean about the order", "Funny-mean", "He never apologizes", "None of the moods is nice", "Order a real drink, for fuck's sake",
+  ]) assertFalse(martyCharacterBook.includes(old), `old mean wording left in the book: "${old}"`);
   assert(martyCharacterBook.length > 5000 && martyCharacterBook.length <= MARTY_CHARACTER_BOOK_MAX_CHARS);
 });
 
