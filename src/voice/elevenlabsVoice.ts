@@ -25,11 +25,19 @@ export interface ElevenLabsMartyHandle {
   outputVolume(): number;
   /** Typed text to Marty; false if the conversation is not open. */
   sendText(text: string): boolean;
+  /** Hold-to-talk fallback (server push_to_talk): microphone on only while the guest holds the button. */
+  setMicMuted(muted: boolean): void;
 }
 
 export async function connectElevenLabsMarty(opts: {
   conversationToken: string;
   hooks: ElevenLabsMartyHooks;
+  /** From the grant, passed to the agent unchanged. */
+  dynamicVariables?: Record<string, string>;
+  /** Tool name -> what the app does; the answer string goes back to Marty. */
+  clientTools?: Record<string, (parameters: unknown) => Promise<string>>;
+  /** Start with the microphone muted (hold-to-talk fallback). */
+  startMuted?: boolean;
   startImpl?: ElevenLabsStart;
 }): Promise<ElevenLabsMartyHandle> {
   const { conversationToken, hooks } = opts;
@@ -55,16 +63,27 @@ export async function connectElevenLabsMarty(opts: {
       if (closed || !session || !t) return false;
       try { session.sendUserMessage(t); return true; } catch { return false; }
     },
+    setMicMuted(muted: boolean) {
+      if (closed || !session) return;
+      try { session.setMicMuted(muted); } catch { /* the conversation is ending */ }
+    },
   };
+  const tools: Record<string, (parameters: unknown) => Promise<string>> = {};
+  for (const [name, run] of Object.entries(opts.clientTools ?? {})) {
+    tools[name] = async (parameters) => (closed ? 'Marty is off.' : run(parameters));
+  }
   const s = await startSession({
     conversationToken,
     connectionType: 'webrtc',
+    ...(opts.dynamicVariables && Object.keys(opts.dynamicVariables).length ? { dynamicVariables: opts.dynamicVariables } : {}),
+    ...(Object.keys(tools).length ? { clientTools: tools } : {}),
     onModeChange: ({ mode }) => { if (!closed) hooks.onMode(mode === 'speaking' ? 'speaking' : 'listening'); },
     onMessage: ({ message, source }) => { if (!closed && message?.trim()) hooks.onLine(source === 'user' ? 'you' : 'marty', message); },
     onDisconnect: () => { if (!closed) { closed = true; session = null; hooks.onClosed('closed'); } },
     onError: () => { if (!closed) { closed = true; end(); hooks.onClosed('failed'); } },
   });
   session = s;
+  if (opts.startMuted && !closed) { try { s.setMicMuted(true); } catch { /* ending below */ } }
   if (closed) end(); // Stop or a failure while connecting: end it at once.
   return handle;
 }

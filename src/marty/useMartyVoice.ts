@@ -241,8 +241,23 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     elevenSpeakingRef.current = false;
     let handle: ElevenLabsMartyHandle | null = null;
     const isMine = () => handle !== null && elevenRef.current === handle;
+    const alwaysOn = grant.mode === 'hands_free';
+    // The agent's tools run here exactly as on the OpenAI voice: look-ups on the server, navigation in the app.
+    const clientTools: Record<string, (parameters: unknown) => Promise<string>> = {};
+    for (const name of grant.clientTools) {
+      clientTools[name] = async (parameters) => {
+        const rawArguments = JSON.stringify(parameters && typeof parameters === 'object' ? parameters : {});
+        if (isMartyLookupTool(name)) return runMartyLookup({ supabaseUrl, accessToken: accessTokenRef.current, tool: name, rawArguments });
+        const result = await runMartyNavigationTool(name, rawArguments);
+        if (isMine()) addLine('system', result);
+        return result;
+      };
+    }
     handle = await connectElevenLabsMarty({
       conversationToken: grant.conversationToken,
+      dynamicVariables: grant.dynamicVariables,
+      clientTools,
+      startMuted: !alwaysOn,
       hooks: {
         onMode: mode => {
           if (!isMine()) return;
@@ -265,10 +280,15 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     if (!getMartyPresence().enabled) throw new Error('Marty was turned off.');
     if (startGenRef.current !== stopGenRef.current) throw new Error('Marty was stopped.');
     startElevenLabsLipSync(handle);
-    setHandsFree(true);
+    setHandsFree(alwaysOn);
     setConnected(true);
-    setNotice('');
-    addLine('system', 'Marty is listening. Just talk. Turn him off any time with the switch.');
+    if (alwaysOn) {
+      setNotice('');
+      addLine('system', 'Marty is listening. Just talk. Turn him off any time with the switch.');
+    } else {
+      setNotice('Always-on listening is switched off on the server right now, so Marty is on hold-to-talk.');
+      addLine('system', 'Marty is at the bar. Hold the button when you want to speak.');
+    }
   }
 
   async function connectTransport(grant: VoiceSessionGrant) {
@@ -492,6 +512,14 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
 
   // Hold-to-talk fallback (only when the server granted push_to_talk).
   function beginTalk() {
+    const eleven = elevenRef.current;
+    if (eleven) {
+      if (tailTimerRef.current) { clearTimeout(tailTimerRef.current); tailTimerRef.current = null; return; }
+      if (isTalkingRef.current) return;
+      isTalkingRef.current = true;
+      eleven.setMicMuted(false);
+      return;
+    }
     const track = streamRef.current?.getAudioTracks()[0];
     const turn = turnRef.current;
     if (!track || !turn || turn.isHandsFree || dcRef.current?.readyState !== 'open') return;
@@ -508,6 +536,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     tailTimerRef.current = setTimeout(() => {
       tailTimerRef.current = null;
       isTalkingRef.current = false;
+      if (elevenRef.current) { elevenRef.current.setMicMuted(true); return; }
       const track = streamRef.current?.getAudioTracks()[0];
       if (track) track.enabled = false;
       if (!track || dcRef.current?.readyState !== 'open') return;

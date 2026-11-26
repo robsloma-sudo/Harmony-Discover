@@ -20,9 +20,11 @@ const openAiGrant = () => ({
   sessionId: 's-openai', provider: 'openai_realtime', ephemeralToken: 'ephemeral-only', expiresAt: inMinutes(1),
   transport: 'webrtc', model: 'realtime-model', voice: 'approved-voice', mode: 'hands_free',
 });
+// Exactly the shape backend part 1 (fix/discover-backend/p-20261126-0102-1-elevenlabs-live, elevenLabsGrant) returns.
 const elevenGrant = () => ({
-  sessionId: 's-eleven', provider: 'elevenlabs_agents', conversationToken: 'one-conversation-token', expiresAt: inMinutes(10),
-  transport: 'webrtc', model: 'elevenlabs', voice: 'marty',
+  sessionId: 's-eleven', provider: 'elevenlabs_agents', transport: 'webrtc', connectHint: 'elevenlabs',
+  model: 'elevenlabs', voice: 'elevenlabs', mode: 'hands_free', conversationToken: 'one-conversation-token',
+  dynamicVariables: { marty_session: 'SESSION FLAVOR: grumpy' }, clientTools: ['open_panel', 'lookup_bottle'],
 });
 
 class MemoryStorage {
@@ -41,6 +43,22 @@ describe('the voice grant follows the server choice', () => {
     expect(isElevenLabsGrant(r.grant)).toBe(true);
     expect(r.grant.mode).toBe('hands_free');
     expect(r.grant).not.toHaveProperty('ephemeralToken');
+    if (!isElevenLabsGrant(r.grant)) return;
+    expect(r.grant.dynamicVariables).toEqual({ marty_session: 'SESSION FLAVOR: grumpy' });
+    expect(r.grant.clientTools).toEqual(['open_panel', 'lookup_bottle']);
+  });
+
+  it('keeps the server stop switch: push_to_talk stays push_to_talk on ElevenLabs too', () => {
+    const r = validateVoiceSessionGrant({ ...elevenGrant(), mode: 'push_to_talk' });
+    expect(r.ok && r.grant.mode).toBe('push_to_talk');
+  });
+
+  it('drops odd tool names and non-text variables', () => {
+    const r = validateVoiceSessionGrant({ ...elevenGrant(), clientTools: ['ok_tool', 'bad name', 3, 'ok_tool'], dynamicVariables: { a: 'x', b: 2 } });
+    expect(r.ok).toBe(true);
+    if (!r.ok || !isElevenLabsGrant(r.grant)) return;
+    expect(r.grant.clientTools).toEqual(['ok_tool']);
+    expect(r.grant.dynamicVariables).toEqual({ a: 'x' });
   });
 
   it('still accepts today\'s OpenAI grant unchanged (the server switch back needs no app change)', () => {
@@ -54,8 +72,10 @@ describe('the voice grant follows the server choice', () => {
   it('refuses broken or over-long ElevenLabs grants', () => {
     expect(validateVoiceSessionGrant({ ...elevenGrant(), conversationToken: '' }).ok).toBe(false);
     expect(validateVoiceSessionGrant({ ...elevenGrant(), expiresAt: inMinutes(-1) }).ok).toBe(false);
+    expect(validateVoiceSessionGrant({ ...elevenGrant(), expiresAt: inMinutes(10) }).ok).toBe(true);
+    expect(validateVoiceSessionGrant({ ...elevenGrant(), mode: 'always' }).ok).toBe(false);
     expect(validateVoiceSessionGrant({ ...elevenGrant(), expiresAt: inMinutes(20) }).ok).toBe(false);
-    expect(validateVoiceSessionGrant({ ...elevenGrant(), transport: 'websocket' }).ok).toBe(false);
+    expect(validateVoiceSessionGrant({ ...elevenGrant(), transport: 'websocket', conversationToken: undefined, signedUrl: 'wss://x' }).ok).toBe(false);
     // The OpenAI 2-minute bound is unchanged.
     expect(validateVoiceSessionGrant({ ...openAiGrant(), expiresAt: inMinutes(5) }).ok).toBe(false);
   });
@@ -75,8 +95,10 @@ describe('the app sends the same request for both voices', () => {
       const result = await c.start();
       expect(result.voice.state).toBe('listening');
       const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
-      expect(Object.keys(body).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode']);
+      // Backend part 1 allows exactly these keys; voiceEngines lets the server pick (ElevenLabs first).
+      expect(Object.keys(body).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode', 'voiceEngines']);
       expect(body.mode).toBe('hands_free');
+      expect(body.voiceEngines).toEqual(['elevenlabs', 'openai']);
       expect(connect).toHaveBeenCalledWith(expect.objectContaining({ provider: grant().provider }));
     });
   }
@@ -108,8 +130,13 @@ describe('ElevenLabs connection for Marty', () => {
   it('uses only the one-conversation token over WebRTC and passes speaking/listening and lines on', async () => {
     const kit = fakeKit(); kit.release();
     const h = hooks();
-    const handle = await connectElevenLabsMarty({ conversationToken: 'one-conversation-token', hooks: h, startImpl: kit.start });
+    const lookup = vi.fn(async () => '{"status":"ok"}');
+    const handle = await connectElevenLabsMarty({ conversationToken: 'one-conversation-token', hooks: h, startImpl: kit.start, dynamicVariables: { marty_session: 'x' }, clientTools: { lookup_bottle: lookup } });
     expect(kit.opts().conversationToken).toBe('one-conversation-token');
+    expect(kit.opts().dynamicVariables).toEqual({ marty_session: 'x' });
+    expect(await kit.opts().clientTools?.lookup_bottle({ q: 'rye' })).toBe('{"status":"ok"}');
+    expect(lookup).toHaveBeenCalledWith({ q: 'rye' });
+    expect(kit.session.setMicMuted).not.toHaveBeenCalled();
     expect(kit.opts().connectionType).toBe('webrtc');
     kit.opts().onModeChange?.({ mode: 'speaking' });
     kit.opts().onModeChange?.({ mode: 'listening' });
@@ -134,6 +161,14 @@ describe('ElevenLabs connection for Marty', () => {
     expect(handle.sendText('hello')).toBe(false);
     kit.opts().onDisconnect?.();
     expect(h.onClosed).not.toHaveBeenCalled();
+  });
+
+  it('hold-to-talk fallback starts with the microphone muted', async () => {
+    const kit = fakeKit(); kit.release();
+    const handle = await connectElevenLabsMarty({ conversationToken: 't', hooks: hooks(), startImpl: kit.start, startMuted: true });
+    expect(kit.session.setMicMuted).toHaveBeenLastCalledWith(true);
+    handle.setMicMuted(false);
+    expect(kit.session.setMicMuted).toHaveBeenLastCalledWith(false);
   });
 
   it('a failure while connecting ends the conversation as soon as it opens', async () => {
@@ -181,7 +216,10 @@ describe('the Marty hook follows the grant and keeps Stop and the off switch', (
     expect(el).toContain("if (!getMartyPresence().enabled) throw new Error('Marty was turned off.');");
     expect(el).toContain("if (startGenRef.current !== stopGenRef.current) throw new Error('Marty was stopped.');");
     expect(el).toContain('startElevenLabsLipSync(handle);');
-    expect(el).toContain('setHandsFree(true);');
+    expect(el).toContain('setHandsFree(alwaysOn);');
+    expect(el).toContain('dynamicVariables: grant.dynamicVariables');
+    expect(el).toContain('startMuted: !alwaysOn');
+    expect(el).toContain('isMartyLookupTool(name)');
   });
   it('the ElevenLabs kit is only ever loaded on demand', () => {
     const loader = readFileSync(resolve(root, 'src/voice/elevenlabsKitLoader.ts'), 'utf8');

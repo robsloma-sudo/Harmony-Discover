@@ -18,6 +18,8 @@ export interface ElevenLabsStartOptions {
   onError?: (message: string) => void;
   onModeChange?: (prop: { mode: 'speaking' | 'listening' }) => void;
   onMessage?: (props: { message: string; source: 'user' | 'ai' }) => void;
+  dynamicVariables?: Record<string, string>;
+  clientTools?: Record<string, (parameters: unknown) => Promise<string | void>>;
 }
 export type ElevenLabsStart = (options: ElevenLabsStartOptions) => Promise<ElevenLabsSession>;
 

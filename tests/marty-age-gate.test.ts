@@ -96,7 +96,7 @@ describe('Marty 21+ question', () => {
     const h = harness();
     await h.coordinator().start();
     expect(h.bodies[0].age_confirmed).toBe(true);
-    expect(Object.keys(h.bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode']);
+    expect(Object.keys(h.bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode', 'voiceEngines']);
   });
 
   it('the request client itself refuses without the confirmation, before any network call', async () => {
