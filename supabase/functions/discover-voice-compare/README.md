@@ -10,11 +10,11 @@ Every contender gets the identical Marty script, built by `buildRealtimeSession`
 
 Rob can pick **Current voice** (default) or **ElevenLabs voice** on the hidden test screen. With `voice: "elevenlabs"` the pressed letter is served by ElevenLabs' official Agents API (`api.elevenlabs.io`) instead: the same Marty script as every contender (same builder, same character book, look-ups off), spoken by Rob's own original ElevenLabs voice **"Marty"** (voice id `p9Y6zzVEQV7SMw7VcCkd`, category generated), which Rob designed and saved himself. The server never designs, saves or edits a voice on Rob's account. Code: `_shared/elevenlabs.ts`.
 
-On each ElevenLabs start the server: checks that the Marty voice exists (`GET /v1/voices/{voice_id}`, read-only; if it is missing it stops with step `voice_not_found`, never designs a replacement); finds our agent by its exact name (or creates it); updates the agent with today's Marty script and that voice; then asks ElevenLabs for a one-conversation WebRTC token. The app gets only `{ contender, provider: "elevenlabs_agents", conversationToken, transport: "webrtc", connectHint: "elevenlabs", voice: "elevenlabs", model? }` and connects with the ElevenLabs client (`Conversation.startSession({ conversationToken, connectionType: "webrtc" })`). No navigation tools are given to the ElevenLabs agent (like Gemini).
+On each ElevenLabs start the server: checks that the Marty voice exists (`GET /v1/voices/{voice_id}`, read-only; if it is missing it stops with step `voice_not_found`, never designs a replacement); uses `ELEVENLABS_AGENT_ID` if set, otherwise finds our one test agent by its exact name (name search, then the full paged list; oldest copy wins) and creates it only if none exists, so repeated starts never pile up agents; updates the agent with today's Marty script and that voice, always with ElevenLabs' sign-in requirement on (`platform_settings.auth.enable_auth: true`), so only a token made by this server can start a conversation and the agent id alone is useless; if ElevenLabs echoes the setting back as off, it stops with step `agent_auth` and hands out no token; then asks ElevenLabs for a one-conversation WebRTC token. The app gets only `{ contender, provider: "elevenlabs_agents", conversationToken, transport: "webrtc", connectHint: "elevenlabs", voice: "elevenlabs", model? }` and connects with the ElevenLabs client (`Conversation.startSession({ conversationToken, connectionType: "webrtc" })`). No navigation tools are given to the ElevenLabs agent (like Gemini).
 
 - No key: `503 {"error":"ElevenLabs key not set."}`, before any call.
-- A refusal: `502 {"error":"This contender could not start.","status":<code>,"step":"voice_not_found|voice_check|agent_list|agent_create|agent_update|token"}` (code and step only, never the provider body). `voice_not_found` means the voice id is not on the account behind the key; `voice_check` means the voice check itself was refused (for example 401, a bad key).
-- Unconfirmed (pages not re-read): the `GET /v1/voices/{voice_id}` answer shape (`voice_id`), and agent create/update/list paths and body (`conversation_config.agent.prompt.prompt`, `agent.language`, `tts.voice_id`, `tts.model_id`). Each is one line in `_shared/elevenlabs.ts`; the `step` in a refusal says which one to fix.
+- A refusal: `502 {"error":"This contender could not start.","status":<code>,"step":"voice_not_found|voice_check|agent_list|agent_create|agent_update|agent_auth|token"}` (code and step only, never the provider body). `voice_not_found` means the voice id is not on the account behind the key; `voice_check` means the voice check itself was refused (for example 401, a bad key).
+- Unconfirmed (pages not re-read): the `GET /v1/voices/{voice_id}` answer shape (`voice_id`), and agent create/update/list paths and body (`conversation_config.agent.prompt.prompt`, `agent.language`, `tts.voice_id`, `tts.model_id`, `platform_settings.auth.enable_auth`, list `search`/`page_size`/`cursor`/`has_more`/`next_cursor`). Each is one line in `_shared/elevenlabs.ts`; the `step` in a refusal says which one to fix.
 
 ## Who can use it
 
@@ -75,6 +75,13 @@ Two new optional request fields. Both absent = exactly the old answer.
 
 - `face`: `"phone"` (default, today's face L animated on the phone, option A) or `"photo"` (option B, photo-real face service).
 - `connection`: `"webrtc"` (default) or `"websocket"`. Only changes the ElevenLabs voice.
+
+### Face L stays exactly as it is
+Rob (26 Nov, 18:31 Chicago): "I like Marty's face. I just want his movements and facial expressions to be more realistic."
+- Face L keeps the same picture and the same look. Only how he moves and his facial expressions change.
+- Nothing in this program picks, generates, edits or swaps a face. There is no avatar-making, image or persona call; the app cannot send a face or avatar of its own (unknown request fields are refused); the only face-service call is the session token for the one face L avatar id Rob sets in `ANAM_AVATAR_ID`.
+- Option B (photo-real) is acceptable only if it animates this same face L picture without changing how he looks. Rob judges that in the preview. If the service visibly changes his look, option A (face L animated on the phone) is the pick.
+- Tests lock this: `face L: ...` in `compare_test.ts`.
 
 ### Option B: `face: "photo"`
 Service: **Anam** (`api.anam.ai`), audio passthrough mode: Anam only draws the face, it never thinks or talks for Marty. Our own original face L image is uploaded once by Rob as an Anam custom (one-shot) avatar; no stock avatar or real person's face is ever used. Gates: same Rob-only switch, then 21+, then the face key check, all before the consent look-up, the rate limit and any paid call.

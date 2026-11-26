@@ -10,6 +10,14 @@
 // goes in the secret ANAM_AVATAR_ID. No stock avatar and no real person's face is ever used: without
 // ANAM_AVATAR_ID the server refuses instead of falling back to any built-in avatar.
 //
+// FACE L STAYS EXACTLY AS IT IS (Rob, 26 Nov 18:31 Chicago: "I like Marty's face. I just want his movements and
+// facial expressions to be more realistic."). Only movement and expressions may change, never how he looks.
+// This server never picks, generates, edits or swaps a face: it has no avatar-create, image, persona or
+// generation call at all, the app cannot send an avatar or face of its own (unknown request keys are refused),
+// and the only Anam call is the session token for the one avatar id Rob set. Option B is acceptable only if
+// Anam animates this same face L picture without changing his look; Rob judges that in the preview, and if
+// the service visibly changes him, option A (face L animated on the phone) is the pick.
+//
 // Confirmed from Anam docs (custom-TTS / audio passthrough page, read 26 Nov 2026):
 //   POST https://api.anam.ai/v1/auth/session-token, header "Authorization: Bearer <key>",
 //   body { personaConfig: { avatarId, avatarModel: "cara-4", enableAudioPassthrough: true } },

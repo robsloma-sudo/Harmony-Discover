@@ -557,3 +557,136 @@ Deno.test("elevenlabs websocket + photo face: one answer carries both", async ()
   assertEquals((r.body.face as { sessionToken: string }).sessionToken, "anam-2");
   assertEquals(calls[0].url, ANAM_SESSION_TOKEN_URL);
 });
+
+// ---- ElevenLabs sign-in + one agent only (P-20261126-0004 part 1, CEO review) --------------------
+Deno.test("elevenlabs: agent is created and updated with sign-in required", async () => {
+  const calls: Call[] = [];
+  const f = elStub({
+    [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }],
+    "GET /v1/convai/agents": [200, { agents: [] }],
+    "POST /v1/convai/agents/create": [200, { agent_id: "agent1" }],
+    "GET /v1/convai/conversation/token": [200, { token: "t" }],
+  }, calls);
+  assertEquals((await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY }, f)).status, 200);
+  const created = JSON.parse(String(calls.find((c) => c.url.endsWith("/agents/create"))!.init.body));
+  assertEquals(created.platform_settings, { auth: { enable_auth: true } });
+  const calls2: Call[] = [];
+  const f2 = elStub({
+    [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }],
+    "PATCH /v1/convai/agents/agentX": [200, { agent_id: "agentX", platform_settings: { auth: { enable_auth: true } } }],
+    "GET /v1/convai/conversation/token": [200, { token: "t" }],
+  }, calls2);
+  assertEquals((await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, elevenLabsAgentId: "agentX" }, f2)).status, 200);
+  const patch = JSON.parse(String(calls2.find((c) => c.init.method === "PATCH")!.init.body));
+  assertEquals(patch.platform_settings, { auth: { enable_auth: true } });
+  assertEquals(buildAgentConfig("i", "v").platform_settings.auth.enable_auth, true);
+});
+
+Deno.test("elevenlabs: if ElevenLabs reports sign-in off, no token is handed out", async () => {
+  const calls: Call[] = [];
+  const f = elStub({
+    [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }],
+    "PATCH /v1/convai/agents/agentX": [200, { platform_settings: { auth: { enable_auth: false } } }],
+    "GET /v1/convai/conversation/token": [200, { token: "t" }],
+  }, calls);
+  const r = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, elevenLabsAgentId: "agentX" }, f);
+  assertEquals(r.status, 502);
+  assertEquals(r.body, { error: "This contender could not start.", status: 200, step: "agent_auth" });
+  assertFalse(calls.some((c) => c.url.includes("/conversation/token")));
+});
+
+// A fake ElevenLabs account that remembers the agents it has, like the real one.
+function elAccount(start: { agent_id: string; name: string; created_at_unix_secs?: number }[], opts: { searchWorks: boolean; pageSize?: number }) {
+  const agents = [...start];
+  let creates = 0;
+  const calls: Call[] = [];
+  const f = (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const u = new URL(url);
+    const ok = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200 }));
+    if (init.method === "GET" && u.pathname === MV) return ok({ voice_id: MARTY_VOICE_ID });
+    if (init.method === "GET" && u.pathname === "/v1/convai/agents") {
+      const search = u.searchParams.get("search");
+      if (search) return ok({ agents: opts.searchWorks ? agents.filter((a) => a.name.includes(search)) : [], has_more: false });
+      const size = opts.pageSize ?? 100;
+      const from = Number(u.searchParams.get("cursor") ?? "0");
+      const slice = agents.slice(from, from + size);
+      const more = from + size < agents.length;
+      return ok({ agents: slice, has_more: more, next_cursor: more ? String(from + size) : null });
+    }
+    if (init.method === "POST" && u.pathname === "/v1/convai/agents/create") {
+      creates++;
+      const id = `new${creates}`;
+      agents.push({ agent_id: id, name: JSON.parse(String(init.body)).name, created_at_unix_secs: 9e9 });
+      return ok({ agent_id: id });
+    }
+    if (init.method === "PATCH" && u.pathname.startsWith("/v1/convai/agents/")) return ok({});
+    if (init.method === "GET" && u.pathname === "/v1/convai/conversation/token") return ok({ token: "t" });
+    return Promise.resolve(new Response("{}", { status: 404 }));
+  };
+  return { f, calls, creates: () => creates, agents };
+}
+
+Deno.test("elevenlabs: two starts in a row create at most one agent", async () => {
+  for (const searchWorks of [true, false]) {
+    const acct = elAccount([], { searchWorks });
+    const env = { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY };
+    assertEquals((await mintContender(EL_REQ, env, acct.f)).status, 200);
+    assertEquals((await mintContender(EL_REQ, env, acct.f)).status, 200);
+    assertEquals((await mintContender(EL_REQ, env, acct.f)).status, 200);
+    assertEquals(acct.creates(), 1);
+    assertEquals(acct.agents.filter((a) => a.name === MARTY_AGENT_NAME).length, 1);
+    const toks = acct.calls.filter((c) => c.url.includes("/conversation/token")).map((c) => new URL(c.url).searchParams.get("agent_id"));
+    assertEquals(toks, ["new1", "new1", "new1"]);
+  }
+});
+
+Deno.test("elevenlabs: finds our agent on a later page even when search misses it; oldest copy wins", async () => {
+  const others = Array.from({ length: 5 }, (_, i) => ({ agent_id: `other${i}`, name: `Someone else ${i}` }));
+  const acct = elAccount([...others, { agent_id: "ours-new", name: MARTY_AGENT_NAME, created_at_unix_secs: 200 }, { agent_id: "ours-old", name: MARTY_AGENT_NAME, created_at_unix_secs: 100 }], { searchWorks: false, pageSize: 2 });
+  const r = await mintContender(EL_REQ, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY }, acct.f);
+  assertEquals(r.status, 200);
+  assertEquals(acct.creates(), 0);
+  const tok = acct.calls.find((c) => c.url.includes("/conversation/token"))!;
+  assertEquals(new URL(tok.url).searchParams.get("agent_id"), "ours-old");
+});
+
+Deno.test("elevenlabs: ELEVENLABS_AGENT_ID is used directly: no list, no create", async () => {
+  const acct = elAccount([], { searchWorks: true });
+  const env = { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, elevenLabsAgentId: "agentSet" };
+  assertEquals((await mintContender(EL_REQ, env, acct.f)).status, 200);
+  assertEquals((await mintContender(EL_REQ, env, acct.f)).status, 200);
+  assertEquals(acct.creates(), 0);
+  assertFalse(acct.calls.some((c) => c.init.method === "GET" && new URL(c.url).pathname === "/v1/convai/agents"));
+  assertEquals(acct.calls.filter((c) => c.init.method === "PATCH" && c.url.endsWith("/agents/agentSet")).length, 2);
+});
+
+// ---- Face L stays exactly as it is (Rob 26 Nov 18:31: only movement and expressions change) -----------------
+Deno.test("face L: the app cannot send a face, avatar, image or persona of its own", () => {
+  for (const k of ["avatarId", "avatar", "avatarImage", "image", "faceImage", "faceId", "persona", "personaId", "prompt"]) {
+    assertFalse(parseCompareRequest({ ...OK, face: "photo", [k]: "x" }).ok, k);
+  }
+  assertFalse(parseCompareRequest({ ...OK, face: "other" }).ok);
+});
+
+Deno.test("face L: face session body only names Rob's avatar id, no look or appearance settings", () => {
+  const b = buildFaceSessionBody("faceL", undefined);
+  assertEquals(Object.keys(b.personaConfig).sort(), ["avatarId", "avatarModel", "enableAudioPassthrough"]);
+  assertEquals(b.personaConfig.avatarId, "faceL");
+});
+
+Deno.test("face L: no code picks, generates, edits or swaps a face; only the session-token call exists", async () => {
+  const strip = (s: string) => s.replace(/^\s*\/\/.*$/gm, "");
+  const face = strip(await Deno.readTextFile(new URL("./_shared/face.ts", import.meta.url)));
+  const compare = strip(await Deno.readTextFile(new URL("./_shared/compare.ts", import.meta.url)));
+  const index = strip(await Deno.readTextFile(new URL("./index.ts", import.meta.url)));
+  for (const src of [face, compare, index]) {
+    assertFalse(/\/v1\/(avatars|personas|images|generate)/i.test(src));
+    assertFalse(/(generateAvatar|createAvatar|faceSwap|face_swap|swapFace|text-to-image|image-to-image)/i.test(src));
+  }
+  // the only Anam address in the server is the session-token one
+  assertEquals((face.match(/api\.anam\.ai[^"`]*/g) ?? []).length, 1);
+  assertFalse(compare.includes("anam.ai") || index.includes("anam.ai"));
+  // the avatar id comes only from Rob's secret
+  assert(index.includes('Deno.env.get("ANAM_AVATAR_ID")'));
+});
