@@ -9,6 +9,9 @@ import {
   type VoiceMode,
 } from "../../discover-voice-session/_shared/realtimeSession.ts";
 import { AGE_CHECK_FIELD, validAgeField } from "../../discover-voice-session/_shared/ageCheck.ts";
+import {
+  GENERATED_VOICE_ID_FIELD, SETUP_FIELD, SETUP_VALUES, type SetupStep, validVoiceId, VOICE_FIELD, VOICE_VALUES, type VoicePick,
+} from "./elevenlabs.ts";
 
 export { MARTY_BOSTON_CONSENT_VERSION, CURRENT_MODEL };
 
@@ -45,24 +48,53 @@ export function resolveContender(orderEnv: string | undefined | null, letter: st
 }
 
 // ---- request -----------------------------------------------------------------------------------
-const ALLOWED_KEYS = new Set(["consentVersion", "contender", "mode", "reveal", "sdp", AGE_CHECK_FIELD]);
+const ALLOWED_KEYS = new Set([
+  "consentVersion", "contender", "mode", "reveal", "sdp", AGE_CHECK_FIELD,
+  VOICE_FIELD, SETUP_FIELD, GENERATED_VOICE_ID_FIELD, // ElevenLabs option (P-20261126-0004 part 1)
+]);
 export type CompareRequestResult =
-  | { ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; sdp?: string }
+  | {
+    ok: true; contender: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; sdp?: string;
+    voice: "current";
+  }
+  | {
+    ok: true; contender?: Letter; mode: VoiceMode; reveal: boolean; ageConfirmed: boolean; sdp?: string;
+    voice: "elevenlabs"; setup?: SetupStep; generatedVoiceId?: string;
+  }
   | { ok: false };
+// voice: "current" (default when left out: today's flow, unchanged) or "elevenlabs". setup and generatedVoiceId
+// are only accepted with voice "elevenlabs". contender is required for "current", optional for "elevenlabs".
 export function parseCompareRequest(input: unknown): CompareRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false };
   const body = input as Record<string, unknown>;
   if (Object.keys(body).some((k) => !ALLOWED_KEYS.has(k))) return { ok: false };
   if (body.consentVersion !== MARTY_BOSTON_CONSENT_VERSION) return { ok: false };
-  if (typeof body.contender !== "string" || !LETTERS.includes(body.contender)) return { ok: false };
+  const voiceRaw = body[VOICE_FIELD];
+  if (voiceRaw !== undefined && !(VOICE_VALUES as readonly unknown[]).includes(voiceRaw)) return { ok: false };
+  const voice = (voiceRaw ?? "current") as VoicePick;
+  const contenderOk = typeof body.contender === "string" && LETTERS.includes(body.contender);
+  if (voice === "current" ? !contenderOk : (body.contender !== undefined && !contenderOk)) return { ok: false };
   if (body.mode !== "push_to_talk" && body.mode !== "hands_free") return { ok: false };
   if (body.reveal !== undefined && typeof body.reveal !== "boolean") return { ok: false };
   if (body.sdp !== undefined && !validSdp(body.sdp)) return { ok: false };
   if (!validAgeField(body[AGE_CHECK_FIELD])) return { ok: false };
-  const out: CompareRequestResult = {
-    ok: true, contender: body.contender as Letter, mode: body.mode, reveal: body.reveal === true,
-    ageConfirmed: body[AGE_CHECK_FIELD] === true,
+  const setup = body[SETUP_FIELD];
+  const generated = body[GENERATED_VOICE_ID_FIELD];
+  if (voice === "current" && (setup !== undefined || generated !== undefined)) return { ok: false };
+  if (setup !== undefined && !(SETUP_VALUES as readonly unknown[]).includes(setup)) return { ok: false };
+  if (generated !== undefined && (setup !== "save_voice" || !validVoiceId(generated))) return { ok: false };
+  const common = {
+    mode: body.mode as VoiceMode, reveal: body.reveal === true, ageConfirmed: body[AGE_CHECK_FIELD] === true,
   };
+  if (voice === "elevenlabs") {
+    const out: CompareRequestResult = { ok: true, voice, ...common };
+    if (contenderOk) out.contender = body.contender as Letter;
+    if (typeof body.sdp === "string") out.sdp = body.sdp;
+    if (setup !== undefined) out.setup = setup as SetupStep;
+    if (typeof generated === "string") out.generatedVoiceId = generated;
+    return out;
+  }
+  const out: CompareRequestResult = { ok: true, voice, contender: body.contender as Letter, ...common };
   if (typeof body.sdp === "string") out.sdp = body.sdp;
   return out;
 }
@@ -134,6 +166,7 @@ export function buildCurrent(mode: VoiceMode, voiceEnv: string | undefined, hand
 export const DEPLOY_FILES = [
   "discover-voice-compare/index.ts",
   "discover-voice-compare/_shared/compare.ts",
+  "discover-voice-compare/_shared/elevenlabs.ts",
   "discover-voice-session/_shared/ageCheck.ts",
   "discover-voice-session/_shared/martyCharacterBook.ts",
   "discover-voice-session/_shared/martyDelivery.ts",

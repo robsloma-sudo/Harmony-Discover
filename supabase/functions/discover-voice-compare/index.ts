@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { compareAllowed, MARTY_BOSTON_CONSENT_VERSION, MAX_REQUEST_BYTES, mintContender, parseCompareRequest, RATE_LIMIT } from "./_shared/compare.ts";
+import { buildCurrent, compareAllowed, MARTY_BOSTON_CONSENT_VERSION, MAX_REQUEST_BYTES, mintContender, parseCompareRequest, RATE_LIMIT } from "./_shared/compare.ts";
 import { ageGate } from "../discover-voice-session/_shared/ageCheck.ts";
+import { ELEVENLABS_KEY_MISSING, runElevenLabs } from "./_shared/elevenlabs.ts";
 
 // Listening test only (P-20261125-0219 part 1b). Same guards as discover-voice-session; hidden unless switched on for named users.
 const DEV_REF = "lqqmwqrffelgnbngrkep";
@@ -93,6 +94,10 @@ Deno.serve(async (request: Request) => {
     // 21+ age check (same rule as Marty): refuse before consent look-up, rate limit or any paid provider call.
     const ageBlock = ageGate(parsed.ageConfirmed, Deno.env.get("MARTY_AGE_CHECK"));
     if (ageBlock) return json(ageBlock.body, ageBlock.status, origin);
+    // ElevenLabs option (P-20261126-0004 part 1): reached only by the Rob-only, signed-in, 21+ caller above.
+    // Missing key: one plain answer, before consent look-up, rate-limit count or any call out.
+    const elevenLabsKey = Deno.env.get("ELEVENLABS_API_KEY") ?? "";
+    if (parsed.voice === "elevenlabs" && !elevenLabsKey) return json(ELEVENLABS_KEY_MISSING, 503, origin);
 
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: consent, error: consentError } = await admin
@@ -110,6 +115,15 @@ Deno.serve(async (request: Request) => {
     });
     if (rateError) return json({ error: "Voice session protection is not ready." }, 503, origin);
     if (allowed !== true) return json({ error: "Too many voice sessions. Wait a minute and try again." }, 429, origin);
+
+    if (parsed.voice === "elevenlabs") {
+      const el = await runElevenLabs(parsed, {
+        apiKey: elevenLabsKey,
+        voiceId: (Deno.env.get("ELEVENLABS_VOICE_ID") ?? "").trim(),
+        agentId: (Deno.env.get("ELEVENLABS_AGENT_ID") ?? "").trim(),
+      }, () => buildCurrent(parsed.mode, Deno.env.get("MARTY_VOICE"), Deno.env.get("MARTY_HANDS_FREE")).session.instructions);
+      return json(el.body, el.status, origin);
+    }
 
     const result = await mintContender(parsed, {
       openAiKey,
