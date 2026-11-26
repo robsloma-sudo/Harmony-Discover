@@ -6,6 +6,7 @@ import { probeListeningTest, requestCompareSession } from '../src/voice/voiceCom
 import type { CompareLetter } from '../src/voice/voiceCompareClient';
 import { getMartyAgeAnswer, subscribeMartyAge, type MartyAgeAnswer } from '../src/marty/martyAge';
 import { connectGemini, connectWebrtc, type TransportHandle } from '../src/listeningTest/transports';
+import { connectElevenLabs } from '../src/listeningTest/elevenlabsTransport';
 import {
   DEFAULT_VOICE, LETTERS, TEST_LINES, VOICE_PICKS, failureMessage, loadScores, notWiredMessage, revealEnabled, saveScores,
   type Letter, type LetterState, type Score, type Scores, type VoicePick,
@@ -91,11 +92,17 @@ export default function ListeningTest() {
       setMessages(m => ({ ...m, [letter]: notWiredMessage(letter) }));
       return;
     }
+    if (grant.provider === 'elevenlabs_agents' && voice !== 'elevenlabs') {
+      // Never start the ElevenLabs kit unless ElevenLabs was picked.
+      activeRef.current = null; fail(letter); return;
+    }
     const hooks = { onClosed: () => { if (attempt === attemptRef.current) { handleRef.current = null; activeRef.current = null; setStates(s => ({ ...s, [letter]: 'idle' })); setMessages(m => ({ ...m, [letter]: 'Connection ended.' })); } } };
     try {
-      const handle = grant.provider === 'gemini_live'
-        ? await connectGemini({ token: grant.ephemeralToken, hooks })
-        : await connectWebrtc({ token: grant.ephemeralToken, hint: grant.connectHint, hooks });
+      const handle = grant.provider === 'elevenlabs_agents'
+        ? await connectElevenLabs({ conversationToken: grant.conversationToken, hooks })
+        : grant.provider === 'gemini_live'
+          ? await connectGemini({ token: grant.ephemeralToken, hooks })
+          : await connectWebrtc({ token: grant.ephemeralToken, hint: grant.connectHint, hooks });
       if (attempt !== attemptRef.current) { handle.stop(); return; }
       handleRef.current = handle;
       setStates(s => ({ ...s, [letter]: 'listening' }));

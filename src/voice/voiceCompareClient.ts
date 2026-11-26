@@ -1,5 +1,5 @@
 import { MARTY_BOSTON_CONSENT_VERSION } from './martySullivanBoston';
-import { DEFAULT_VOICE, ELEVENLABS_KEY_MISSING, isElevenLabsKeyMissing, isVoicePick, type VoicePick } from '../listeningTest/logic';
+import { ELEVENLABS_KEY_MISSING, isElevenLabsKeyMissing, type VoicePick } from '../listeningTest/logic';
 
 export type CompareLetter = 'A' | 'B' | 'C';
 export type CompareGrant =
@@ -18,6 +18,15 @@ export type CompareGrant =
       provider: 'gemini_live';
       ephemeralToken: string;
       transport: 'websocket';
+      model?: string;
+    }
+  | {
+      contender: CompareLetter;
+      provider: 'elevenlabs_agents';
+      conversationToken: string;
+      transport: 'webrtc';
+      connectHint: 'elevenlabs';
+      voice: 'elevenlabs';
       model?: string;
     };
 export type CompareResult =
@@ -40,10 +49,24 @@ function validateGrant(payload: unknown): CompareGrant | null {
   if (!payload || typeof payload !== 'object') return null;
   const p = payload as Record<string, unknown>;
   if (typeof p.contender !== 'string' || !LETTERS.includes(p.contender)) return null;
-  if (!isNonEmptyString(p.ephemeralToken)) return null;
   if (p.model !== undefined && !isNonEmptyString(p.model)) return null;
   const contender = p.contender as CompareLetter;
   const model = typeof p.model === 'string' ? { model: p.model } : {};
+  // ElevenLabs voice (P-20261126-0004 part 2): one-conversation token for the official ElevenLabs kit.
+  if (p.provider === 'elevenlabs_agents') {
+    if (!isNonEmptyString(p.conversationToken)) return null;
+    if (p.transport !== 'webrtc' || p.connectHint !== 'elevenlabs' || p.voice !== 'elevenlabs') return null;
+    return {
+      contender,
+      provider: 'elevenlabs_agents',
+      conversationToken: p.conversationToken,
+      transport: 'webrtc',
+      connectHint: 'elevenlabs',
+      voice: 'elevenlabs',
+      ...model,
+    };
+  }
+  if (!isNonEmptyString(p.ephemeralToken)) return null;
   if (p.provider === 'openai_realtime') {
     if (p.transport !== 'webrtc') return null;
     if (p.connectHint !== 'realtime' && p.connectHint !== 'live') return null;
@@ -120,8 +143,9 @@ export async function requestCompareSession(input: {
     contender: input.contender,
     mode: input.mode,
     age_confirmed: true,
-    voice: isVoicePick(input.voice) ? input.voice : DEFAULT_VOICE,
   };
+  // Only the ElevenLabs pick adds a voice field; the current voice sends exactly today's request.
+  if (input.voice === 'elevenlabs') body.voice = 'elevenlabs';
   if (input.reveal === true) body.reveal = true;
 
   try {

@@ -37,13 +37,13 @@ describe('probeListeningTest', () => {
 });
 
 describe('requestCompareSession', () => {
-  it('sends exactly consentVersion/contender/mode/age_confirmed/voice', async () => {
+  it('sends exactly consentVersion/contender/mode/age_confirmed (no voice field for the current voice)', async () => {
     const f = vi.fn().mockResolvedValue(res(200, openai));
     const r = await req(f);
     expect(r.ok).toBe(true);
     const body = JSON.parse(f.mock.calls[0][1].body);
-    expect(Object.keys(body).sort()).toEqual(['age_confirmed', 'consentVersion', 'contender', 'mode', 'voice']);
-    expect(body.voice).toBe('current');
+    expect(Object.keys(body).sort()).toEqual(['age_confirmed', 'consentVersion', 'contender', 'mode']);
+    expect('voice' in body).toBe(false);
     expect(body.age_confirmed).toBe(true);
     expect(body.consentVersion).toBe(MARTY_BOSTON_CONSENT_VERSION);
     expect(f.mock.calls[0][1].headers.Authorization).toBe('Bearer tok');
