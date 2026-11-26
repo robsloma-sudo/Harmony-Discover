@@ -6,7 +6,11 @@
 //  1. Voice: always Rob's own original voice "Marty" (MARTY_VOICE_ID below), unless the ELEVENLABS_VOICE_ID
 //     secret overrides it. The server checks that the voice exists (GET /v1/voices/{voice_id}); it NEVER designs,
 //     saves or changes a voice on Rob's account. If the voice cannot be found it stops with step voice_not_found.
-//  2. Agent: ELEVENLABS_AGENT_ID if set, else find our agent by its exact name, else create it.
+//  2. Agent: ELEVENLABS_AGENT_ID if set, else find our ONE agent by its exact name (search first, then a full
+//     paged list as a fallback, oldest match wins), and only if none exists create it. Never one agent per start.
+//     The agent always has ElevenLabs' sign-in requirement ON (platform_settings.auth.enable_auth), so only a
+//     one-conversation token made by this server (with our key) can start a paid conversation; knowing the
+//     agent id alone is not enough.
 //  3. Update the agent with today's exact Marty script (same builder as every other contender) and the voice,
 //     so the only difference from today's Marty is the voice (and ElevenLabs' own thinking model).
 //  4. Ask for a WebRTC conversation token for that agent and return it.
@@ -15,7 +19,8 @@
 // connectionType: "webrtc" }).
 // UNCONFIRMED (pages not re-read this session): GET /v1/voices/{voice_id} -> { voice_id, ... } (ElevenLabs' standard
 // get-voice call), and agent create/update/list paths and body shape (conversation_config.agent.prompt.prompt,
-// agent.language, tts.voice_id, tts.model_id). Each is one line below;
+// agent.language, tts.voice_id, tts.model_id, platform_settings.auth.enable_auth, list search/page_size/cursor/
+// has_more/next_cursor). Each is one line below;
 // a refusal reports only the step and status code.
 
 export const ELEVENLABS_API = "https://api.elevenlabs.io";
@@ -60,7 +65,15 @@ export function buildAgentConfig(instructions: string, voiceId: string, llm?: st
       agent: { prompt, language: "en" },
       tts: { voice_id: voiceId, model_id: AGENT_TTS_MODEL },
     },
+    // Sign-in required: public (id-only) conversations are refused by ElevenLabs; only our server's token works.
+    platform_settings: { auth: { enable_auth: true } },
   };
+}
+
+// If ElevenLabs echoes the agent's settings back and they show sign-in OFF, refuse to hand out a token.
+function authTurnedOff(body: unknown): boolean {
+  const auth = (body as { platform_settings?: { auth?: { enable_auth?: unknown } } })?.platform_settings?.auth;
+  return !!auth && "enable_auth" in auth && auth.enable_auth !== true;
 }
 
 // Checks the voice exists on Rob's account. Read-only: never designs, saves or edits a voice.
@@ -70,12 +83,31 @@ async function checkVoice(f: FetchLike, key: string, voiceId: string): Promise<{
   if (r.status === 200 || r.status === 400 || r.status === 404 || r.status === 422) return { step: "voice_not_found", status: r.status };
   return { step: "voice_check", status: r.status };
 }
+type AgentRow = { agent_id?: unknown; name?: unknown; created_at_unix_secs?: unknown };
+const MAX_LIST_PAGES = 10;
+function pickOurs(agents: AgentRow[]): string {
+  const ours = agents.filter((a) => a?.name === MARTY_AGENT_NAME && str(a.agent_id));
+  ours.sort((a, b) => (Number(a.created_at_unix_secs) || 0) - (Number(b.created_at_unix_secs) || 0));
+  return ours.length ? str(ours[0].agent_id) : "";
+}
+// Finds our one test agent: name search first, then the full paged list (in case search misses it).
 async function findAgent(f: FetchLike, key: string): Promise<{ id: string } | { step: string; status: number }> {
-  const r = await call(f, `${ELEVENLABS_API}/v1/convai/agents?search=${encodeURIComponent(MARTY_AGENT_NAME)}`, { method: "GET", headers: headers(key) });
+  const r = await call(f, `${ELEVENLABS_API}/v1/convai/agents?search=${encodeURIComponent(MARTY_AGENT_NAME)}&page_size=100`, { method: "GET", headers: headers(key) });
   if (r.status !== 200) return { step: "agent_list", status: r.status };
-  const agents = (r.body as { agents?: { agent_id?: unknown; name?: unknown }[] })?.agents ?? [];
-  const hit = agents.find((a) => a?.name === MARTY_AGENT_NAME && str(a.agent_id));
-  return { id: hit ? str(hit.agent_id) : "" };
+  const hit = pickOurs((r.body as { agents?: AgentRow[] })?.agents ?? []);
+  if (hit) return { id: hit };
+  let cursor = "";
+  const all: AgentRow[] = [];
+  for (let page = 0; page < MAX_LIST_PAGES; page++) {
+    const q = `page_size=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const p = await call(f, `${ELEVENLABS_API}/v1/convai/agents?${q}`, { method: "GET", headers: headers(key) });
+    if (p.status !== 200) return { step: "agent_list", status: p.status };
+    const b = p.body as { agents?: AgentRow[]; has_more?: unknown; next_cursor?: unknown };
+    all.push(...(b?.agents ?? []));
+    cursor = str(b?.next_cursor);
+    if (b?.has_more !== true || !cursor) break;
+  }
+  return { id: pickOurs(all) };
 }
 
 // Never returns, logs or forwards a provider body or key: only the failing step name and status code.
@@ -95,10 +127,12 @@ export async function mintElevenLabs(instructions: string, env: ElevenEnv, fetch
     const c = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/agents/create`, { method: "POST", headers: headers(key), body: JSON.stringify(config) });
     agentId = str((c.body as { agent_id?: unknown })?.agent_id);
     if (c.status !== 200 || !agentId) return { ok: false, step: "agent_create", status: c.status };
+    if (authTurnedOff(c.body)) return { ok: false, step: "agent_auth", status: c.status };
   } else {
     // Keep the agent's script identical to today's Marty on every start.
     const u = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", headers: headers(key), body: JSON.stringify(config) });
     if (u.status !== 200) return { ok: false, step: "agent_update", status: u.status };
+    if (authTurnedOff(u.body)) return { ok: false, step: "agent_auth", status: u.status };
   }
   const t = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/conversation/token?agent_id=${encodeURIComponent(agentId)}`, { method: "GET", headers: { "xi-api-key": key } });
   const token = str((t.body as { token?: unknown })?.token);
