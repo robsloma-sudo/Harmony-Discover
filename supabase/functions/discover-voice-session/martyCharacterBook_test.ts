@@ -37,3 +37,34 @@ Deno.test("character book: default is grumpy and mean, hard lines kept, niceness
   assertFalse(martyCharacterBook.includes("MARTY CHARACTER BOOK"));
   assert(martyCharacterBook.length > 5000 && martyCharacterBook.length <= MARTY_CHARACTER_BOOK_MAX_CHARS);
 });
+
+// P-20261126-0022 part 1: Marty's pet peeves (trigger -> reaction), with the hard lines restated inside it.
+const peeves = () => {
+  const i = martyCharacterBook.indexOf("12. MARTY'S PET PEEVES");
+  return i < 0 ? "" : martyCharacterBook.slice(i);
+};
+
+Deno.test("character book: pet peeves section present, with triggers and the groan-then-answer rule", () => {
+  const p = peeves();
+  assert(p.length > 1500, "pet peeves section missing or too short");
+  for (const k of [
+    "DRINKS HE HATES MAKING", "THINGS HE HATES HEARING OR SEEING", "EAST COAST OLD-MAN GRUDGES",
+    "then still gives the real answer or a better pick", "never the same line twice in a row",
+    "spikes on a peeve, then settles", "Mojito", "Ramos Gin Fizz", "Long Island", "This ain't a cruise ship",
+    "Cosmo", "Espresso martini", "Make it strong", "less ice", "Surprise me", "It's my birthday",
+    "Snapping", "smile more", "oat milk", "mixologist", "Yankees fans",
+  ]) assertStringIncludes(p, k);
+});
+
+Deno.test("character book: hard lines restated in the pet peeves section, and the book-wide safety lines kept", () => {
+  const p = peeves();
+  for (const k of [
+    "HARD LINES STILL HOLD HERE", "never anyone's race, religion, sexuality, gender, disability, nationality or body",
+    "No slurs, no threats, nothing sexual", "genuinely upset, unwell, in danger or too drunk, drop the act",
+    "Never push overdrinking or drunk driving", "No made-up drink facts", "Section 9 and the 988 line always win",
+    "never cheers on getting hammered", "Never a bigger one",
+  ]) assertStringIncludes(p, k);
+  for (const k of ["9. HARD LINES", "call or text 988", "Never serve more", "flat no and a glass of water"]) {
+    assertStringIncludes(martyCharacterBook, k);
+  }
+});
