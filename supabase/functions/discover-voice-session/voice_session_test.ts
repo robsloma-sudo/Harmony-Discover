@@ -138,7 +138,7 @@ Deno.test("instructions: screen + memory + Boston core, in order", () => {
 });
 
 Deno.test("request body validation", () => {
-  assertEquals(parseVoiceRequest(OK), { ok: true, mode: "push_to_talk", screenContext: null, ageConfirmed: false });
+  assertEquals(parseVoiceRequest(OK), { ok: true, mode: "push_to_talk", screenContext: null, ageConfirmed: false, voiceEngines: null, elevenLabsConnection: "webrtc" });
   assertEquals(parseVoiceRequest({ ...OK, mode: "hands_free" }).ok, true);
   assertEquals(parseVoiceRequest({ ...OK, mode: "loud" }).ok, false);
   assertEquals(parseVoiceRequest({ ...OK, consentVersion: "old" }).ok, false);
@@ -358,7 +358,7 @@ Deno.test("P-1654 r2: no warm-host, thank-you, sorry or anything-else lines anyw
       }
     }
   }
-  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.2.0");
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.3.0");
 });
 
 Deno.test("P-1654 r2: grumpy, roasting default, rare grudging respect, only the hard lines kept, no-host block before the book", () => {
@@ -382,4 +382,91 @@ Deno.test("P-1654 r2: the guard really catches a warm line", () => {
   for (const bad of ["Great question!", "Thanks for stopping by.", "Anything else I can help with?", "Be kind to every guest.", "So sorry about that."]) {
     assert(hostTalkLeft(t + bad).length > 0, bad);
   }
+});
+
+// ---- Pet peeve spikes (P-20261126-0022 part 2) ------------------------------------------------
+// Rob wants Marty openly annoyed on his pet peeves, then settling and still helping. The pet peeve LIST lives
+// only in the character book (Cocktails team); this script holds the reaction rule and its hard lines.
+const PEEVE_RULE = [
+  "PET PEEVE SPIKES — SPIKE FAST, THEN SETTLE",
+  "react right away and out loud: a groan, a hard sigh, a sharp bark, a one-line roast",
+  "Spike, then settle: one beat of open annoyance, then back to home-base grumpy in the same reply",
+  "Do not stay angry or keep bringing it up",
+  "still give the real answer: make the drink right, answer the question, or give a better pick",
+  "never a refusal to help",
+];
+const PEEVE_HARD_LINES = [
+  "Roast the order, the line or the behaviour, never who the person is",
+  "never their race, religion, sexuality, gender, disability, nationality, age, looks or body",
+  "Grudges are about habits and teams, not about people from a place",
+  "No spike if the guest is genuinely upset, unwell, in danger or too drunk: drop the act",
+  "never pushes another drink, a stronger pour, or driving after drinking",
+  "never invents a fact about a drink",
+];
+const BASE_HARD_LINES = [
+  "No slurs", "No threats, no violence, no sexual content", "drop the act at once",
+  "Never encourage overdrinking or drunk driving", "Never invent recipe origins",
+];
+// Stand-in for the Cocktails team's coming book section, to prove any book section passes through whole.
+const PEEVE_BOOK = martyCharacterBook + "\n\nMARTY'S PET PEEVES\n- Mojitos on a Saturday: groan, then make it right.\n";
+
+Deno.test("pet peeves: spike-then-settle rule and hard lines are in the live Marty script, inside MOOD SHIFTS", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (const lookupsEnabled of [true, false]) {
+      const t = buildRealtimeSession({ mode, pick: () => 0, characterBook: martyCharacterBook, lookupsEnabled }).session.instructions;
+      for (const k of [...PEEVE_RULE, ...PEEVE_HARD_LINES, ...BASE_HARD_LINES]) assertStringIncludes(t, k);
+      const at = t.indexOf("PET PEEVE SPIKES");
+      assert(t.indexOf("MOOD SHIFTS —") < at && at < t.indexOf("VARIETY —"));
+      // the rule comes after the book, so it reads as how to react to the book's list
+      assert(t.indexOf("CHARACTER BOOK - MARTY SULLIVAN") < at);
+      // the old rule that could hold him back stays softened by the spike rule, not replaced
+      assertStringIncludes(t, "Grumpy is home base");
+    }
+  }
+});
+
+Deno.test("pet peeves: the script does not carry its own peeve list (the book owns it)", () => {
+  for (const drink of ["mojito", "Mojito", "cosmo", "espresso martini", "frozen", "Yankees", "yuppie"]) {
+    assertFalse(martyDeliveryInstructions.includes(drink), drink);
+  }
+});
+
+Deno.test("pet peeves: the whole character book, including a pet peeves section, reaches the live Marty", () => {
+  const t = buildRealtimeSession({ mode: "push_to_talk", pick: () => 0, characterBook: PEEVE_BOOK }).session.instructions;
+  assertStringIncludes(t, PEEVE_BOOK.trim());
+  assertStringIncludes(t, "MARTY'S PET PEEVES");
+  // today's book reaches it whole too
+  const today = buildRealtimeSession({ mode: "push_to_talk", pick: () => 0, characterBook: martyCharacterBook }).session.instructions;
+  assertStringIncludes(today, martyCharacterBook.trim());
+});
+
+Deno.test("pet peeves: live voice program passes the shipped character book in", async () => {
+  const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  assertStringIncludes(src, "characterBook: martyCharacterBook");
+  assertStringIncludes(src, "./_shared/martyCharacterBook.ts");
+});
+
+// ---- Way more cursing, limits locked (P-20261126-0022 part 2, Rob 26 Nov) ----------------------
+const CURSING_KEYS = [
+  "nearly every sentence has a curse in it, as filler and as emphasis",
+  "Never the same curse twice in a row, never the same phrasing line after line",
+  "Aim the swearing only at the drink order, the situation, the job or yourself, never at who the person is",
+  "Never a slur, ever, not even as filler",
+  "No slurs, no insults about any group, looks, body, race, religion, gender, sexuality, disability, nationality, or age",
+  "No threats, no violence, no sexual content",
+  "The cursing drops completely, together with the act, the moment a guest is upset, unwell, in danger, or has had too much to drink",
+  "The cursing rides the mood",
+  "drop the act and the cursing",
+  "Vary the cursing",
+  "Never encourage overdrinking or drunk driving",
+];
+Deno.test("cursing: way more, varied, and every limit kept in both modes", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    const t = buildRealtimeSession({ mode, characterBook: martyCharacterBook, lookupsEnabled: false }).session.instructions;
+    for (const k of CURSING_KEYS) assertStringIncludes(t, k);
+  }
+  // the old "not in every sentence" cap is gone
+  assertFalse(martyBostonInstructions.includes("not in every sentence"));
+  // swearing is never aimed at the guest's identity and never pointed at "you" as a person
+  assertFalse(/\byou (fuckin|fucking|stupid|dumb)\b/i.test(martyBostonInstructions + martyDeliveryInstructions));
 });
