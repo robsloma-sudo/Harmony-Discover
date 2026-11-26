@@ -5,7 +5,10 @@ import { formatScreenContextInstructions, type ScreenContext } from "./screenCon
 export const MODEL = "gpt-realtime-2.1";
 export const DEFAULT_VOICE = "cedar";
 export const ALLOWED_VOICES = ["cedar", "ash", "marin", "verse", "ballad", "echo", "sage"] as const;
-export const VOICE_SPEED = 1.0; // Boston pace: quicker and clipped (was 0.95)
+export const VOICE_SPEED = 0.95; // a touch slower so punchlines and serious moments land (P-20261126-0320; was 1.0)
+// Hands-free turn-taking: "medium" waits a little longer before deciding the guest is done, so Marty does not jump in
+// on a pause (P-20261126-0320; was "high"). The guest can still cut him off (interrupt_response stays true).
+export const HANDS_FREE_EAGERNESS = "medium";
 export const MAX_OUTPUT_TOKENS = 500; // ceiling only; short replies come from the instructions, a lower cap would cut him off mid-word on a requested recipe
 export type VoiceMode = "push_to_talk" | "hands_free";
 
@@ -99,7 +102,7 @@ export function buildRealtimeSession(args: BuildRealtimeSessionArgs) {
     formatScreenContextInstructions(args.screenContext ?? null) +
     (args.memoryContext ?? "");
   const turnDetection = mode === "hands_free"
-    ? { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true }
+    ? { type: "semantic_vad", eagerness: HANDS_FREE_EAGERNESS, create_response: true, interrupt_response: true }
     : null;
   return {
     voice,

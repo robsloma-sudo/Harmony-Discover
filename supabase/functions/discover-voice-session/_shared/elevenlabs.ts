@@ -39,6 +39,14 @@ export const MARTY_AGENT_NAME = "Marty (Harmony Discover live)";
 // English-only agents use the low-latency Flash voice model.
 export const AGENT_TTS_MODEL = "eleven_flash_v2";
 export const SESSION_VARIABLE = "marty_session";
+// How Marty's ElevenLabs voice is delivered and how patient he is about turns (P-20261126-0320). Sent on agent create
+// and every sync, so these overwrite any dashboard value for the same fields. If ElevenLabs refuses them (400/422),
+// the server retries without them (tools kept), then plain, so a refused setting can never take Marty down.
+//  - speed 0.95: a touch slower than ElevenLabs' 1.0 default, so punchlines and serious moments land.
+//  - stability 0.4: a bit below the 0.5 default, so the voice varies more: pauses, dry laughs, slower warm-ups.
+//  - turn_eagerness "patient": waits longer before deciding the guest is done, so he does not cut them off.
+export const AGENT_VOICE_TUNING = { speed: 0.95, stability: 0.4 } as const;
+export const AGENT_TURN_TUNING = { turn_eagerness: "patient" } as const;
 
 // ---- which voice engine ------------------------------------------------------------------------
 // THE SWITCH. Code default is ElevenLabs. Undo without any new secret: change this one line to "openai" and
@@ -118,7 +126,9 @@ export function buildClientTools(lookupsEnabled: boolean) {
   return [...nav, ...look];
 }
 
-export function buildAgentConfig(sharedPrompt: string, voiceId: string, opts: { llm?: string; tools?: unknown[] } = {}) {
+export function buildAgentConfig(
+  sharedPrompt: string, voiceId: string, opts: { llm?: string; tools?: unknown[]; tuning?: boolean } = {},
+) {
   const prompt: Record<string, unknown> = { prompt: sharedPrompt };
   if (opts.llm) prompt.llm = opts.llm;
   const agent: Record<string, unknown> = { prompt, language: "en" };
@@ -128,7 +138,9 @@ export function buildAgentConfig(sharedPrompt: string, voiceId: string, opts: { 
   }
   return {
     name: MARTY_AGENT_NAME,
-    conversation_config: { agent, tts: { voice_id: voiceId, model_id: AGENT_TTS_MODEL } },
+    conversation_config: opts.tuning
+      ? { agent, tts: { voice_id: voiceId, model_id: AGENT_TTS_MODEL, ...AGENT_VOICE_TUNING }, turn: { ...AGENT_TURN_TUNING } }
+      : { agent, tts: { voice_id: voiceId, model_id: AGENT_TTS_MODEL } },
     // Sign-in required: id-only conversations are refused by ElevenLabs; only our server's token works.
     platform_settings: { auth: { enable_auth: true } },
   };
@@ -213,9 +225,26 @@ export async function mintElevenLabs(
   }
   const llm = (env.llm ?? "").trim() || undefined;
   const tools = buildClientTools(lookupsEnabled);
+  let toolNames: string[] = cache.tools ?? tools.map((t) => t.name);
+  // Tried in order on a 400/422 refusal: tuned (tools + voice/turn tuning), then tools only, then plain.
+  const tuned = buildAgentConfig(sharedPrompt, voiceId, { llm, tools, tuning: true });
   const full = buildAgentConfig(sharedPrompt, voiceId, { llm, tools });
   const plain = buildAgentConfig(sharedPrompt, voiceId, { llm });
-  const print = await fingerprint(JSON.stringify(full));
+  const attempts: { body: unknown; names: string[] }[] = [
+    { body: tuned, names: tools.map((t) => t.name) },
+    { body: full, names: tools.map((t) => t.name) },
+    { body: plain, names: [] },
+  ];
+  const send = async (url: string, method: string) => {
+    let r = { status: 0, body: null as unknown };
+    for (const a of attempts) {
+      r = await call(fetchImpl, url, { method, headers: headers(key), body: JSON.stringify(a.body) });
+      toolNames = a.names;
+      if (!REFUSED_SHAPE.has(r.status)) break;
+    }
+    return r;
+  };
+  const print = await fingerprint(JSON.stringify(tuned));
 
   let agentId = (env.agentId ?? "").trim() || cache.agentId || "";
   if (!agentId) {
@@ -223,14 +252,8 @@ export async function mintElevenLabs(
     if ("step" in found) return { ok: false, ...found };
     agentId = found.id;
   }
-  let toolNames = cache.tools ?? tools.map((t) => t.name);
   if (!agentId) {
-    let c = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/agents/create`, { method: "POST", headers: headers(key), body: JSON.stringify(full) });
-    toolNames = tools.map((t) => t.name);
-    if (REFUSED_SHAPE.has(c.status)) {
-      c = await call(fetchImpl, `${ELEVENLABS_API}/v1/convai/agents/create`, { method: "POST", headers: headers(key), body: JSON.stringify(plain) });
-      toolNames = [];
-    }
+    const c = await send(`${ELEVENLABS_API}/v1/convai/agents/create`, "POST");
     agentId = str((c.body as { agent_id?: unknown })?.agent_id);
     if (c.status !== 200 || !agentId) return { ok: false, step: "agent_create", status: c.status };
     if (authTurnedOff(c.body)) return { ok: false, step: "agent_auth", status: c.status };
@@ -238,12 +261,7 @@ export async function mintElevenLabs(
   } else if (cache.synced !== print || cache.agentId !== agentId) {
     // Keep the agent's shared script identical to today's Marty; only when it changed since this copy last synced.
     const url = `${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agentId)}`;
-    let u = await call(fetchImpl, url, { method: "PATCH", headers: headers(key), body: JSON.stringify(full) });
-    toolNames = tools.map((t) => t.name);
-    if (REFUSED_SHAPE.has(u.status)) {
-      u = await call(fetchImpl, url, { method: "PATCH", headers: headers(key), body: JSON.stringify(plain) });
-      toolNames = [];
-    }
+    const u = await send(url, "PATCH");
     if (u.status !== 200) return { ok: false, step: "agent_update", status: u.status };
     if (authTurnedOff(u.body)) return { ok: false, step: "agent_auth", status: u.status };
     cache.synced = print;

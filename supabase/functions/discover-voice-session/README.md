@@ -37,9 +37,14 @@ The server strips control characters, trims, truncates to these limits, and drop
 
 ## Realtime session settings
 
-- Voice speed 1.0 (was 0.95; quicker Boston pace), `max_output_tokens` 500 (a ceiling only: the one-or-two-sentence length comes from the instructions, because a lower hard cap cuts him off mid-word when a guest asks for a full recipe), `audio.input.noise_reduction = { type: "near_field" }`.
+- Voice speed 0.95 (P-20261126-0320: a touch slower so punchlines and serious moments land; was 1.0), `max_output_tokens` 500 (a ceiling only: the one-or-two-sentence length comes from the instructions, because a lower hard cap cuts him off mid-word when a guest asks for a full recipe), `audio.input.noise_reduction = { type: "near_field" }`.
 - `push_to_talk`: `turn_detection: null`. The app commits audio and decides when to respond.
-- `hands_free` (the app sends `mode: "hands_free"`): `turn_detection = { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true }`. Marty listens continuously, answers when the guest stops talking, and the guest can cut him off by talking. Rob approved always-on voice on 25 Nov 2026 (P-20261125-0216). Sessions that send `mode: "push_to_talk"` keep hold-to-talk.
+- `hands_free` (the app sends `mode: "hands_free"`): `turn_detection = { type: "semantic_vad", eagerness: "medium", create_response: true, interrupt_response: true }` (was "high" until P-20261126-0320; "medium" waits a little longer before he jumps in). Marty listens continuously, answers when the guest stops talking, and the guest can cut him off by talking. Rob approved always-on voice on 25 Nov 2026 (P-20261125-0216). Sessions that send `mode: "push_to_talk"` keep hold-to-talk.
+
+## ElevenLabs agent voice and turn settings (P-20261126-0320)
+
+- Sent on agent create and every sync: `conversation_config.tts.speed = 0.95`, `tts.stability = 0.4`, `conversation_config.turn.turn_eagerness = "patient"`. These overwrite dashboard values for the same fields.
+- If ElevenLabs refuses them (400/422) the server retries without them (tools kept), then plain, so a refused setting never takes Marty down.
 
 ## Server secrets
 
