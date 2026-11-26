@@ -4,7 +4,7 @@ import { ScrollView, View, Text, Pressable, TextInput, Switch, StyleSheet } from
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../services/supabase';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
-import { ensureMartySession, isGuestSession, martyAccountNote } from '../voice/martyGuest';
+import { ensureMartySession, isGuestSession, martyAccountNote, MARTY_VOICE_PARTNERS_NOTE } from '../voice/martyGuest';
 
 type Memory = { id: string; category: 'taste_preference' | 'drink_history' | 'interaction_style'; label: string; value: string };
 const C = { bg: '#090B0F', panel: '#141820', line: '#303741', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0' };
@@ -121,7 +121,7 @@ export function MartyConsentPanel() {
       <Text style={s.body}>Voice and cross-session memory are separate opt-ins. Neither is enabled by default. Marty uses only the permissions you actively grant.</Text>
       <Text style={s.bodySmall}>{martyAccountNote(session)}</Text>
       <View style={s.card}>
-        <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Live voice</Text><Text style={s.bodySmall}>Allow live voice with Marty after microphone permission. While Marty is on he listens all the time and answers what he hears. Turning Marty off (on his face or in Settings) turns the microphone off at once. Nothing is heard while he is off or the page is in the background.</Text></View><Switch value={voiceEnabled} onValueChange={setVoiceEnabled} trackColor={{ true: C.gold }} /></View>
+        <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Live voice</Text><Text style={s.bodySmall}>Allow live voice with Marty after microphone permission. While Marty is on he listens all the time and answers what he hears. Turning Marty off (on his face or in Settings) turns the microphone off at once. Nothing is heard while he is off or the page is in the background.</Text><Text testID="marty-voice-partners" style={s.bodySmall}>{MARTY_VOICE_PARTNERS_NOTE}</Text></View><Switch value={voiceEnabled} onValueChange={setVoiceEnabled} trackColor={{ true: C.gold }} /></View>
         <View style={s.rule} />
         <View style={s.toggleRow}><View style={s.copy}><Text style={s.heading}>Saved bartender memory</Text><Text style={s.bodySmall}>Allow only facts or preferences you manually save. This is not automatic profiling.</Text></View><Switch value={memoryEnabled} onValueChange={setMemoryEnabled} trackColor={{ true: C.gold }} /></View>
         <Pressable style={s.primary} disabled={busy} onPress={() => void saveConsent()}><Text style={s.primaryText}>{busy ? 'SAVING…' : 'SAVE CONSENT CHOICES'}</Text></Pressable>

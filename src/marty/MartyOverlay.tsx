@@ -17,7 +17,7 @@ import { faceCaption, faceStateFor, microphoneLive } from './faceState';
 import { useMartyVoice } from './useMartyVoice';
 import { getMartyAgeAnswer, martyAgeStep, setMartyAgeAnswer, subscribeMartyAge, type MartyAgeAnswer } from './martyAge';
 import { NO_MENU_WEB, NO_SELECT_WEB, SELECT_TEXT_WEB, shouldAutoStart, showHoldToTalk, showStopButton } from './martyControls';
-import { martyAccountNote } from '../voice/martyGuest';
+import { martyAccountNote, MARTY_VOICE_PARTNERS_NOTE } from '../voice/martyGuest';
 import { useAuth } from '../auth/AuthContext';
 
 const C = { panel: 'rgba(10,13,18,0.97)', line: 'rgba(198,163,106,0.55)', gold: '#C6A36A', text: '#F0F1F2', muted: '#A0A7B0', live: '#FF5A4E' };
@@ -146,6 +146,7 @@ export function MartyOverlay({ bottomOffset, hidden = false, onNavigateCommand, 
           ) : voice.loadingConsent ? null : !voice.consent ? (
             <View style={s.block}>
               <Text style={s.body}>Tapping Enable voice is your consent to talk with Marty. Your browser then asks for the microphone. While Marty is on, he listens all the time and answers what he hears; turn him off with the switch above and the microphone goes off at once. Saved memory stays off unless you turn it on separately.</Text>
+              <Text testID="marty-voice-partners" style={s.small}>{MARTY_VOICE_PARTNERS_NOTE}</Text>
               <Text style={s.small}>{martyAccountNote(session)}</Text>
               <Pressable testID="marty-enable-voice" style={[s.primary, voice.busy && s.disabled]} disabled={voice.busy} onPress={() => void voice.enableVoice()}><Text style={s.primaryText}>{voice.busy ? 'GETTING READY…' : 'ENABLE VOICE'}</Text></Pressable>
             </View>
