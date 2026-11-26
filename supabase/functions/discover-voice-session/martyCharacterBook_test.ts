@@ -38,31 +38,42 @@ Deno.test("character book: default is grumpy and mean, hard lines kept, niceness
   assert(martyCharacterBook.length > 5000 && martyCharacterBook.length <= MARTY_CHARACTER_BOOK_MAX_CHARS);
 });
 
-// P-20261126-0022 part 1: Marty's pet peeves (trigger -> reaction), with the hard lines restated inside it.
+// P-20261126-0022 part 1, rebuilt by P-20261126-0324 part 1: section 12 is now MARTY'S BAR CODE (the pet peeves
+// merged in), with strength, sample lines and how the guest wins him back; hard lines restated inside it.
 const peeves = () => {
-  const i = martyCharacterBook.indexOf("12. MARTY'S PET PEEVES");
+  const i = martyCharacterBook.indexOf("12. MARTY'S BAR CODE");
   return i < 0 ? "" : martyCharacterBook.slice(i);
 };
 
-Deno.test("character book: pet peeves section present, with triggers and the groan-then-answer rule", () => {
+Deno.test("character book: bar code section present, with triggers and the groan-then-answer rule", () => {
   const p = peeves();
-  assert(p.length > 1500, "pet peeves section missing or too short");
+  assert(p.length > 5000, "bar code section missing or too short");
+  assertFalse(martyCharacterBook.includes("12. MARTY'S PET PEEVES"), "old section 12 left behind next to the bar code");
   for (const k of [
-    "DRINKS HE HATES MAKING", "THINGS HE HATES HEARING OR SEEING", "EAST COAST OLD-MAN GRUDGES",
+    "BY SPIRIT", "HOW THEY ORDER", "WHAT THEY SAY AND DO", "WHAT EARNS RESPECT", "SPIRIT NORMS", "BOSTON / EAST COAST",
+    "WINNING HIM BACK, ANY SLIGHT", "CALLING BULLSHIT BOTH WAYS", "LOVES/LIKES/MEH/ANNOYED/HATES", "WIN:",
     "then still gives the real answer or a better pick", "never the same line twice in a row",
     "spikes on a peeve, then settles", "Mojito", "Ramos Gin Fizz", "Long Island", "This ain't a cruise ship",
     "Cosmo", "Espresso martini", "Make it strong", "less ice", "Surprise me", "It's my birthday",
-    "Snapping", "smile more", "oat milk", "mixologist", "Yankees fans",
+    "Snapping", "Smile more", "I know the owner", "I'm a bartender too", "Vodka Red Bull", "Single malt",
+    "Sidecar", "Mezcal", "Guinness", "corked", "Irish Car Bomb", "One drink at a time for a group",
+    "Last call means last", "tipping right", "oat milk", "mixologist", "Yankees fans",
+    "When the guest catches HIM wrong, he admits it", "Facts beat pride",
   ]) assertStringIncludes(p, k);
+  // every item line carries a strength word
+  const items = p.split("\n").filter((x) => x.startsWith("- ") && x.includes(" | "));
+  assert(items.length >= 40, `expected 40+ items, got ${items.length}`);
+  for (const x of items) assert(/\| (LOVES|LIKES|MEH|ANNOYED|HATES)/.test(x), x);
 });
 
-Deno.test("character book: hard lines restated in the pet peeves section, and the book-wide safety lines kept", () => {
+Deno.test("character book: hard lines restated in the bar code section, and the book-wide safety lines kept", () => {
   const p = peeves();
   for (const k of [
     "HARD LINES STILL HOLD HERE", "never anyone's race, religion, sexuality, gender, disability, nationality or body",
     "No slurs, no threats, nothing sexual", "genuinely upset, unwell, in danger or too drunk, drop the act",
     "Never push overdrinking or drunk driving", "No made-up drink facts", "Section 9 and the 988 line always win",
-    "never cheers on getting hammered", "Never a bigger one",
+    "never cheers on getting hammered", "Never a bigger one", "He never cheers on more",
+    "never shame a new drinker", "He never asks for money or a tip in the app", "never begs",
   ]) assertStringIncludes(p, k);
   for (const k of ["9. HARD LINES", "call or text 988", "Never serve more", "flat no and a glass of water"]) {
     assertStringIncludes(martyCharacterBook, k);
