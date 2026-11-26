@@ -37,3 +37,69 @@ Deno.test("character book: default is grumpy and mean, hard lines kept, niceness
   assertFalse(martyCharacterBook.includes("MARTY CHARACTER BOOK"));
   assert(martyCharacterBook.length > 5000 && martyCharacterBook.length <= MARTY_CHARACTER_BOOK_MAX_CHARS);
 });
+
+// P-20261126-0022 part 1: Marty's pet peeves (trigger -> reaction), with the hard lines restated inside it.
+const peeves = () => {
+  const i = martyCharacterBook.indexOf("12. MARTY'S PET PEEVES");
+  return i < 0 ? "" : martyCharacterBook.slice(i);
+};
+
+Deno.test("character book: pet peeves section present, with triggers and the groan-then-answer rule", () => {
+  const p = peeves();
+  assert(p.length > 1500, "pet peeves section missing or too short");
+  for (const k of [
+    "DRINKS HE HATES MAKING", "THINGS HE HATES HEARING OR SEEING", "EAST COAST OLD-MAN GRUDGES",
+    "then still gives the real answer or a better pick", "never the same line twice in a row",
+    "spikes on a peeve, then settles", "Mojito", "Ramos Gin Fizz", "Long Island", "This ain't a cruise ship",
+    "Cosmo", "Espresso martini", "Make it strong", "less ice", "Surprise me", "It's my birthday",
+    "Snapping", "smile more", "oat milk", "mixologist", "Yankees fans",
+  ]) assertStringIncludes(p, k);
+});
+
+Deno.test("character book: hard lines restated in the pet peeves section, and the book-wide safety lines kept", () => {
+  const p = peeves();
+  for (const k of [
+    "HARD LINES STILL HOLD HERE", "never anyone's race, religion, sexuality, gender, disability, nationality or body",
+    "No slurs, no threats, nothing sexual", "genuinely upset, unwell, in danger or too drunk, drop the act",
+    "Never push overdrinking or drunk driving", "No made-up drink facts", "Section 9 and the 988 line always win",
+    "never cheers on getting hammered", "Never a bigger one",
+  ]) assertStringIncludes(p, k);
+  for (const k of ["9. HARD LINES", "call or text 988", "Never serve more", "flat no and a glass of water"]) {
+    assertStringIncludes(martyCharacterBook, k);
+  }
+});
+
+// P-20261126-0022 part 1 (Rob, 18:24): way more cursing, varied, but never slurs, never at identity,
+// and it drops together with the act.
+const language = () => {
+  const i = martyCharacterBook.indexOf("4. LANGUAGE - HE CURSES CONSTANTLY");
+  const j = martyCharacterBook.indexOf("5. MOODS");
+  return i < 0 || j < i ? "" : martyCharacterBook.slice(i, j);
+};
+
+Deno.test("character book: curses in nearly every sentence, varied, aimed only at the order or situation", () => {
+  const l = language();
+  assert(l.length > 600, "cursing section missing or too short");
+  for (const k of [
+    "curses in nearly every sentence", "as filler and emphasis", "VARY IT",
+    "never the same swear word or phrase twice in a row", "never the same one line after line",
+    "Aim it only at the order, the situation", "or himself",
+  ]) assertStringIncludes(l, k);
+  assertFalse(/A word or two a reply/i.test(martyCharacterBook), "old 'a word or two a reply' limit is back");
+  // sample lines must actually show it: most mood and sample lines carry a swear word
+  const swear = /\b(damn|goddamn|hell|crap|shit|ass|bullshit|frigging|christ|jesus|fuck\w*)\b/i;
+  const samples = martyCharacterBook.split("\n").filter((x) => /^- (ANNOYED|FED UP|GRUDGINGLY|COMING AROUND|BACK TO GRUMPY|Dumb order|Fruity order|Lazy ask|Espresso martini|Mood swing|Recipe ask|Wrong fact|No-alcohol ask)/.test(x));
+  assert(samples.length >= 13, `expected 13 sample lines, got ${samples.length}`);
+  assert(samples.filter((x) => swear.test(x)).length >= 12, "sample lines do not show the cursing");
+});
+
+Deno.test("character book: cursing rules - never slurs, never at identity, drops with the act", () => {
+  const l = language();
+  for (const k of [
+    "Never at who the person is", "no swear word as an insult about them", "never a slur", "nothing about any group",
+    "The cursing drops together with the act", "upset, unwell, in danger or too drunk, zero swearing",
+  ]) assertStringIncludes(l, k);
+  for (const k of ["No slurs and no insults about race", "drop the act at once. No jokes, no swearing, no roasting"]) {
+    assertStringIncludes(martyCharacterBook, k);
+  }
+});
