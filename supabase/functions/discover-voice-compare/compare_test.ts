@@ -404,3 +404,48 @@ Deno.test("elevenlabs: server reads the key only from ELEVENLABS_API_KEY", async
   // no voice design or save path left in the server
   assertFalse(lib.includes("text-to-voice"));
 });
+
+// ---- Pet peeve spikes reach the ElevenLabs Marty (P-20261126-0022 part 2) ----------------------
+const PEEVE_KEYS = [
+  "PET PEEVE SPIKES — SPIKE FAST, THEN SETTLE",
+  "Spike, then settle: one beat of open annoyance, then back to home-base grumpy in the same reply",
+  "still give the real answer",
+  "never their race, religion, sexuality, gender, disability, nationality, age, looks or body",
+  "No spike if the guest is genuinely upset, unwell, in danger or too drunk: drop the act",
+  "never pushes another drink, a stronger pour, or driving after drinking",
+  "No slurs", "No threats, no violence, no sexual content", "drop the act at once",
+  "Never encourage overdrinking or drunk driving", "Never invent recipe origins",
+];
+const okRoutes = (extra: Record<string, [number, unknown]>) => ({
+  [`GET ${MV}`]: [200, { voice_id: MARTY_VOICE_ID }] as [number, unknown],
+  "GET /v1/convai/conversation/token": [200, { token: "t" }] as [number, unknown],
+  ...extra,
+});
+
+Deno.test("pet peeves: ElevenLabs Marty gets the whole character book, the spike rule and every hard line (create and update)", async () => {
+  for (const [label, routes, path, env] of [
+    ["create", okRoutes({ "GET /v1/convai/agents": [200, { agents: [] }], "POST /v1/convai/agents/create": [200, { agent_id: "a1" }] }), "/agents/create", {}],
+    ["update", okRoutes({ "PATCH /v1/convai/agents/a9": [200, {}] }), "/agents/a9", { elevenLabsAgentId: "a9" }],
+  ] as const) {
+    for (const mode of ["push_to_talk", "hands_free"] as const) {
+      const calls: Call[] = [];
+      const r = await mintContender({ ...EL_REQ, mode }, { openAiKey: "k", geminiKey: "", elevenLabsKey: EL_KEY, ...env }, elStub(routes, calls));
+      assertEquals(r.status, 200, label);
+      const sent = JSON.parse(String(calls.find((c) => c.url.endsWith(path))!.init.body));
+      const prompt: string = sent.conversation_config.agent.prompt.prompt;
+      assert(prompt.includes(martyCharacterBook.trim()), `${label}: whole book`);
+      for (const k of PEEVE_KEYS) assert(prompt.includes(k), `${label}: ${k}`);
+      // same script as the live Marty (bar the per-session random flavor), so it can never drift
+      const live = buildRealtimeSession({ mode, characterBook: martyCharacterBook, lookupsEnabled: false }).session.instructions;
+      const noFlavor = (t: string) => t.replace(/\nSESSION FLAVOR[\s\S]*?the rules above\.\n/, "");
+      assertEquals(noFlavor(prompt), noFlavor(live), label);
+    }
+  }
+});
+
+Deno.test("pet peeves: ElevenLabs agent config carries any book section whole", () => {
+  const book = martyCharacterBook + "\n\nMARTY'S PET PEEVES\n- Espresso martinis at last call: sigh, then make it right.\n";
+  const instr = buildRealtimeSession({ mode: "push_to_talk", characterBook: book, lookupsEnabled: false }).session.instructions;
+  const cfg = buildAgentConfig(instr, MARTY_VOICE_ID);
+  assert(String(cfg.conversation_config.agent.prompt.prompt).includes(book.trim()));
+});
