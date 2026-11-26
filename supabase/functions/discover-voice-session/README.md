@@ -43,8 +43,9 @@ The server strips control characters, trims, truncates to these limits, and drop
 
 ## ElevenLabs agent voice and turn settings (P-20261126-0320)
 
-- Sent on agent create and every sync: `conversation_config.tts.speed = 0.95`, `tts.stability = 0.4`, `conversation_config.turn.turn_eagerness = "patient"`. These overwrite dashboard values for the same fields.
-- If ElevenLabs refuses them (400/422) the server retries without them (tools kept), then plain, so a refused setting never takes Marty down.
+- Sent on agent create and every sync: `conversation_config.tts.model_id = "eleven_multilingual_v2"` (r2: the model that follows Rob's saved voice and its accent most closely; was `eleven_flash_v2`), `tts.speed = 0.95`, `tts.stability = 0.35` (r2, was 0.4), `tts.similarity_boost = 0.9` (r2, new), `conversation_config.turn.turn_eagerness = "patient"`. These overwrite dashboard values for the same fields.
+- If ElevenLabs refuses them (400/422) the server retries: Flash v2 with the same tuning, then no tuning (tools kept), then plain, so a refused setting never takes Marty down.
+- Voice: Rob's "Marty" (`p9Y6zzVEQV7SMw7VcCkd`). If that id is ever gone and no `ELEVENLABS_VOICE_ID` override is set, the server looks up, read-only, exactly one voice named "Marty" and uses it; none or several = `voice_not_found` and the OpenAI voice, as before.
 
 ## Server secrets
 

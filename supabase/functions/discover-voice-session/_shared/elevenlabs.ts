@@ -6,7 +6,8 @@
 //
 // Flow on each ElevenLabs start (all server side):
 //  1. Voice: always Rob's own voice "Marty" (MARTY_VOICE_ID), unless ELEVENLABS_VOICE_ID overrides it. Read-only
-//     check that it exists; the server NEVER designs, saves or changes a voice. Missing = step voice_not_found.
+//     check that it exists; the server NEVER designs, saves or changes a voice. If the default id is gone, a read-only
+//     name search for exactly one voice called "Marty" (GET /v2/voices?search=); still missing = step voice_not_found.
 //  2. Agent: ELEVENLABS_AGENT_ID if set, else our ONE agent found by exact name (search, then paged list, oldest
 //     wins), created only if none exists. Sign-in requirement always ON (platform_settings.auth.enable_auth).
 //  3. The agent holds ONLY the shared Marty script (identical for every guest: Boston script, comedy craft,
@@ -18,7 +19,7 @@
 // Confirmed from ElevenLabs docs (read 26 Nov 2026): GET /v1/convai/conversation/token?agent_id= -> { token },
 // GET /v1/convai/conversation/get-signed-url?agent_id=, xi-api-key header, client startSession({ conversationToken |
 // signedUrl, dynamicVariables, clientTools }), {{variable}} dynamic variables in the system prompt.
-// UNCONFIRMED (pages refused or not re-read): GET /v1/voices/{id}, agent create/update/list paths and body shape,
+// UNCONFIRMED (pages refused or not re-read): GET /v1/voices/{id}, GET /v2/voices?search=, agent create/update/list paths and body shape,
 // inline client tools (conversation_config.agent.prompt.tools, type "client"), dynamic variable placeholders, and the
 // signed_url field name. Safety net: if ElevenLabs refuses the full agent settings (400/422), the server retries
 // once with the plain settings (script + voice + sign-in, no tools); clientTools in the answer tells the app which
@@ -35,17 +36,26 @@ import { formatScreenContextInstructions, type ScreenContext } from "./screenCon
 export const ELEVENLABS_API = "https://api.elevenlabs.io";
 // Rob's own voice "Marty", saved by Rob in ElevenLabs. Not a secret: it only works with Rob's key.
 export const MARTY_VOICE_ID = "p9Y6zzVEQV7SMw7VcCkd";
+// Rob's voice is saved under this exact name. If the id above is ever gone (for example Rob remade the voice and the
+// remake got a new id), the server looks the name up, read-only, and uses it only if exactly one voice has that name.
+export const MARTY_VOICE_NAME = "Marty";
 export const MARTY_AGENT_NAME = "Marty (Harmony Discover live)";
-// English-only agents use the low-latency Flash voice model.
+// Voice model (P-20261126-0320 r2, Rob: "way more thick Boston accented"). First choice is Multilingual v2, the
+// ElevenLabs model that follows a saved voice most closely (it keeps Rob's Boston sound best), at the cost of a little
+// more delay before each reply. If ElevenLabs refuses it for this agent (400/422), the server falls back to the
+// low-latency English Flash v2 model, which was the only model used before.
+export const AGENT_ACCENT_TTS_MODEL = "eleven_multilingual_v2";
 export const AGENT_TTS_MODEL = "eleven_flash_v2";
 export const SESSION_VARIABLE = "marty_session";
 // How Marty's ElevenLabs voice is delivered and how patient he is about turns (P-20261126-0320). Sent on agent create
 // and every sync, so these overwrite any dashboard value for the same fields. If ElevenLabs refuses them (400/422),
 // the server retries without them (tools kept), then plain, so a refused setting can never take Marty down.
 //  - speed 0.95: a touch slower than ElevenLabs' 1.0 default, so punchlines and serious moments land.
-//  - stability 0.4: a bit below the 0.5 default, so the voice varies more: pauses, dry laughs, slower warm-ups.
+//  - stability 0.35 (r2, was 0.4; default 0.5): more expressive, more ups and downs, dry laughs, mock outrage.
+//  - similarity_boost 0.9 (r2, new; default 0.75): sticks much closer to Rob's own saved voice, so the Boston accent
+//    he put into it holds even with the lower stability instead of drifting toward a neutral voice.
 //  - turn_eagerness "patient": waits longer before deciding the guest is done, so he does not cut them off.
-export const AGENT_VOICE_TUNING = { speed: 0.95, stability: 0.4 } as const;
+export const AGENT_VOICE_TUNING = { speed: 0.95, stability: 0.35, similarity_boost: 0.9 } as const;
 export const AGENT_TURN_TUNING = { turn_eagerness: "patient" } as const;
 
 // ---- which voice engine ------------------------------------------------------------------------
@@ -127,7 +137,7 @@ export function buildClientTools(lookupsEnabled: boolean) {
 }
 
 export function buildAgentConfig(
-  sharedPrompt: string, voiceId: string, opts: { llm?: string; tools?: unknown[]; tuning?: boolean } = {},
+  sharedPrompt: string, voiceId: string, opts: { llm?: string; tools?: unknown[]; tuning?: boolean; model?: string } = {},
 ) {
   const prompt: Record<string, unknown> = { prompt: sharedPrompt };
   if (opts.llm) prompt.llm = opts.llm;
@@ -139,7 +149,7 @@ export function buildAgentConfig(
   return {
     name: MARTY_AGENT_NAME,
     conversation_config: opts.tuning
-      ? { agent, tts: { voice_id: voiceId, model_id: AGENT_TTS_MODEL, ...AGENT_VOICE_TUNING }, turn: { ...AGENT_TURN_TUNING } }
+      ? { agent, tts: { voice_id: voiceId, model_id: opts.model ?? AGENT_TTS_MODEL, ...AGENT_VOICE_TUNING }, turn: { ...AGENT_TURN_TUNING } }
       : { agent, tts: { voice_id: voiceId, model_id: AGENT_TTS_MODEL } },
     // Sign-in required: id-only conversations are refused by ElevenLabs; only our server's token works.
     platform_settings: { auth: { enable_auth: true } },
@@ -174,6 +184,14 @@ async function checkVoice(f: FetchLike, key: string, voiceId: string): Promise<{
   if (r.status === 200 && str((r.body as { voice_id?: unknown })?.voice_id) === voiceId) return null;
   if (r.status === 200 || r.status === 400 || r.status === 404 || r.status === 422) return { step: "voice_not_found", status: r.status };
   return { step: "voice_check", status: r.status };
+}
+// Read-only: only used when the default voice id is missing and no ELEVENLABS_VOICE_ID override is set.
+async function findVoiceByName(f: FetchLike, key: string): Promise<string> {
+  const r = await call(f, `${ELEVENLABS_API}/v2/voices?search=${encodeURIComponent(MARTY_VOICE_NAME)}&page_size=100`, { method: "GET", headers: { "xi-api-key": key } });
+  if (r.status !== 200) return "";
+  const voices = ((r.body as { voices?: { voice_id?: unknown; name?: unknown }[] })?.voices ?? [])
+    .filter((v) => typeof v?.name === "string" && v.name.trim() === MARTY_VOICE_NAME && str(v.voice_id));
+  return voices.length === 1 ? str(voices[0].voice_id) : "";
 }
 type AgentRow = { agent_id?: unknown; name?: unknown; created_at_unix_secs?: unknown };
 const MAX_LIST_PAGES = 10;
@@ -217,20 +235,31 @@ export async function mintElevenLabs(
   fetchImpl: FetchLike = fetch, cache: ElevenCache = elevenCache,
 ): Promise<ElevenResult> {
   const key = env.apiKey;
-  const voiceId = (env.voiceId ?? "").trim() || MARTY_VOICE_ID;
+  const override = (env.voiceId ?? "").trim();
+  let voiceId = cache.voiceOk && !override ? cache.voiceOk : override || MARTY_VOICE_ID;
   if (cache.voiceOk !== voiceId) {
     const missing = await checkVoice(fetchImpl, key, voiceId);
-    if (missing) return { ok: false, ...missing };
+    if (missing && (override || missing.step !== "voice_not_found")) return { ok: false, ...missing };
+    if (missing) {
+      // Default id gone: look Rob's "Marty" voice up by name (never designs, saves or changes a voice).
+      const byName = await findVoiceByName(fetchImpl, key);
+      if (!byName || byName === voiceId) return { ok: false, ...missing };
+      const again = await checkVoice(fetchImpl, key, byName);
+      if (again) return { ok: false, ...again };
+      voiceId = byName;
+    }
     cache.voiceOk = voiceId;
   }
   const llm = (env.llm ?? "").trim() || undefined;
   const tools = buildClientTools(lookupsEnabled);
   let toolNames: string[] = cache.tools ?? tools.map((t) => t.name);
-  // Tried in order on a 400/422 refusal: tuned (tools + voice/turn tuning), then tools only, then plain.
+  // Tried in order on a 400/422 refusal: accent model + tuning, then Flash + tuning, then tools only, then plain.
+  const accent = buildAgentConfig(sharedPrompt, voiceId, { llm, tools, tuning: true, model: AGENT_ACCENT_TTS_MODEL });
   const tuned = buildAgentConfig(sharedPrompt, voiceId, { llm, tools, tuning: true });
   const full = buildAgentConfig(sharedPrompt, voiceId, { llm, tools });
   const plain = buildAgentConfig(sharedPrompt, voiceId, { llm });
   const attempts: { body: unknown; names: string[] }[] = [
+    { body: accent, names: tools.map((t) => t.name) },
     { body: tuned, names: tools.map((t) => t.name) },
     { body: full, names: tools.map((t) => t.name) },
     { body: plain, names: [] },
@@ -244,7 +273,7 @@ export async function mintElevenLabs(
     }
     return r;
   };
-  const print = await fingerprint(JSON.stringify(tuned));
+  const print = await fingerprint(JSON.stringify(accent));
 
   let agentId = (env.agentId ?? "").trim() || cache.agentId || "";
   if (!agentId) {
