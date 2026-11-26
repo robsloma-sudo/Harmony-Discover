@@ -20,7 +20,7 @@ const SCREEN = { route: "library" } as unknown as MintGrantArgs["screenContext"]
 
 type Call = { url: string; method: string; body: string; headers: Record<string, string> };
 // Fake ElevenLabs + OpenAI. Remembers created agents so repeat starts can prove "one agent".
-function fakeProviders(opts: { refuseTools?: boolean; failStep?: string; agents?: { agent_id: string; name: string }[] } = {}) {
+function fakeProviders(opts: { refuseTools?: boolean; refuseTuning?: boolean; refuseAccentModel?: boolean; failStep?: string; agents?: { agent_id: string; name: string }[]; goneVoices?: string[]; namedVoices?: { voice_id: string; name: string }[] } = {}) {
   const calls: Call[] = [];
   const agents = opts.agents ?? [];
   const f = (url: string, init: RequestInit) => {
@@ -29,9 +29,14 @@ function fakeProviders(opts: { refuseTools?: boolean; failStep?: string; agents?
     calls.push({ url, method, body, headers: init.headers as Record<string, string> });
     const ok = (b: unknown, s = 200) => Promise.resolve(new Response(JSON.stringify(b), { status: s }));
     if (url === OPENAI_CLIENT_SECRETS_URL) return ok({ value: "ek_openai", expires_at: 1900000000, session: { id: "sess_1" } });
-    if (url.includes("/v1/voices/")) return opts.failStep === "voice" ? ok({}, 404) : ok({ voice_id: MARTY_VOICE_ID });
+    if (url.includes("/v2/voices?")) return ok({ voices: opts.namedVoices ?? [], has_more: false });
+    if (url.includes("/v1/voices/")) {
+      const id = decodeURIComponent(url.split("/v1/voices/")[1]);
+      return opts.failStep === "voice" || (opts.goneVoices ?? []).includes(id) ? ok({}, 404) : ok({ voice_id: id });
+    }
     if (url.includes("/v1/convai/agents?")) return ok({ agents, has_more: false });
-    const toolsRefused = opts.refuseTools && body.includes("\"tools\"");
+    const toolsRefused = (opts.refuseTools && body.includes("\"tools\"")) || (opts.refuseTuning && body.includes("\"stability\"")) ||
+      (opts.refuseAccentModel && body.includes("eleven_multilingual_v2"));
     if (url.endsWith("/v1/convai/agents/create")) {
       if (toolsRefused) return ok({ detail: "bad" }, 422);
       const id = `agent_${agents.length + 1}`;
@@ -162,7 +167,8 @@ Deno.test("ElevenLabs: if it refuses the tool settings, retry plain and tell the
   const r = await mintGrant(args(), p.f);
   assertEquals(r.engine, "elevenlabs");
   assertEquals(r.body.clientTools, []);
-  assertEquals(p.calls.filter((c) => c.url.endsWith("/agents/create")).length, 2);
+  // accent model + tuning, Flash + tuning, tools without tuning, then plain
+  assertEquals(p.calls.filter((c) => c.url.endsWith("/agents/create")).length, 4);
 });
 
 Deno.test("ElevenLabs failure falls back to today's OpenAI voice, so guests still get Marty", async () => {
@@ -242,4 +248,87 @@ Deno.test("live program: 21+ check, sign-in, consent and rate limit all come bef
   assertFalse(src.includes("elevenlabs.io"));
   assertStringIncludes(src, "ELEVENLABS_API_KEY");
   assertStringIncludes(src, "characterBook: martyCharacterBook");
+});
+
+// ---- P-20261126-0320: slower here and there, patient turn-taking --------------------------------
+import { AGENT_TURN_TUNING, AGENT_VOICE_TUNING, buildAgentConfig } from "./_shared/elevenlabs.ts";
+Deno.test("0320 r2: ElevenLabs agent gets the accent model, speed 0.95, stability 0.35, similarity 0.9 and patient turns on create", async () => {
+  assertEquals(AGENT_VOICE_TUNING, { speed: 0.95, stability: 0.35, similarity_boost: 0.9 });
+  assertEquals(AGENT_TURN_TUNING, { turn_eagerness: "patient" });
+  const p = fakeProviders();
+  const r = await mintGrant(args(), p.f);
+  assertEquals(r.engine, "elevenlabs");
+  const create = p.calls.filter((c) => c.url.endsWith("/agents/create"));
+  assertEquals(create.length, 1);
+  const cc = JSON.parse(create[0].body).conversation_config;
+  assertEquals(cc.tts, { voice_id: MARTY_VOICE_ID, model_id: "eleven_multilingual_v2", speed: 0.95, stability: 0.35, similarity_boost: 0.9 });
+  assertEquals(cc.turn, { turn_eagerness: "patient" });
+  // sign-in requirement unchanged
+  assertEquals(JSON.parse(create[0].body).platform_settings, { auth: { enable_auth: true } });
+});
+
+Deno.test("0320: if ElevenLabs refuses the new voice settings, Marty keeps his tools and still starts on ElevenLabs", async () => {
+  const p = fakeProviders({ refuseTuning: true });
+  const r = await mintGrant(args(), p.f);
+  assertEquals(r.engine, "elevenlabs");
+  assert(!r.fellBack);
+  assert((r.body.clientTools as string[]).length > 0);
+  const create = p.calls.filter((c) => c.url.endsWith("/agents/create"));
+  // accent model + tuning, Flash + tuning (both refused here), then tools without tuning
+  assertEquals(create.length, 3);
+  assertFalse(create[2].body.includes("stability"));
+  assertStringIncludes(create[2].body, "\"tools\"");
+});
+
+Deno.test("0320: untuned bodies are exactly today's settings (tools-only and plain fallbacks unchanged)", () => {
+  const a = buildAgentConfig("x", "v", { tools: [] }) as { conversation_config: Record<string, unknown> };
+  assertEquals(a.conversation_config.tts, { voice_id: "v", model_id: "eleven_flash_v2" });
+  assertFalse("turn" in a.conversation_config);
+});
+
+// ---- P-20261126-0320 r2: thicker accent, Rob's reworked voice ------------------------------------
+Deno.test("0320 r2: if ElevenLabs refuses the accent model, it falls back to Flash with the same tuning and tools", async () => {
+  const p = fakeProviders({ refuseAccentModel: true });
+  const r = await mintGrant(args(), p.f);
+  assertEquals(r.engine, "elevenlabs");
+  assert((r.body.clientTools as string[]).length > 0);
+  const create = p.calls.filter((c) => c.url.endsWith("/agents/create"));
+  assertEquals(create.length, 2);
+  const cc = JSON.parse(create[1].body).conversation_config;
+  assertEquals(cc.tts, { voice_id: MARTY_VOICE_ID, model_id: "eleven_flash_v2", speed: 0.95, stability: 0.35, similarity_boost: 0.9 });
+  assertEquals(cc.turn, { turn_eagerness: "patient" });
+});
+
+Deno.test("0320 r2: Rob's voice id still there -> used as is, no name search", async () => {
+  const p = fakeProviders();
+  const r = await mintGrant(args(), p.f);
+  assertEquals(r.engine, "elevenlabs");
+  assertFalse(p.calls.some((c) => c.url.includes("/v2/voices")));
+  assertStringIncludes(p.calls.find((c) => c.url.endsWith("/agents/create"))!.body, MARTY_VOICE_ID);
+});
+
+Deno.test("0320 r2: default voice id gone -> exactly one voice named Marty is used, read-only", async () => {
+  const p = fakeProviders({ goneVoices: [MARTY_VOICE_ID], namedVoices: [{ voice_id: "newMartyId", name: "Marty" }, { voice_id: "x1", name: "Marty Old Draft" }] });
+  const r = await mintGrant(args(), p.f);
+  assertEquals(r.engine, "elevenlabs");
+  const create = p.calls.find((c) => c.url.endsWith("/agents/create"))!;
+  assertEquals(JSON.parse(create.body).conversation_config.tts.voice_id, "newMartyId");
+  // only GETs touch voices: nothing is designed, saved or changed
+  for (const c of p.calls.filter((c) => c.url.includes("/voices"))) assertEquals(c.method, "GET");
+});
+
+Deno.test("0320 r2: default voice gone and no single Marty voice -> falls back to OpenAI as before", async () => {
+  for (const namedVoices of [[], [{ voice_id: "a", name: "Marty" }, { voice_id: "b", name: "Marty" }]]) {
+    const p = fakeProviders({ goneVoices: [MARTY_VOICE_ID], namedVoices });
+    const r = await mintGrant(args(), p.f);
+    assertEquals(r.engine, "openai");
+    assertEquals(r.fellBack, "voice_not_found");
+  }
+});
+
+Deno.test("0320 r2: an ELEVENLABS_VOICE_ID override is never swapped by the name search", async () => {
+  const p = fakeProviders({ goneVoices: ["override1"], namedVoices: [{ voice_id: "newMartyId", name: "Marty" }] });
+  const r = await mintGrant(args({}, { elevenLabsVoiceId: "override1" }), p.f);
+  assertEquals(r.engine, "openai");
+  assertFalse(p.calls.some((c) => c.url.includes("/v2/voices")));
 });

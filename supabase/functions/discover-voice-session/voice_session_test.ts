@@ -67,11 +67,11 @@ Deno.test("voice: cedar default, bogus falls back, allow-list honored", () => {
   assertEquals(buildRealtimeSession({ mode: "push_to_talk", voiceEnv: "bogus" }).voice, "cedar");
   const b = buildRealtimeSession({ mode: "push_to_talk", voiceEnv: "ash" });
   assertEquals(b.voice, "ash");
-  assertEquals(b.session.audio.output, { voice: "ash", speed: 1.0 });
+  assertEquals(b.session.audio.output, { voice: "ash", speed: 0.95 });
   assertEquals(b.session.model, "gpt-realtime-2.1");
 });
 
-const HANDS_FREE_TD = { type: "semantic_vad", eagerness: "high", create_response: true, interrupt_response: true };
+const HANDS_FREE_TD = { type: "semantic_vad", eagerness: "medium", create_response: true, interrupt_response: true };
 
 Deno.test("mode: app asks for hands_free -> continuous listening with interruption", () => {
   for (const env of [undefined, null, "", "on", "ON", " yes "]) {
@@ -292,7 +292,7 @@ Deno.test("base script: personal-history line allows only the book, no clash", (
 Deno.test("instructions: total size stays bounded with book + look-ups + full context", () => {
   const ctx = sanitizeScreenContext({ screen: "menu", menuLines: Array.from({ length: 25 }, () => "m".repeat(140)) });
   const t = buildRealtimeSession({ mode: "hands_free", screenContext: ctx, pick: () => 0, memoryContext: "x".repeat(4000), characterBook: martyCharacterBook }).session.instructions;
-  assert(t.length < 45000, `instructions ${t.length} chars`);
+  assert(t.length < 64000, `instructions ${t.length} chars`);
 });
 
 // P-20261125-1654 part 2: thick Boston accent, cursing (21+), short replies, mood that shifts during the chat.
@@ -358,7 +358,7 @@ Deno.test("P-1654 r2: no warm-host, thank-you, sorry or anything-else lines anyw
       }
     }
   }
-  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.4.0");
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.6.0");
 });
 
 Deno.test("P-1654 r2: grumpy, roasting default, rare grudging respect, only the hard lines kept, no-host block before the book", () => {
@@ -366,7 +366,7 @@ Deno.test("P-1654 r2: grumpy, roasting default, rare grudging respect, only the 
   for (const k of [
     "Grumpy, impatient, sarcastic", "This is your default every session", "You roast the guest's order",
     "You still give the real, correct answer every time", "You are not a host", "NO HOST MANNERS (THIS OVERRIDES ANY OTHER LINE, INCLUDING THE CHARACTER BOOK)",
-    "Grudging respect is rare", "You never turn into a nice guy", "Being nice or helpful is never a reason to drop the attitude",
+    "Grudging respect for an order is rare", "You never turn into a nice guy", "Being nice or helpful is never a reason to drop the attitude",
     // hard lines that stay
     "No slurs, no insults about any group", "No threats, no violence, no sexual content", "never at who the person is",
     "drop the act at once", "Never encourage overdrinking or drunk driving",
@@ -473,18 +473,19 @@ Deno.test("cursing: way more, varied, and every limit kept in both modes", () =>
 
 // ---- Ranting Boston energy, real words, more on request (P-20261126-0102 part 1b, Rob 26 Nov) ---
 import { buildElevenLabsPrompt } from "./_shared/elevenlabs.ts";
+// P-20261126-0320 replaced the rant/escalation lines with funny-grumpy energy (Rob: "less angry, more funny angry").
 const RANT_KEYS = [
-  "RANTING ENERGY",
-  "short, exasperated Boston rant: you start annoyed and you are fed up by the end of the line",
-  "Over a chat you escalate, annoyed first, then fed up, then completely done with this, but you still answer every time",
+  "FUNNY GRUMPY ENERGY",
+  "Most answers are a quick joke or a one-liner with a grumble on it, not a rant",
+  "Your irritation never sticks and never keeps climbing over a chat",
   "never name, quote or imitate any real comedian, actor or other real person, and never use anyone's known jokes, catchphrases or voice",
   "Basically every sentence you say has at least one curse in it",
   "Say the real words: never water them down to darn, heck, gosh, frick or shoot, and never bleep or skip them",
   "If a guest asks you to swear more, go harder for them, same limits",
   "If a guest asks you to cut the swearing, cut it for them",
-  "Escalate like a rant: annoyed, then fed up, then completely done with tonight",
+  "NO CLIMBING: irritation never builds up over a chat",
   "HOW HE SOUNDS — EXAMPLE LINES (STYLE ONLY, NEVER REPEAT THEM WORD FOR WORD)",
-  "the anger at the order or the night, never at the guest, then the real answer",
+  "the joke at the order or the night, never at the guest, then the real answer",
 ];
 Deno.test("1b: ranting energy, real curse words, more on request, own character — OpenAI and ElevenLabs get the same rules", () => {
   for (const mode of ["push_to_talk", "hands_free"] as const) {
@@ -495,7 +496,7 @@ Deno.test("1b: ranting energy, real curse words, more on request, own character 
       assertEquals(hostTalkLeft(t.replace(martyCharacterBook.trim(), "")), []);
     }
   }
-  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.4.0");
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.6.0");
 });
 
 Deno.test("1b: example lines curse in every sentence and never aim it at the guest", () => {
@@ -509,4 +510,135 @@ Deno.test("1b: example lines curse in every sentence and never aim it at the gue
   }
   // starting moods stay grumpy (no plain good mood)
   assertFalse(MARTY_MOODS.some((m) => /decent mood|good mood|cheerful|happy/i.test(m)));
+});
+
+// ---- P-20261126-0320: funny grumpy, real dialogue, no grudges, slower here and there ------------
+const TALK_KEYS = [
+  "funny grumpy, not mad", "dry and amused", "you are never actually angry at the guest",
+  "Rants are rare", "as playful seasoning, not fury",
+  "TALKING IT OUT — A REAL BACK-AND-FORTH, NO GRUDGES",
+  "now and then ask the guest something back",
+  "If they make a fair point, change your mind out loud", "alright, fair, ya got me",
+  "No grudges, ever", "forgive fast and lighten up", "eh, we're good, kid", "never bring it back up",
+  "Never shut the door: no rude order, bad taste, repeated question or spat ever makes you stop talking",
+  "with real empathy under the gruff",
+  "this block wins on tone and on forgiving; every hard line still holds",
+  "PACE CHANGES, NEVER ONE SPEED", "a little beat of a pause right before the punchline",
+  "slower, lower and steadier on anything serious, personal or heartfelt",
+  "Never talk over the guest",
+];
+// Lines from #161 that made irritation stick or climb; none may come back.
+const GONE_0320 = [
+  "RANTING ENERGY", "Over a chat you escalate", "Escalate like a rant", "you get more impatient, not friendlier",
+  "it pisses you off", "each fed-up step brings a bit more cursing", "fed up again", "completely done with tonight",
+  "at most once in a session", "Do not end replies with a question", "no follow-up question unless you truly need one",
+  "already fed up and the night just started", "done with everybody", "short fuse", "patience gone",
+];
+Deno.test("0320: funny grumpy, dialogue, forgiveness, empathy and pacing reach both voices; climbing anger is gone", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (let i = 0; i < MARTY_MOODS.length; i++) {
+      const pick = (n: number) => i % n;
+      const oa = buildRealtimeSession({ mode, characterBook: martyCharacterBook, pick }).session.instructions;
+      const el = buildElevenLabsPrompt({ mode, characterBook: martyCharacterBook, pick });
+      for (const t of [oa, el.shared]) {
+        for (const k of TALK_KEYS) assertStringIncludes(t, k);
+        for (const g of GONE_0320) assertFalse(t.replace(martyCharacterBook.trim(), "").includes(g), g);
+        // the tone block comes after the book so it wins where they clash, and before the hard pet-peeve rules
+        assert(t.indexOf("CHARACTER BOOK - MARTY SULLIVAN") < t.indexOf("TALKING IT OUT"));
+        assert(t.indexOf("MOOD SHIFTS —") < t.indexOf("TALKING IT OUT") && t.indexOf("TALKING IT OUT") < t.indexOf("PET PEEVE SPIKES"));
+      }
+      for (const g of GONE_0320) assertFalse(el.session.includes(g), g);
+    }
+  }
+});
+
+Deno.test("0320: hard lines unchanged (order not person, no slurs, drop the act, no overdrinking, own character)", () => {
+  const t = buildRealtimeSession({ mode: "hands_free", pick: () => 0, characterBook: martyCharacterBook }).session.instructions;
+  for (const k of [
+    "never at who the person is", "No slurs, no insults about any group", "Never a slur, ever, not even as filler",
+    "No threats, no violence, no sexual content", "drop the act at once", "Never encourage overdrinking or drunk driving",
+    "never name, quote or imitate any real comedian, actor or other real person",
+    "The cursing drops completely, together with the act, the moment a guest is upset, unwell, in danger, or has had too much to drink",
+    "the HUMAN JUDGMENT rules apply: drop the act completely",
+  ]) assertStringIncludes(t, k);
+});
+
+Deno.test("0320: starting moods are dry or amused, never fed up or out of patience", () => {
+  for (const m of MARTY_MOODS) assertFalse(/fed up|short fuse|patience gone|done with|annoyed/i.test(m), m);
+  assertEquals(MARTY_MOODS.length, 10);
+});
+
+Deno.test("0320: OpenAI fallback a touch slower and more patient on turns; guest can still cut him off", () => {
+  assertEquals(VOICE_SPEED, 0.95);
+  const b = buildRealtimeSession({ mode: "hands_free", pick: () => 0 });
+  assertEquals(b.session.audio.input.turn_detection, { type: "semantic_vad", eagerness: "medium", create_response: true, interrupt_response: true });
+  assertEquals(buildRealtimeSession({ mode: "push_to_talk", pick: () => 0 }).session.audio.input.turn_detection, null);
+});
+
+// ---- P-20261126-0320 r2: living back-and-forth, respect level, bar code, thicker Boston accent ---
+const R2_KEYS = [
+  "A LIVING BACK-AND-FORTH — EVERY CHAT HAS A STORY", "React to everything the guest does or says",
+  "You two can bicker, make up, and bicker again in the same chat", "CALLBACKS: remember the funny moments in this chat",
+  "never about anything painful or personal they shared", "SKEPTICAL UNTIL TALKED ROUND",
+  "Never get talked round into pouring stronger, pouring more, or anyone driving after drinking",
+  "NEVER SKEPTICAL ABOUT SOMEONE NOT BEING OK", "believe it at once, no joke, no doubt",
+  "RESPECT LEVEL — IT MOVES INSIDE EVERY CHAT", "You start every chat in the middle",
+  "Never say a number, a score or the word respect level out loud",
+  "Lower respect means cooler and more cutting", "you still never aim it at who the person is, and you never shut the door",
+  "It climbs back when they earn it", "It is a game the guest can win, never a punishment",
+  "CALLING OUT NONSENSE, BOTH WAYS", "call it out with a joke, then give the real fact",
+  "When the guest catches YOU out", "alright, ya got me, smahtass", "Never dig in on something wrong to save face",
+  "MARTY'S BAR CODE — HIS LOVES AND HATES AS A REAL BARTENDER", "If the character book has a bar code chapter",
+  "If the book has no bar code chapter, do the same with the pet peeves in the book",
+  "OTHER VOICES IN THE ROOM", "The voice service does not tell you who else is there, so never claim to hear someone you cannot",
+  "WRITE IT THE WAY YOU SAY IT (THE VOICE READS YOUR WORDS)", "Never change the spelling of a drink name, a spirit, a brand, a number, a price or a fact",
+  "A heavy, thick Southie accent on every line", "NO CLIMBING: irritation never builds up over a chat on its own",
+];
+Deno.test("0320 r2: back-and-forth, respect, calling out, bar code, other voices and the written accent reach both voices", () => {
+  for (const mode of ["push_to_talk", "hands_free"] as const) {
+    for (let i = 0; i < MARTY_MOODS.length; i++) {
+      const pick = (n: number) => i % n;
+      const oa = buildRealtimeSession({ mode, characterBook: martyCharacterBook, pick }).session.instructions;
+      const el = buildElevenLabsPrompt({ mode, characterBook: martyCharacterBook, pick });
+      for (const t of [oa, el.shared]) {
+        for (const k of R2_KEYS) assertStringIncludes(t, k);
+        // the new blocks sit after the book (so they win on behaviour) and before the hard pet-peeve rules
+        assert(t.indexOf("CHARACTER BOOK - MARTY SULLIVAN") < t.indexOf("RESPECT LEVEL —"));
+        assert(t.indexOf("TALKING IT OUT") < t.indexOf("RESPECT LEVEL —") && t.indexOf("RESPECT LEVEL —") < t.indexOf("PET PEEVE SPIKES"));
+        assertEquals(hostTalkLeft(t.replace(martyCharacterBook.trim(), "")), []);
+      }
+    }
+  }
+  assertEquals(MARTY_BOSTON_PROFILE_VERSION, "marty-boston-v1.6.0");
+});
+
+Deno.test("0320 r2: works with a bar code chapter in the book and without one", () => {
+  const withCode = martyCharacterBook + "\n\nMARTY'S BAR CODE\n- Trigger: snapping fingers. Hates. Win back: own it.\n";
+  for (const book of [martyCharacterBook, withCode, ""]) {
+    const t = buildRealtimeSession({ mode: "hands_free", characterBook: book, pick: () => 0 }).session.instructions;
+    const el = buildElevenLabsPrompt({ mode: "hands_free", characterBook: book, pick: () => 0 }).shared;
+    for (const s of [t, el]) {
+      assertStringIncludes(s, "If the character book has a bar code chapter");
+      assertStringIncludes(s, "If the book has no bar code chapter");
+      if (book === withCode) assertStringIncludes(s, "MARTY'S BAR CODE\n- Trigger: snapping fingers");
+    }
+  }
+});
+
+Deno.test("0320 r2: example lines carry the Boston sound but keep drink names spelled normally", () => {
+  const block = martyDeliveryInstructions.split("HOW HE SOUNDS")[1].split("PET PEEVE SPIKES")[0];
+  const lines = [...block.matchAll(/: "([^"]+)"/g)].map((m) => m[1]).join(" ");
+  for (const w of ["ovah", "ya", "ansah", "heah", "wicked", "kid", "feelin's"]) assertStringIncludes(lines, w);
+  for (const d of ["Cape Codder", "Gin and tonic", "Rye Old Fashioned"]) assertStringIncludes(lines, d);
+  assertStringIncludes(martyBostonInstructions, "Heavy, not a hint of it");
+});
+
+Deno.test("0320 r2: unwell, upset or too much is believed at once and drops the act; hard lines unchanged", () => {
+  const t = buildRealtimeSession({ mode: "hands_free", pick: () => 0, characterBook: martyCharacterBook }).session.instructions;
+  const block = t.split("NEVER SKEPTICAL ABOUT SOMEONE NOT BEING OK")[1].split("\n")[0];
+  for (const k of ["unwell", "upset", "had too much", "believe it at once", "Drop the act and the cursing completely", "HUMAN JUDGMENT"]) assertStringIncludes(block, k);
+  for (const k of [
+    "never at who the person is", "No slurs, no insults about any group", "No threats, no violence, no sexual content",
+    "drop the act at once", "Never encourage overdrinking or drunk driving",
+  ]) assertStringIncludes(t, k);
 });
