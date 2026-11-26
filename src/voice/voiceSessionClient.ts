@@ -1,5 +1,7 @@
 import {
   validateVoiceSessionGrant,
+  VOICE_ENGINES,
+  type VoiceEngine,
   type VoiceMode,
   type VoiceSessionGrant,
   type VoiceSessionRequest,
@@ -23,6 +25,11 @@ export interface VoiceSessionClientConfig {
    * Defaults to push_to_talk.
    */
   mode?: VoiceMode;
+  /**
+   * Voices this app copy can play (P-20261126-0102). Sent only when given; the server then picks one.
+   * Without it the server always answers with today's OpenAI voice.
+   */
+  voiceEngines?: readonly VoiceEngine[];
   fetchImpl?: typeof fetch;
 }
 
@@ -55,6 +62,8 @@ export async function requestVoiceSession(
   };
   const screenContext = normalizeScreenContext(config.screenContext);
   if (screenContext) request.screenContext = screenContext;
+  const engines = (config.voiceEngines ?? []).filter((e, i, all) => VOICE_ENGINES.includes(e) && all.indexOf(e) === i);
+  if (engines.length) request.voiceEngines = engines;
 
   try {
     const response = await (config.fetchImpl ?? fetch)(

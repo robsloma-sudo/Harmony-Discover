@@ -43,7 +43,7 @@ describe('the Marty screen asks for always-on listening', () => {
     expect(bodies).toHaveLength(1);
     expect(bodies[0].mode).toBe('hands_free');
     expect(bodies[0]).not.toHaveProperty('hands_free');
-    expect(Object.keys(bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode']);
+    expect(Object.keys(bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode', 'voiceEngines']);
     expect(platform.connect).toHaveBeenCalledWith(expect.objectContaining({ mode: 'hands_free' }));
   });
 

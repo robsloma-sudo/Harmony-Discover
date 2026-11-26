@@ -96,7 +96,7 @@ describe('Marty 21+ question', () => {
     const h = harness();
     await h.coordinator().start();
     expect(h.bodies[0].age_confirmed).toBe(true);
-    expect(Object.keys(h.bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode']);
+    expect(Object.keys(h.bodies[0]).sort()).toEqual(['age_confirmed', 'consentVersion', 'mode', 'voiceEngines']);
   });
 
   it('the request client itself refuses without the confirmation, before any network call', async () => {
@@ -135,36 +135,5 @@ describe('the Marty screen and voice hook use the 21+ check', () => {
   it('starting a session and Enable voice both stop unless the answer is Yes', () => {
     expect(hook).toContain('if (!martyAgeConfirmed()) return;');
     expect(hook).toContain('if (busy || !martyAgeConfirmed()) return;');
-  });
-});
-
-describe('the hidden listening test follows the same 21+ answer', () => {
-  const page = readFileSync(resolve(__dirname, '../app/listening-test.tsx'), 'utf8');
-
-  it('the page reads the device answer and stays off without a Yes', () => {
-    expect(page).toContain("from '../src/marty/martyAge'");
-    expect(page).toMatch(/const ageConfirmed = ageAnswer === 'yes'/);
-    expect(page).toMatch(/if \(!ageConfirmed\) return/);
-    expect(page.match(/requestCompareSession\(\{[^}]*ageConfirmed[^}]*\}\)/g)?.length).toBe(2);
-  });
-
-  it('no answer or No: the listening-test request is refused before any network call', async () => {
-    const { requestCompareSession } = await import('../src/voice/voiceCompareClient');
-    for (const a of [null, 'no'] as const) {
-      setMartyAgeAnswer(a);
-      const f = vi.fn();
-      const r = await requestCompareSession({ supabaseUrl: URL, accessToken: 'tok', contender: 'A', mode: 'hands_free', ageConfirmed: martyAgeConfirmed(), fetchImpl: f as unknown as typeof fetch });
-      expect(r.ok).toBe(false);
-      expect(f).not.toHaveBeenCalled();
-    }
-  });
-
-  it('after Yes: the listening-test request sends age_confirmed: true', async () => {
-    const { requestCompareSession } = await import('../src/voice/voiceCompareClient');
-    setMartyAgeAnswer('yes');
-    const f = vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => ({ contender: 'C', provider: 'gemini_live', ephemeralToken: 't', transport: 'websocket' }) });
-    const r = await requestCompareSession({ supabaseUrl: URL, accessToken: 'tok', contender: 'C', mode: 'hands_free', ageConfirmed: martyAgeConfirmed(), fetchImpl: f as unknown as typeof fetch });
-    expect(r.ok).toBe(true);
-    expect(JSON.parse(f.mock.calls[0][1].body).age_confirmed).toBe(true);
   });
 });

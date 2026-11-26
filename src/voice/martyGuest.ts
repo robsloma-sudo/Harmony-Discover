@@ -39,6 +39,13 @@ export async function grantMartyVoiceConsent(userId: string): Promise<void> {
 }
 
 /** Honest one-line note on where consent and memories live. */
+/**
+ * P-20261126-0102 round 2: guest-facing line naming the voice companies. Since Marty can run on Rob's
+ * ElevenLabs voice (server picks; OpenAI is the fallback), both must be named before the first chat.
+ */
+export const MARTY_VOICE_PARTNERS_NOTE =
+  'To hear and answer you, Marty runs on our voice partners ElevenLabs and OpenAI. While you talk to him, what you say or type, the screen you are on and any memories you chose to save are sent to them for that conversation.';
+
 export function martyAccountNote(session: Pick<Session, 'user'> | null | undefined): string {
   return isGuestSession(session)
     ? 'No sign-in needed. Your choices and any memories you save are kept on this device’s private guest account. They stay with this guest account and do not move to an account you sign in to later.'
