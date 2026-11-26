@@ -49,6 +49,11 @@ export class VoiceSessionCoordinator {
       this.current = { voice: this.current.voice, error: 'Review and accept voice consent before activating the microphone.' };
       return this.current;
     }
+    // 21+ check (P-20261125-2244): no microphone and no server call until the guest said Yes.
+    if (this.config.ageConfirmed !== true) {
+      this.current = { voice: this.current.voice, error: 'Marty is only for guests 21 or older.' };
+      return this.current;
+    }
     this.send({ type: 'ACTIVATE' });
 
     let permission: 'granted' | 'denied';

@@ -4,7 +4,7 @@ import { VoiceSessionCoordinator, type VoicePlatformAdapter } from '../src/voice
 const base = {
   supabaseUrl: 'https://lqqmwqrffelgnbngrkep.supabase.co',
   accessToken: 'test-access-token',
-  consentVersion: 'voice-consent-2026-11',
+  consentVersion: 'voice-consent-2026-11', ageConfirmed: true,
   fetchImpl: vi.fn(async () => new Response(JSON.stringify({
     sessionId: 's1', provider: 'openai_realtime', ephemeralToken: 'ephemeral',
     expiresAt: new Date(Date.now() + 60_000).toISOString(), transport: 'webrtc', model: 'test-model', voice: 'unselected',

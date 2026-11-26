@@ -20,6 +20,7 @@ import { TurnController, isFatalRealtimeError, type TurnPhase, type TurnTiming }
 import { buildScreenContextUpdateEvent, getScreenContext, screenContextKey, subscribeScreenContext, withCapturedAt } from '../voice/screenContext';
 import { bindMartyOffSwitch, getMartyPresence } from './martyPresence';
 import { martySessionConfig } from './martyVoiceConfig';
+import { martyAgeConfirmed } from './martyAge';
 import { mouthOpenFromLevel, rmsFromBytes } from './faceState';
 
 /** Keep the mic open this long after release so the last word is not clipped (hold-to-talk fallback). */
@@ -361,6 +362,8 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
     const accessToken = override?.accessToken ?? session?.access_token;
     if (!accessToken || busy || coordinatorRef.current || !(consent || override?.consentGiven)) return;
     if (!getMartyPresence().enabled) return;
+    // 21+ check (P-20261125-2244): no voice session at all until this device answered Yes.
+    if (!martyAgeConfirmed()) return;
     if (Platform.OS !== 'web') { setError('Marty’s voice in the phone app still needs testing on a real iPhone. Use the web preview for now.'); return; }
     accessTokenRef.current = accessToken;
     setBusy(true); setError(''); setNotice('');
@@ -403,7 +406,7 @@ export function useMartyVoice({ onNavigateCommand }: { onNavigateCommand: (name:
 
   // One tap: guest session if needed (no sign-in), record voice consent, then microphone and Marty.
   async function enableVoice() {
-    if (busy) return;
+    if (busy || !martyAgeConfirmed()) return;
     setBusy(true); setError('');
     const gen = stopGenRef.current;
     let token = '';

@@ -7,10 +7,12 @@ import type { ScreenContext } from './screenContext';
 
 export type VoiceMode = 'push_to_talk' | 'hands_free';
 
-/** Request body for discover-voice-session (backend README, PR #131): exactly these keys. */
+/** Request body for discover-voice-session (backend README, PR #131; age_confirmed from P-20261125-2244 part 2): exactly these keys. */
 export interface VoiceSessionRequest {
   consentVersion: string;
   mode: VoiceMode;
+  /** The guest confirmed 21 or older on this device (P-20261125-2244). Always true when sent. */
+  age_confirmed: true;
   screenContext?: ScreenContext;
 }
 

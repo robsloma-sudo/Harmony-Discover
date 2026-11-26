@@ -6,6 +6,7 @@
 import type { VoiceMode } from '../voice/sessionContract';
 import type { ScreenContext } from '../voice/screenContext';
 import { MARTY_BOSTON_CONSENT_VERSION } from '../voice/martySullivanBoston';
+import { martyAgeConfirmed } from './martyAge';
 
 export const MARTY_REQUESTED_MODE: VoiceMode = 'hands_free';
 
@@ -14,6 +15,8 @@ export function martySessionConfig(input: { supabaseUrl: string; accessToken: st
     supabaseUrl: input.supabaseUrl,
     accessToken: input.accessToken,
     consentVersion: MARTY_BOSTON_CONSENT_VERSION,
+    // Only true after this device answered Yes to "Are you 21 or older?" (P-20261125-2244).
+    ageConfirmed: martyAgeConfirmed(),
     mode: MARTY_REQUESTED_MODE,
     screenContext: input.screenContext,
   };
